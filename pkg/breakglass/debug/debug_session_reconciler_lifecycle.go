@@ -671,6 +671,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			// Decided earlier; only the session completion is outstanding.
 			record = appliedRecord(ack)
 		} else {
+			firstClaim := ack.Status.ClaimedAt == nil
 			claimedAt := metav1.Now()
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &claimedAt}
 			if err := c.client.Status().Update(ctx, ack); err != nil {
@@ -678,6 +679,13 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 					continue
 				}
 				return fmt.Errorf("claim cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			if firstClaim && ack.Name == e2eHoldCleanupAcknowledgementClaim {
+				// e2e fault injection: stall the claimant so the test can
+				// kill it while the acknowledgement is Processing.
+				log.Warnw(e2eHoldCleanupAcknowledgementClaimLog, "acknowledgement", ack.Name)
+				<-ctx.Done()
+				return ctx.Err()
 			}
 			live := &breakglassv1alpha1.DebugSession{}
 			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {

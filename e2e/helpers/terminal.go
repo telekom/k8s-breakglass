@@ -155,17 +155,21 @@ func (c *APIClient) GetRawWithCID(ctx context.Context, path, cid string) (int, [
 
 // ReceivedAuditEvent is one event stored by the e2e audit webhook receiver.
 type ReceivedAuditEvent struct {
-	Type           string                `json:"type"`
-	Details        map[string]any        `json:"details"`
-	Actor          struct{ User string } `json:"actor"`
+	Type    string                `json:"type"`
+	Details map[string]any        `json:"details"`
+	Actor   struct{ User string } `json:"actor"`
+	Target  struct {
+		Kind      string `json:"kind"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"target"`
 	RequestContext *struct {
 		CorrelationID string `json:"correlationId"`
 	} `json:"requestContext"`
 }
 
-// AuditEventsByCorrelation returns the events the e2e audit webhook receiver
-// stored for one correlation ID.
-func AuditEventsByCorrelation(ctx context.Context, cid string) ([]ReceivedAuditEvent, error) {
+// AuditEvents returns every event the e2e audit webhook receiver stored.
+func AuditEvents(ctx context.Context) ([]ReceivedAuditEvent, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetAuditWebhookReceiverExternalURL()+"/events", nil)
 	if err != nil {
 		return nil, err
@@ -184,8 +188,18 @@ func AuditEventsByCorrelation(ctx context.Context, cid string) ([]ReceivedAuditE
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
+	return payload.Events, nil
+}
+
+// AuditEventsByCorrelation returns the events the e2e audit webhook receiver
+// stored for one correlation ID.
+func AuditEventsByCorrelation(ctx context.Context, cid string) ([]ReceivedAuditEvent, error) {
+	events, err := AuditEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var matched []ReceivedAuditEvent
-	for _, event := range payload.Events {
+	for _, event := range events {
 		if event.RequestContext != nil && event.RequestContext.CorrelationID == cid {
 			matched = append(matched, event)
 		}

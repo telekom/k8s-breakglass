@@ -568,17 +568,38 @@ kubectl get secrets,configmaps -n breakglass-system -o yaml > backup.yaml
 
 ## Uninstalling Breakglass
 
-Delete the custom resources **while the controller is still running**, so it
-can run its finalizers (debug session cleanup and the
-`breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer of
-Applied DebugSessionCleanupAcknowledgements):
+Uninstall in this order. Keep the controller (and the ClusterConfigs it needs
+to reach target clusters) running until step 4: it runs the DebugSession
+cleanup finalizers and releases the
+`breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
+of Applied DebugSessionCleanupAcknowledgements. Do not delete
+acknowledgements together with sessions: a session whose cleanup failed
+(`CleanupFailed=True`) keeps its finalizer until its residuals are removed or
+retired by an acknowledgement, so deleting the acknowledgements first makes
+the session deletion hang.
 
 ```bash
-# 1. Delete sessions and acknowledgements first and wait until they are gone
-kubectl delete debugsessions,debugsessioncleanupacknowledgements --all -A --wait
-kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A
+# 1. Delete all DebugSessions and wait until they are gone.
+kubectl delete debugsessions --all -A --wait=false
+kubectl wait --for=delete debugsessions --all -A --timeout=10m
 
-# 2. Only then remove the controller
+# If sessions remain, check which ones failed cleanup (CLEANUP_FAILED=True):
+kubectl get debugsessions -A \
+  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
+# Verify their residual resources are gone, retire them with a
+# DebugSessionCleanupAcknowledgement (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone),
+# and repeat the wait above.
+
+# 2. With no session left, the controller releases every acknowledgement.
+#    Verify that no acknowledgement still carries a finalizer (no output):
+kubectl get debugsessioncleanupacknowledgements -A \
+  -o jsonpath='{range .items[?(@.metadata.finalizers)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+kubectl delete debugsessioncleanupacknowledgements --all -A --wait
+
+# 3. Delete the remaining custom resources.
+kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A --wait
+
+# 4. Only then remove the controller.
 kubectl delete namespace breakglass-system
 
 # On tenant clusters, remove webhook config:
@@ -588,7 +609,9 @@ kubectl delete namespace breakglass-system
 ```
 
 If the controller was removed first, the namespace or CRD deletion hangs on
-these finalizers. Remove the acknowledgement retention finalizer by hand
+these finalizers. (If only the DebugSession CRD was removed while the
+controller still runs, it releases the acknowledgements itself.) Remove the
+acknowledgement retention finalizer by hand
 (this drops the retirement evidence, which is safe only because no
 controller will write the sessions again):
 

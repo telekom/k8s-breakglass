@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -316,6 +317,14 @@ func approverIdentitiesMissing(ds *breakglassv1alpha1.DebugSession) bool {
 // maxCleanupAcknowledgementRecords bounds the applied records in
 // status.cleanupAcknowledgements; it matches the CRD maxItems.
 const maxCleanupAcknowledgementRecords = 64
+
+// e2eHoldCleanupAcknowledgementClaim names an acknowledgement whose first
+// claimant stalls after claiming it, so an HA e2e test can kill the claim
+// holder (e2e/api/debug_session_cleanup_acknowledgement_ha_test.go). Test-only
+// fault injection: unset in every real deployment.
+var e2eHoldCleanupAcknowledgementClaim = os.Getenv("BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM")
+
+const e2eHoldCleanupAcknowledgementClaimLog = "e2e fault injection: holding cleanup acknowledgement claim"
 
 // cleanupAcknowledgementClaimTimeout lets another replica take over an
 // acknowledgement whose claiming replica stopped before recording an outcome.

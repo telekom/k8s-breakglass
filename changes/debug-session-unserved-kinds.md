@@ -17,7 +17,7 @@ section: Behaviour changes
   `breakglass-debugsession-cleanup-acknowledger` (`debugsession-cleanup-acknowledger`
   plus the `config/base` kustomize name prefix) is bound to nobody.
   Applied acknowledgements carry a retention finalizer: when uninstalling,
-  delete DebugSessions and acknowledgements before the controller (see
+  delete DebugSessions first, then acknowledgements, then the controller (see
   `docs/installation.md#uninstalling-breakglass`). On Kubernetes 1.30+, add the optional kustomize component
   `config/components/cleanup-acknowledgement-policy`: its
   ValidatingAdmissionPolicy enforces `acknowledgedBy` in the API server, even

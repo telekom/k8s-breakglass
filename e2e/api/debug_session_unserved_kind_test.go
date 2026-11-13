@@ -136,9 +136,26 @@ spec:
 }
 
 // setControllerEnv sets an environment variable on the breakglass controller
-// deployment and waits for the rollout and the API. Restoration is registered
-// before the mutation, so a failed wait cannot leak the setting into later tests.
+// deployment and waits for the rollout and the API.
 func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
+	t.Helper()
+	updateController(t, s, func(d *appsv1.Deployment) {
+		c := &d.Spec.Template.Spec.Containers[0]
+		env := make([]corev1.EnvVar, 0, len(c.Env)+1)
+		for _, e := range c.Env {
+			if e.Name != name {
+				env = append(env, e)
+			}
+		}
+		c.Env = append(env, corev1.EnvVar{Name: name, Value: value})
+	})
+}
+
+// updateController changes the breakglass controller deployment and waits for
+// the rollout and the API. Restoration of the original replicas and container
+// environment is registered before the mutation, so a failed wait cannot leak
+// the change into later tests.
+func updateController(t *testing.T, s *helpers.TestSetup, mutate func(*appsv1.Deployment)) {
 	t.Helper()
 	ctx := s.Ctx
 	// The controller runs in its own namespace, independent of the test
@@ -147,15 +164,16 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 	require.NoError(t, s.Client.List(ctx, &list, client.MatchingLabels{"app": "breakglass"}))
 	require.Len(t, list.Items, 1, "expected exactly one breakglass controller deployment in the cluster")
 	key := client.ObjectKeyFromObject(&list.Items[0])
-	original := list.Items[0].Spec.Template.Spec.Containers[0].Env
+	originalEnv := list.Items[0].Spec.Template.Spec.Containers[0].Env
+	originalReplicas := list.Items[0].Spec.Replicas
 
-	apply := func(ctx context.Context, env []corev1.EnvVar) {
+	apply := func(ctx context.Context, change func(*appsv1.Deployment)) {
 		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			var current appsv1.Deployment
 			if err := s.Client.Get(ctx, key, &current); err != nil {
 				return err
 			}
-			current.Spec.Template.Spec.Containers[0].Env = env
+			change(&current)
 			return s.Client.Update(ctx, &current)
 		}))
 		require.NoError(t, helpers.WaitForDeploymentReady(ctx, s.Client, key.Namespace, key.Name, 3*time.Minute))
@@ -173,7 +191,7 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 				return false
 			}
 			replicas := ptr.Deref(deployment.Spec.Replicas, 1)
-			return int32(len(pods.Items)) == replicas && deployment.Status.Replicas == replicas
+			return int32(len(pods.Items)) == replicas && deployment.Status.Replicas == replicas && deployment.Status.ReadyReplicas == replicas
 		}, 3*time.Minute, time.Second, "old controller pods must terminate")
 		api := helpers.NewAPIClient()
 		healthy := 0
@@ -187,18 +205,15 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 		}, 2*time.Minute, time.Second, "API must answer consistently after the controller restart")
 	}
 
-	env := make([]corev1.EnvVar, 0, len(original)+1)
-	for _, e := range original {
-		if e.Name != name {
-			env = append(env, e)
-		}
-	}
 	t.Cleanup(func() {
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		apply(restoreCtx, original)
+		apply(restoreCtx, func(d *appsv1.Deployment) {
+			d.Spec.Template.Spec.Containers[0].Env = originalEnv
+			d.Spec.Replicas = originalReplicas
+		})
 	})
-	apply(ctx, append(env, corev1.EnvVar{Name: name, Value: value}))
+	apply(ctx, mutate)
 }
 
 // testCleanupAcknowledgementAuthorization proves through the real API server
