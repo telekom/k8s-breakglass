@@ -282,8 +282,11 @@ one, it first gets a structured definition, additively.
   `groupBasis`, `authorization`) are open strings: the schema lists the known
   values as `examples`, and consumers must accept others. Only the envelope
   `severity` and `schemaVersion` are closed.
-- Consumers must ignore unknown properties and unknown event types. The
-  published schema is open (it allows unknown properties). CI validates emitted
+- Consumers must ignore unknown properties. The published schema is open for
+  properties, but it enumerates the event types of its revision: a new type is
+  added to the schema before a release emits it, so a consumer that validates
+  with an older revision rejects that type. Route such a record by its
+  `event-type` header to a quarantine and update the schema; do not drop it. CI validates emitted
   events against a strict variant, so every field that the code emits is
   declared in the schema.
 - A breaking change ships as `api/audit/v2` with `schemaVersion: v2`. During a

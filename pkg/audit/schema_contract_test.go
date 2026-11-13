@@ -211,6 +211,12 @@ func TestAuditSchemaCoversEveryEventType(t *testing.T) {
 	for eventType := range mapped {
 		require.Contains(t, declared, eventType, "schema maps undeclared event type %q", eventType)
 	}
+	var envelopeType struct {
+		Enum []string `json:"enum"`
+	}
+	require.NoError(t, json.Unmarshal(doc.Properties["type"], &envelopeType))
+	sort.Strings(envelopeType.Enum)
+	require.Equal(t, declared, envelopeType.Enum, "the envelope type enum must list exactly the declared event types")
 }
 
 func jsonFields(typ reflect.Type) []string {
@@ -267,6 +273,8 @@ func TestAuditSchemaManagerEmittersProduceValidEvents(t *testing.T) {
 	m.DebugSessionApprovalTimeout(ctx, "d", "ns", "c", "alice", "tpl")
 	m.DebugSessionValidationFailed(ctx, "d", "ns", "c", "invalid")
 	m.DebugSessionCleanupFailed(ctx, "d", "ns", "c", []string{"v1/ConfigMap/ns/x"})
+	m.DebugSessionCleanupFailed(ctx, "d", "ns", "c", nil)        // residuals: null
+	m.DebugSessionCleanupFailed(ctx, "d", "ns", "c", []string{}) // residuals: null as well
 	m.DebugSessionCleanupRecovered(ctx, "d", "ns", "c")
 	m.DebugSessionBindingUnresolved(ctx, "d", "ns", "c", "b", "bns", "missing")
 	m.DebugSessionPodFailed(ctx, "d", "ns", "pod", "pns", "OOMKilled", "msg")
@@ -277,7 +285,7 @@ func TestAuditSchemaManagerEmittersProduceValidEvents(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 20)
+	require.Len(t, events, 22)
 	for _, event := range events {
 		raw, err := json.Marshal(event)
 		require.NoError(t, err)
@@ -310,10 +318,12 @@ func TestAuditSchemaRejectsMalformedEvents(t *testing.T) {
 		"bad severity":      mutate(func(d map[string]any) { d["severity"] = "debug" }),
 		"bad timestamp":     mutate(func(d map[string]any) { d["timestamp"] = "yesterday" }),
 		"bad version":       mutate(func(d map[string]any) { d["schemaVersion"] = "v2" }),
+		"unknown type":      mutate(func(d map[string]any) { d["type"] = "debug_session.unknown_thing" }),
 		"bad digest":        mutate(func(d map[string]any) { d["details"].(map[string]any)["sha256"] = "xyz" }),
 		"bad details value": mutate(func(d map[string]any) { d["details"].(map[string]any)["bytes"] = "ten" }),
 	} {
 		require.Error(t, auditv1.Validate(doc), name)
+		require.Error(t, auditv1.ValidateStrict(doc), name)
 	}
 	for _, eventType := range []EventType{EventDebugSessionMaintenanceIntent, EventDebugSessionAdmissionRecipeApplied,
 		EventDebugSessionHotfixResult, EventDebugSessionTerminalRecordingAccessed} {
