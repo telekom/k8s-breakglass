@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/telekom/k8s-breakglass/main/api/audit/v1/audit-event.schema.json",
   "title": "Breakglass audit event v1",
-  "description": "One audit event as written by every audit sink (Kafka record value, webhook body, log line). See docs/audit-event-schema.md. Within v1 only additive changes are made: consumers must ignore unknown properties and unknown event types.",
+  "description": "One audit event: a Kafka record value, a webhook single-event body, or one element of a webhook batch's events array. The log sink flattens events into log fields and is not covered. See docs/audit-event-schema.md. Within v1 only additive changes are made: consumers must ignore unknown properties and unknown event types.",
   "type": "object",
   "required": [
     "id",
@@ -188,7 +188,10 @@
           "details": {
             "$ref": "#/$defs/debugSessionNodeMaintenance"
           }
-        }
+        },
+        "required": [
+          "details"
+        ]
       }
     },
     {
@@ -211,7 +214,10 @@
           "details": {
             "$ref": "#/$defs/debugSessionAdmissionRecipe"
           }
-        }
+        },
+        "required": [
+          "details"
+        ]
       }
     },
     {
@@ -235,7 +241,10 @@
           "details": {
             "$ref": "#/$defs/debugSessionHotfix"
           }
-        }
+        },
+        "required": [
+          "details"
+        ]
       }
     },
     {
@@ -279,7 +288,10 @@
           "details": {
             "$ref": "#/$defs/terminalRecordingAccess"
           }
-        }
+        },
+        "required": [
+          "details"
+        ]
       }
     },
     {

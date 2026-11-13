@@ -10,8 +10,17 @@ Schema (draft 2020-12)
 Go consumers can validate with `auditv1.Validate` from
 `github.com/telekom/k8s-breakglass/api/audit/v1`.
 
-Every sink writes the same JSON document: the Kafka record value, the webhook
-request body, and the log sink's fields. Sink configuration is described in
+The schema describes one event as JSON. Sinks carry it as follows:
+
+| Sink | Representation |
+|---|---|
+| Kafka | Each record value is one event. |
+| Webhook, single write | The request body is one event. A webhook with `payloadFormat: slack` posts chat messages instead and is not covered. |
+| Webhook, batch write (`batchUrl`) | The body is `{"events": [<event>, ...], "count": <n>}`; validate each element of `events`. |
+| Log | The `audit_event` log line flattens selected fields (`event_id`, `event_type`, `actor_user`, ...) and encodes `details` as a JSON string. It is not covered by the schema; consume Kafka or the webhook for a schema-conformant feed. |
+| Kubernetes | Kubernetes Events with a summary; not covered by the schema. |
+
+Sink configuration is described in
 [AuditConfig](audit-config.md); retries and loss accounting are described in
 [Audit delivery](audit-delivery.md).
 

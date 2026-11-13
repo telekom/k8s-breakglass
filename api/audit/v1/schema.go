@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
-// Package auditv1 publishes the versioned JSON Schema of the audit event that
-// every audit sink writes, and validates documents against it.
+// Package auditv1 publishes the versioned JSON Schema of one audit event (a
+// Kafka record value, a webhook single-event body, or one element of a webhook
+// batch's events array) and validates documents against it. The log sink
+// flattens events into log fields and is not covered.
 // See docs/audit-event-schema.md.
 package auditv1
 

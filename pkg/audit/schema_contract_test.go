@@ -210,6 +210,13 @@ func TestAuditSchemaRejectsMalformedEvents(t *testing.T) {
 	} {
 		require.Error(t, auditv1.Validate(doc), name)
 	}
+	for _, eventType := range []EventType{EventDebugSessionMaintenanceIntent, EventDebugSessionAdmissionRecipeApplied,
+		EventDebugSessionHotfixResult, EventDebugSessionTerminalRecordingAccessed} {
+		require.Error(t, auditv1.Validate(mutate(func(d map[string]any) { d["type"] = string(eventType); delete(d, "details") })),
+			"%s must not omit its mandatory details", eventType)
+	}
+	require.NoError(t, auditv1.Validate(mutate(func(d map[string]any) { delete(d, "details") })),
+		"details stay optional for payloads without mandatory fields")
 	extra := mutate(func(d map[string]any) { d["details"].(map[string]any)["newField"] = 1; d["newEnvelopeField"] = true })
 	require.NoError(t, auditv1.Validate(extra), "published schema must stay open for additive changes")
 	require.Error(t, auditv1.ValidateStrict(extra), "strict schema must reject undeclared fields")
