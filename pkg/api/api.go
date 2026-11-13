@@ -1519,6 +1519,7 @@ func recoverPanics(log *zap.Logger) gin.HandlerFunc {
 			zap.String("cid", fmt.Sprintf("%v", cid)),
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.FullPath()))
-		c.AbortWithStatus(http.StatusInternalServerError)
+		apiresponses.RespondInternalErrorSimple(c, "internal server error")
+		c.Abort()
 	})
 }

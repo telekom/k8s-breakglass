@@ -67,8 +67,10 @@ tab-separated text for people; its layout is not stable.
 The `json` format uses zap's production sampling: for each message and level,
 the first 100 lines per second are written, then every 100th. The `console`
 format does not sample. The controller has no other log rate limiting or
-de-duplication. Trace sampling (`--otel-sampling-rate`) and audit event
-sampling (`AuditConfig`) do not affect the log.
+de-duplication. Trace sampling (`--otel-sampling-rate`) does not affect the
+log. Audit event sampling (`AuditConfig`) does: a sampled-out event reaches no
+sink, so the `log` sink writes no `audit_event` line for it (see
+[Logs and audit events](#logs-and-audit-events)).
 
 ### Lines from libraries
 
@@ -150,7 +152,19 @@ and the chat sink. See [Audit configuration](audit-config.md) for the event
 types and [Audit delivery](audit-delivery.md) for delivery, retries and loss.
 
 Only the `log` sink writes into the controller log: one info line per event,
-with `logger` set to `audit` and the message `audit_event`. Its fields:
+with `logger` set to `audit-service.audit` and the message `audit_event`.
+Because these are ordinary controller log lines, three things can make an
+audit event missing from the log although it happened:
+
+- `--log-level=warn` or `error` drops all `audit_event` lines, because they are
+  at info;
+- in the `json` format, zap sampling applies (the first 100 identical
+  `audit_event` messages per second, then every 100th);
+- audit event sampling and the include/exclude event types in `AuditConfig`
+  drop events before they reach any sink.
+
+Use the `webhook`, `kafka` or `kubernetes` sink when the audit trail must be
+complete. Fields of an `audit_event` line:
 
 | Field | Type | Present |
 |-------|------|---------|
@@ -178,7 +192,7 @@ controller's `--log-format`.
 {"level":"info","ts":1763030400.531,"caller":"api/api.go:260","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042}
 {"level":"warn","ts":1763030401.002,"caller":"cmd/main.go:189","msg":"--debug is deprecated; use --log-level=debug and, for this output format, --log-format=console"}
 {"level":"error","ts":1763030402.877,"caller":"api/api.go:271","msg":"handler_error","cid":"5f0c…","method":"POST","path":"/api/breakglassSessions","remote":"10.0.0.7","error":"…","meta":"…"}
-{"level":"info","ts":1763030403.100,"logger":"audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":"2026-11-13T10:00:03Z","actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
+{"level":"info","ts":1763030403.100,"logger":"audit-service.audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":"2026-11-13T10:00:03Z","actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
 ```
 
 The values and callers above are illustrations, not output to match against.

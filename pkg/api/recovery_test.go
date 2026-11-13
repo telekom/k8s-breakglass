@@ -29,8 +29,8 @@ func TestRecoverPanicsDoesNotLogCredentials(t *testing.T) {
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rec.Code)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"cid"`) {
+		t.Fatalf("status %d body %s, want 500 with the standard error body", rec.Code, rec.Body.String())
 	}
 	entries := logs.AllUntimed()
 	if len(entries) != 1 {
