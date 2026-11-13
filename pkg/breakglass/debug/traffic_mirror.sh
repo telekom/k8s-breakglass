@@ -38,9 +38,9 @@ require_env() {
 }
 
 # pod_pid UID IP prints the PID of a process of the Pod whose network
-# namespace owns IP, "recreated" when the Pod has processes but none owns IP
-# (its sandbox was recreated with a new address), or nothing when the Pod has
-# no process on this Node.
+# namespace owns IP, "recreated" when the Pod has processes and every one of
+# their namespaces was inspected but none owns IP, or nothing when the Pod has
+# no process on this Node. A failed inspection stops the script.
 pod_pid() {
 	uid=$1
 	ip=$2
@@ -50,8 +50,13 @@ pod_pid() {
 		grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null || continue
 		pid=${cgroup#/proc/}
 		pid=${pid%/cgroup}
+		if ! addrs=$(nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>&1); then
+			# The process may have exited since the scan; otherwise fail closed.
+			[ ! -e "/proc/$pid" ] && continue
+			fail inspect-failed "cannot inspect the network namespace of PID $pid: $addrs"
+		fi
 		found=1
-		if nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>/dev/null | grep -F -q " $ip/"; then
+		if printf '%s\n' "$addrs" | grep -F -q " $ip/"; then
 			printf '%s\n' "$pid"
 			return 0
 		fi
@@ -284,7 +289,9 @@ teardown() {
 	tpid=$(target_pid) || exit 1
 	case "$tpid" in
 	"") verified "the target network namespace is gone" ;;
-	recreated) verified "the target Pod sandbox was recreated; its original network namespace is gone" ;;
+	# A namespace that lost the approved IP may still hold the filters, so
+	# this is never treated as proof of absence.
+	recreated) fail teardown-unverifiable "the target Pod runs but no namespace of it owns the approved Pod IP; an operator must inspect the Node" ;;
 	esac
 	pin_target
 	verify_pinned_target

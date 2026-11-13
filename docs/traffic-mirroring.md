@@ -169,7 +169,12 @@ verification succeeds, which also covers a controller restart and a crashed
 agent. A Node that was deleted and registered again is torn down like the
 original. If the Node is gone, the teardown cannot be verified: confirm that
 the host was reprovisioned, then remove the finalizer
-`breakglass.t-caas.telekom.com/node-maintenance-cleanup` by hand.
+`breakglass.t-caas.telekom.com/node-maintenance-cleanup` by hand. The same
+applies when the source Pod still runs but none of its namespaces owns the
+approved Pod IP any more: the teardown cannot prove that the old filters are
+gone, so an operator inspects the Node (`tc filter show dev <interface>
+ingress|egress` in the Pod's namespace, looking for the session's cookie)
+before removing the finalizer.
 
 ## Audit
 

@@ -158,10 +158,12 @@ fails closed if any identity, label or the interface changed.
    after re-reading that none remain. The helper opens the source network
    namespace once, repeats the identity checks (not the host namespace, owns
    the approved Pod IP) through that descriptor, and enters it only through
-   the descriptor afterwards. If the Pod still has processes but none owns
-   the approved IP, its sandbox was recreated and the original namespace
-   with the mirror state is gone; the teardown reports that, and the stop
-   receipt records it.
+   the descriptor afterwards. If the Pod still has processes but none of
+   their namespaces owns the approved IP, the teardown fails closed: an
+   address change does not prove that the filters are gone, so cleanup
+   stays unresolved until an operator inspects the Node. Any failed
+   namespace inspection also fails the teardown. The teardown result is
+   recorded in `status.trafficMirror.teardownResult` and the stop receipt.
    Every inspection must succeed: a namespace or `tc` read error fails the
    teardown instead of counting as absence. A failed teardown Pod is
    replaced; the session keeps its finalizer and reports `CleanupFailed`
