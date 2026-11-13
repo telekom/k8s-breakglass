@@ -612,95 +612,60 @@ namespace) can therefore run commands there that runtime-security tools
 attribute to the session. Run debug Pods in dedicated namespaces where no
 identity other than the controller and the session's participants holds
 `pods/exec`, `pods/attach` or `pods/portforward`, and audit the bindings
-there regularly. Ask the API server's authorizer instead of reading role
-names: that resolves aggregated roles such as `edit` and `admin`, wildcard
-verbs and resources, and bindings in the namespace and cluster-wide. The
-following script lists every bound user, group and ServiceAccount that may
-exec, attach or port-forward there. It asks the authorizers with
-SubjectAccessReviews, so run it as a user allowed to create them (for example
-a cluster administrator); it stops with an error instead of printing an
-empty, clean-looking result whenever a check cannot be made:
+there regularly. The following script reads the RoleBindings in the debug
+namespace, all ClusterRoleBindings and the Roles and ClusterRoles they
+reference, and lists every subject whose rules allow exec, attach or
+port-forward there. It counts wildcard verbs, resources and API groups, and
+aggregated ClusterRoles such as `edit` and `admin` already contain their
+aggregated rules. It aborts with an error if any list cannot be read:
 
 ```bash
 #!/usr/bin/env bash
-# Lists every bound user, group and ServiceAccount that may exec, attach or
-# port-forward in the debug namespace, as decided by the API server's
-# authorizers (aggregated roles, wildcards and cluster-wide bindings included):
-# namespace-wide, and for each current Pod by name (resourceNames grants).
+# Lists every subject whose RoleBinding (in the debug namespace) or
+# ClusterRoleBinding grants exec, attach or port-forward on Pods there.
 set -euo pipefail
 ns=${1:-breakglass-debug}
-err=$(mktemp)
-trap 'rm -f "$err"' EXIT
-if [ "$(kubectl auth can-i create subjectaccessreviews.authorization.k8s.io 2>"$err" || true)" != yes ]; then
-  echo "error: this audit needs permission to create subjectaccessreviews $(cat "$err")" >&2
-  exit 1
-fi
-# Each listing is checked on its own: a failed one aborts instead of silently
-# dropping its grants.
-if ! rolebindings=$(kubectl get rolebindings -n "$ns" -o json); then
-  echo "error: cannot list RoleBindings in $ns" >&2; exit 1
-fi
-if ! clusterrolebindings=$(kubectl get clusterrolebindings -o json); then
-  echo "error: cannot list ClusterRoleBindings" >&2; exit 1
-fi
-# Every current Pod is also checked by name, which catches resourceNames grants.
-if ! pods=$(kubectl get pods -n "$ns" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); then
-  echo "error: cannot list Pods in $ns" >&2; exit 1
-fi
-# One subject per line, fields separated by U+001F (names may contain \ or tabs).
-subjects=$(printf '%s\n%s\n' "$rolebindings" "$clusterrolebindings" |
-  jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | join("\u001f")' | sort -u)
-while IFS=$'\x1f' read -r kind name subject_ns; do
-  case "$kind" in
-    # Every authenticated identity is also in system:authenticated.
-    User) who=$(jq -n --arg u "$name" '{user: $u, groups: ["system:authenticated"]}') ;;
-    Group) who=$(jq -n --arg g "$name" '{user: "breakglass-exec-audit", groups: [$g, "system:authenticated"]}') ;;
-    ServiceAccount)
-      sa_ns=${subject_ns:-$ns}
-      who=$(jq -n --arg u "system:serviceaccount:$sa_ns:$name" --arg n "system:serviceaccounts:$sa_ns" \
-        '{user: $u, groups: ["system:serviceaccounts", $n, "system:authenticated"]}') ;;
-    *) continue ;;
-  esac
-  # get pods/exec: before Kubernetes 1.31, WebSocket exec is authorized as get.
-  for check in create:exec get:exec create:attach create:portforward; do
-    # An empty name asks namespace-wide; the Pod names catch resourceNames grants.
-    while IFS= read -r pod; do
-      review=$(jq -n --argjson who "$who" --arg ns "$ns" --arg verb "${check%%:*}" --arg sub "${check#*:}" --arg pod "$pod" \
-        '{apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
-          spec: ($who + {resourceAttributes: {namespace: $ns, verb: $verb, resource: "pods", subresource: $sub, name: $pod}})}')
-      allowed=$(kubectl create -f - -o jsonpath='{.status.allowed}' <<<"$review" 2>"$err") || true
-      case "$allowed" in
-        true)
-          echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns${pod:+ on Pod $pod}"
-          break ;; # namespace-wide implies every Pod
-        false) ;;
-        *) echo "error: checking $kind $name: $(cat "$err")" >&2; exit 1 ;;
-      esac
-    done < <(echo; printf '%s' "$pods${pods:+$'\n'}")
-  done
-done <<<"$subjects"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fetch() { # file, kubectl get arguments...
+  local file=$1; shift
+  kubectl get "$@" -o json >"$tmp/$file" || { echo "error: cannot list $*" >&2; exit 1; }
+}
+fetch rb.json rolebindings -n "$ns"
+fetch roles.json roles -n "$ns"
+fetch crb.json clusterrolebindings
+fetch cr.json clusterroles
+jq -nr --slurpfile rb "$tmp/rb.json" --slurpfile roles "$tmp/roles.json" \
+  --slurpfile crb "$tmp/crb.json" --slurpfile cr "$tmp/cr.json" --arg ns "$ns" '
+  # Rules that allow exec, attach or port-forward (get pods/exec: WebSocket exec
+  # before Kubernetes 1.31). Wildcards count, including forms RBAC may not honour.
+  def grants: [.rules[]? | select(
+      any(.apiGroups[]?; . == "" or . == "*") and
+      any(.verbs[]?; . == "*" or . == "create" or . == "get") and
+      any(.resources[]?; . as $r | ["*", "*/*", "pods/*", "pods/exec", "pods/attach", "pods/portforward",
+                                   "*/exec", "*/attach", "*/portforward"] | index($r) != null))];
+  ($roles[0].items | map({key: .metadata.name, value: .}) | from_entries) as $role
+  | ($cr[0].items | map({key: .metadata.name, value: .}) | from_entries) as $clusterrole
+  | ($rb[0].items[], $crb[0].items[]) as $b
+  | ((if $b.roleRef.kind == "Role" then $role else $clusterrole end)[$b.roleRef.name] // {} | grants) as $g
+  | select($g | length > 0)
+  | (if any($g[]; (.resourceNames // []) == []) then "all Pods"
+     else "only Pods " + ([$g[].resourceNames[]] | unique | join(", ")) end) as $scope
+  | $b.subjects[]?
+  | "\(.kind) \(.name)\(if .kind == "ServiceAccount" then " (namespace \(.namespace // $ns))" else "" end): \($scope) in \($ns), via \($b.kind) \($b.metadata.name) -> \($b.roleRef.kind) \($b.roleRef.name)"'
 ```
 
-The named checks cover the Pods that exist when the script runs. A
-`resourceNames` grant can also name a Pod that does not exist yet, which no
-access review can see. List the Roles and ClusterRoles with such rules and
-review them by hand:
-
-```bash
-ns=breakglass-debug
-{ kubectl get roles -n "$ns" -o json && kubectl get clusterroles -o json; } |
-  jq -r '.items[] | select(any(.rules[]?; (.resourceNames // []) != [] and
-      any(.resources[]?; . == "*" or test("^(pods|\\*)/(exec|attach|portforward)$"))))
-    | "\(.kind) \(.metadata.namespace // "-")/\(.metadata.name)"'
-```
+A `Group system:authenticated` (or `system:serviceaccounts`) line means every
+user (or every ServiceAccount) has that access. To spot-check one identity,
+including its group memberships, use
+`kubectl auth can-i create pods --subresource=exec -n <ns> --as=<user> --as-group=<group>`.
 
 Only the controller's identity and the identities of session participants
 should appear, plus identities the cluster trusts anyway: cluster
-administrators, `system:masters`, and control-plane ServiceAccounts in
-`kube-system` with broad rights (on a kubeadm cluster, for example,
-`generic-garbage-collector` and `namespace-controller` may `get pods/exec`). Remove any other binding that grants these
-rights in the debug namespace, for example a binding to `edit`, `admin` or
-`cluster-admin`.
+administrators, `system:masters`, and control-plane subjects bound through
+the built-in `system:` ClusterRoleBindings. Remove any other binding that
+grants these rights in the debug namespace, for example a binding to `edit`,
+`admin` or `cluster-admin`.
 
 A possible future hardening is an opt-in authorizer or validating-webhook
 check that denies exec, attach and port-forward on marked Pods for anyone
