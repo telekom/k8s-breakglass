@@ -23,6 +23,8 @@ type DebugSessionSpecApplyConfiguration struct {
 	AdmissionRecipe *AdmissionRecipeRequestApplyConfiguration `json:"admissionRecipe,omitempty"`
 	// hotfix is a typed platform hotfix stage request matched against the template profile.
 	Hotfix *DebugSessionHotfixRequestApplyConfiguration `json:"hotfix,omitempty"`
+	// trafficMirror is a typed mirror source matched against the template allowlist.
+	TrafficMirror *TrafficMirrorRequestApplyConfiguration `json:"trafficMirror,omitempty"`
 	// cluster is the name of the target cluster.
 	Cluster *string `json:"cluster,omitempty"`
 	// templateRef is the name of the DebugSessionTemplate to use.
@@ -115,6 +117,14 @@ func (b *DebugSessionSpecApplyConfiguration) WithAdmissionRecipe(value *Admissio
 // If called multiple times, the Hotfix field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithHotfix(value *DebugSessionHotfixRequestApplyConfiguration) *DebugSessionSpecApplyConfiguration {
 	b.Hotfix = value
+	return b
+}
+
+// WithTrafficMirror sets the TrafficMirror field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrafficMirror field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithTrafficMirror(value *TrafficMirrorRequestApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.TrafficMirror = value
 	return b
 }
 

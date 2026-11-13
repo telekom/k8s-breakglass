@@ -513,6 +513,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			return err
 		}
 	}
+	if ds.Status.TrafficMirror != nil && !ds.Status.TrafficMirror.Released {
+		if err := c.cleanupTrafficMirror(ctx, ds); err != nil {
+			setCleanupCondition(ds)
+			if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
+				return errors.Join(err, patchErr)
+			}
+			return err
+		}
+	}
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -705,6 +714,9 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 			}
 		}
 	}
+	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released && mirror.CreateAttempted {
+		add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID, mirror.PodUID)
+	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			add(status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.UID)
@@ -835,6 +847,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
 	if status.NodeMaintenance != nil && !status.NodeMaintenance.Released {
+		return true
+	}
+	if status.TrafficMirror != nil && !status.TrafficMirror.Released {
 		return true
 	}
 	if (status.AdmissionRecipe != nil && !status.AdmissionRecipe.Reverted) ||

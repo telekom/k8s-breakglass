@@ -631,8 +631,8 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 			"approver", identity.username, "approverEmail", identity.email, "policySource", source)
 		return false
 	}
-	if session.Spec.NodeMaintenance != nil || session.Spec.AdmissionRecipe != nil || session.Spec.Hotfix != nil {
-		// Node maintenance, admission recipes and hotfixes change cluster-wide
+	if session.Spec.NodeMaintenance != nil || session.Spec.AdmissionRecipe != nil || session.Spec.Hotfix != nil || session.Spec.TrafficMirror != nil {
+		// Node maintenance, admission recipes, traffic mirrors and hotfixes change cluster-wide
 		// or node behaviour and always require an independent approver,
 		// regardless of blockSelfApproval.
 		if isRequester {

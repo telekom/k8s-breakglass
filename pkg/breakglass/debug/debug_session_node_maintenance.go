@@ -90,12 +90,15 @@ func maintenanceIdentity(value string) string {
 }
 
 func maintenanceApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) error {
-	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil {
+	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil && template.Spec.TrafficMirror == nil {
 		return nil
 	}
 	kind := "nodeMaintenance"
 	if template.Spec.Hotfix != nil {
 		kind = "hotfix"
+	}
+	if template.Spec.TrafficMirror != nil {
+		kind = "trafficMirror"
 	}
 	approvers := template.Spec.Approvers
 	if binding != nil && binding.Spec.Approvers != nil {

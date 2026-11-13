@@ -261,6 +261,7 @@ type CreateDebugSessionRequest struct {
 	NodeMaintenance          *breakglassv1alpha1.NodeMaintenanceTarget     `json:"nodeMaintenance,omitempty"`
 	AdmissionRecipe          *breakglassv1alpha1.AdmissionRecipeRequest    `json:"admissionRecipe,omitempty"`
 	Hotfix                   *breakglassv1alpha1.DebugSessionHotfixRequest `json:"hotfix,omitempty"`
+	TrafficMirror            *breakglassv1alpha1.TrafficMirrorRequest      `json:"trafficMirror,omitempty"`
 	TemplateRef              string                                        `json:"templateRef" binding:"required"`
 	Cluster                  string                                        `json:"cluster" binding:"required"`
 	BindingRef               string                                        `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
@@ -879,6 +880,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, "nodeMaintenance accepts only typed tuple parameters, not generic workload overrides")
 		return
 	}
+	if template.Spec.TrafficMirror != nil &&
+		(req.SelectedSchedulingOption != "" || len(req.NodeSelector) != 0 || len(req.ExtraDeployValues) != 0 || len(req.InvitedParticipants) != 0) {
+		apiresponses.RespondBadRequest(ctx, "trafficMirror accepts only a typed source selection, not generic workload overrides")
+		return
+	}
 	if template.Spec.AdmissionRecipe != nil &&
 		(req.SelectedSchedulingOption != "" || len(req.NodeSelector) != 0 || len(req.ExtraDeployValues) != 0 || len(req.InvitedParticipants) != 0) {
 		apiresponses.RespondBadRequest(ctx, "admissionRecipe accepts only typed targets, not generic workload overrides")
@@ -1383,6 +1389,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			NodeMaintenance:               req.NodeMaintenance,
 			AdmissionRecipe:               req.AdmissionRecipe,
 			Hotfix:                        req.Hotfix,
+			TrafficMirror:                 req.TrafficMirror,
 			TemplateRef:                   req.TemplateRef,
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
@@ -1431,6 +1438,21 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if template.Spec.NodeMaintenance != nil {
 		validator := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(authorizationReader)
 		if err := validator.validateMaintenancePending(apiCtx, session, template, resolvedBinding); err != nil {
+			respondMaintenanceValidationError(ctx, c.log, err)
+			return
+		}
+	}
+	if err := breakglassv1alpha1.ValidateTrafficMirrorSession(&template.Spec, &session.Spec); err != nil {
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+	if template.Spec.TrafficMirror != nil {
+		if trafficMirrorDisabled.Load() {
+			apiresponses.RespondBadRequest(ctx, errTrafficMirrorDisabled.Error())
+			return
+		}
+		validator := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(authorizationReader)
+		if err := validator.validateTrafficMirrorPending(apiCtx, session, template, resolvedBinding); err != nil {
 			respondMaintenanceValidationError(ctx, c.log, err)
 			return
 		}

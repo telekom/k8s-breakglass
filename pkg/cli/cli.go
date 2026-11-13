@@ -48,6 +48,7 @@ type Config struct {
 	BreakglassNamespace     string
 	DisableEmail            bool
 	DisableSessionRateLimit bool
+	DisableTrafficMirror    bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -190,6 +191,8 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.DisableTrafficMirror, "disable-traffic-mirror", getEnvBool("BREAKGLASS_DISABLE_TRAFFIC_MIRROR", false),
+		"Refuse new trafficMirror debug sessions; existing mirrors are still removed")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -247,6 +250,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"disable_traffic_mirror", c.DisableTrafficMirror,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,

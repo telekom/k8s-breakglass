@@ -210,6 +210,10 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, "admission recipes have a fixed revert deadline and cannot be renewed")
 		return
 	}
+	if session.Spec.TrafficMirror != nil {
+		apiresponses.RespondBadRequest(ctx, "traffic mirrors have a fixed deadline and cannot be renewed")
+		return
+	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot renew expired session")
 		return

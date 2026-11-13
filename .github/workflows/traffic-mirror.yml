@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Traffic mirror controller
+on:
+  pull_request:
+    paths:
+      - "api/v1alpha1/**"
+      - "config/crd/**"
+      - "pkg/breakglass/debug/**"
+      - "hack/traffic-mirror-kind.sh"
+      - ".github/workflows/traffic-mirror.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: traffic-mirror-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kind:
+    name: Session traffic mirror, restart, expiry and verified teardown (Kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Regenerate API contracts with repository-pinned tools
+        run: make generate manifests
+      - name: Require committed generated contract
+        run: git diff --exit-code
+      - uses: ./.github/actions/setup-shellcheck
+      - name: ShellCheck the mirror helper and harness
+        run: shellcheck pkg/breakglass/debug/traffic_mirror.sh hack/traffic-mirror-kind.sh
+      - name: Install kind
+        uses: ./.github/actions/install-kind
+      - name: Install checksum-verified kubectl
+        run: |
+          mkdir .traffic-mirror-tools
+          cd .traffic-mirror-tools
+          curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl --output kubectl
+          curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl.sha256 --output kubectl.sha256
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
+          chmod +x kubectl
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: Prove mirroring into the capture Pod and zero residual tc state
+        run: bash hack/traffic-mirror-kind.sh

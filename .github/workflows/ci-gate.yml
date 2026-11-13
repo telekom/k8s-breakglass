@@ -140,6 +140,7 @@ jobs:
             reuse-compliance.yml
             security.yml
             storage-image-behavior.yml
+            traffic-mirror.yml
             utility-image-security.yml
             utility-release.yml
             workload-debug.yml

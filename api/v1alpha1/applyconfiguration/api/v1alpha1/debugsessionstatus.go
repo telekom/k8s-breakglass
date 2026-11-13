@@ -26,6 +26,8 @@ type DebugSessionStatusApplyConfiguration struct {
 	AdmissionRecipe *AdmissionRecipeStatusApplyConfiguration `json:"admissionRecipe,omitempty"`
 	// hotfix records the plan and rollout of a hotfix session.
 	Hotfix *HotfixStatusApplyConfiguration `json:"hotfix,omitempty"`
+	// trafficMirror tracks the mirror executor until its teardown is verified.
+	TrafficMirror *TrafficMirrorStatusApplyConfiguration `json:"trafficMirror,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
@@ -133,6 +135,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithAdmissionRecipe(value *Admiss
 // If called multiple times, the Hotfix field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithHotfix(value *HotfixStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.Hotfix = value
+	return b
+}
+
+// WithTrafficMirror sets the TrafficMirror field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrafficMirror field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithTrafficMirror(value *TrafficMirrorStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.TrafficMirror = value
 	return b
 }
 
