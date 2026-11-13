@@ -25,13 +25,20 @@
 # On a Pod or workload that carries reserved keys, the same users may also not
 # change the pod spec (image, command, containers, ephemeral containers), the
 # owner references, the labels or the selector, nor add finalizers, so nobody
-# can run their own code under genuine session markers or detach or hold a
-# marked workload so that it outlives the session. They may delete such a
+# can change what a marked Pod runs through the API objects, or detach or
+# hold a marked workload so that it outlives the session. They may delete such a
 # workload only with propagationPolicy Background (the kubectl default) or
 # Foreground; deletes without a policy or with Orphan are denied, because Jobs
 # and ReplicationControllers orphan their Pods by default. Other requests are
 # allowed, so kubelet status updates, scaling and annotation edits keep
 # working.
+#
+# Not covered: `pods/exec`, `pods/attach` and `pods/portforward` are CONNECT
+# requests, and admission policies cannot see the target Pod's labels on
+# CONNECT. Anyone whose RBAC allows exec into a marked Pod can still run
+# commands there that are attributed to the session. Run debug Pods in
+# dedicated namespaces where no other identity holds those permissions; see
+# docs/security-best-practices.md#reserved-debug-session-labels.
 #
 # Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
 apiVersion: admissionregistration.k8s.io/v1

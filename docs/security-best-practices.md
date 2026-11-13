@@ -572,7 +572,7 @@ from their own custom resources are not exempt, so they cannot be used to
 launder the keys.
 
 Keeping the keys is not enough on its own: anyone allowed to edit a debug pod
-or a debug Deployment could swap its image or command, or attach an ephemeral
+or a debug Deployment could swap its image or command, or add an ephemeral
 container, and run their own code under the genuine markers. They could also
 remove a marked ReplicaSet's owner reference, or change its labels so the
 Deployment does not adopt it again; cleanup deletes the Deployment and the
@@ -598,6 +598,35 @@ updates, annotation edits and cascading deletes stay allowed;
 denied. The `scale` subresource carries only a replica count, so scaling a
 debug workload stays allowed and cannot change what its Pods run or how they
 are marked.
+
+**Limitation: exec, attach and port-forward.** `pods/exec`, `pods/attach` and
+`pods/portforward` are CONNECT requests. Admission policies cannot see the
+target Pod's labels on CONNECT, so this policy cannot stop them, and the
+breakglass authorizer only grants extra rights to session participants; it
+does not take away existing RBAC. Anyone whose RBAC allows exec into a marked
+Pod (for example through the built-in `edit` or `admin` ClusterRoles in its
+namespace) can therefore run commands there that runtime-security tools
+attribute to the session. Run debug Pods in dedicated namespaces where no
+identity other than the controller and the session's participants holds
+`pods/exec`, `pods/attach` or `pods/portforward`, and audit the bindings
+there regularly, for example:
+
+```bash
+ns=breakglass-debug
+for b in $(kubectl get rolebindings -n "$ns" -o name); do
+  role=$(kubectl get -n "$ns" "$b" -o jsonpath='{.roleRef.kind}/{.roleRef.name}')
+  echo "$b -> $role: $(kubectl get -n "$ns" "$b" -o jsonpath='{range .subjects[*]}{.kind}:{.name} {end}')"
+done
+kubectl get clusterrolebindings -o json | jq -r '.items[]
+  | "\(.metadata.name) -> \(.roleRef.name): \([.subjects[]? | "\(.kind):\(.name)"] | join(" "))"'
+# Then check who may actually exec into a debug Pod:
+kubectl auth can-i create pods/exec -n "$ns" --as=<user> --as-group=<group>
+```
+
+A possible future hardening is an opt-in authorizer or validating-webhook
+check that denies exec, attach and port-forward on marked Pods for anyone
+who is not a participant of the matching session; it is not part of this
+policy.
 
 Session cleanup deletes the resources the controller recorded, not everything
 that carries the session label. A label-based sweep would turn label forgery
