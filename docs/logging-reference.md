@@ -232,6 +232,8 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
+| bgctl | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
 | controller | 453 | 337 | 341 | 262 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -240,6 +242,23 @@ Fields marked † can hold personal or host data (user identities, e-mail
 addresses, group names, IP addresses, command lines). `(dynamic)` is a
 message built at run time, typically from an error value; `…` marks the
 variable part of a concatenated message.
+
+### bgctl
+
+#### `pkg/bgctl/cmd`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| debug | (dynamic) |  | root.go |
+
+### cluster-validator
+
+#### `cmd/cluster-validator`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
+| error | `write report to stdout: …` |  | main.go |
 
 ### controller
 
