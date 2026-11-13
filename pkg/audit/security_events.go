@@ -33,7 +33,8 @@ func lastFieldManager(obj metav1.Object) string {
 }
 
 // EscalationChangeEvent builds an escalation.created, escalation.updated or
-// escalation.deleted event for an observed BreakglassEscalation change. The
+// escalation.deleted event for an observed BreakglassEscalation change;
+// previousGeneration (0 when unknown) is reported for updates. The
 // ID is stable per escalation UID and generation (or deletion), so a
 // re-emission after a controller restart is deduplicated by consumers.
 func EscalationChangeEvent(eventType EventType, esc *breakglassv1alpha1.BreakglassEscalation, previousGeneration int64) *Event {
@@ -50,7 +51,7 @@ func EscalationChangeEvent(eventType EventType, esc *breakglassv1alpha1.Breakgla
 		"resourceVersion": esc.ResourceVersion,
 		"fieldManager":    lastFieldManager(esc),
 	}
-	if eventType == EventEscalationUpdated {
+	if eventType == EventEscalationUpdated && previousGeneration > 0 {
 		details["previousGeneration"] = previousGeneration
 	}
 	return &Event{

@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -53,11 +55,19 @@ type EscalationReconciler struct {
 	resyncPeriod time.Duration
 	// auditEmitter receives escalation.created/updated/deleted events (optional)
 	auditEmitter EscalationAuditEmitter
+	// audited holds the last audited generation per escalation UID.
+	auditedMu sync.Mutex
+	audited   map[types.UID]int64
 }
+
+// escalationAuditRetry is how long an escalation change waits for the audit
+// pipeline's first configuration before it is audited again.
+const escalationAuditRetry = 5 * time.Second
 
 // EscalationAuditEmitter receives escalation change audit events.
 type EscalationAuditEmitter interface {
 	Emit(ctx context.Context, event *audit.Event)
+	ConfigurationState() audit.ConfigurationState
 }
 
 // WithAuditEmitter emits escalation.created, escalation.updated and
@@ -67,20 +77,42 @@ func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) 
 	return r
 }
 
-// auditSpecChange emits escalation.created or escalation.updated when the
-// escalation's generation has not been observed yet. The status write that
-// follows records the generation, so a restart does not repeat the event; a
-// repeat after a failed status write carries the same event ID.
-func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) {
-	previous := esc.Status.ObservedGeneration
-	if r.auditEmitter == nil || previous == esc.Generation {
-		return
+// auditSpecChange emits escalation.created (generation 1) or
+// escalation.updated for a generation that this process has not audited yet.
+// It is independent of status.observedGeneration, which other status writers
+// also advance. After a restart or leader change the current generation is
+// emitted again with the same event ID, which consumers deduplicate. While the
+// audit pipeline has not loaded its configuration yet it reports retry, so the
+// change is audited once the pipeline is ready instead of being dropped;
+// intentionally disabled auditing emits nothing.
+func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) (retry bool) {
+	if r.auditEmitter == nil {
+		return false
+	}
+	r.auditedMu.Lock()
+	previous, seen := r.audited[esc.UID]
+	r.auditedMu.Unlock()
+	if seen && previous == esc.Generation {
+		return false
+	}
+	switch r.auditEmitter.ConfigurationState() {
+	case audit.ConfigurationDisabled:
+		return false
+	case audit.ConfigurationUnavailable:
+		return true
 	}
 	eventType := audit.EventEscalationUpdated
-	if previous == 0 {
+	if esc.Generation <= 1 {
 		eventType = audit.EventEscalationCreated
 	}
 	r.auditEmitter.Emit(ctx, audit.EscalationChangeEvent(eventType, esc, previous))
+	r.auditedMu.Lock()
+	if r.audited == nil {
+		r.audited = map[types.UID]int64{}
+	}
+	r.audited[esc.UID] = esc.Generation
+	r.auditedMu.Unlock()
+	return false
 }
 
 // auditDeletion emits escalation.deleted for an observed delete event.
@@ -89,6 +121,9 @@ func (r *EscalationReconciler) auditDeletion(obj client.Object) {
 	if r.auditEmitter == nil || !ok {
 		return
 	}
+	r.auditedMu.Lock()
+	delete(r.audited, esc.UID)
+	r.auditedMu.Unlock()
 	r.auditEmitter.Emit(context.Background(), audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation))
 }
 
@@ -157,7 +192,7 @@ func NewEscalationReconciler(
 
 // Reconcile implements controller-runtime's Reconciler interface.
 // Called whenever a BreakglassEscalation CR changes.
-func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (result reconcile.Result, err error) {
 	r.logger.Debugw("Reconciling BreakglassEscalation",
 		"name", req.Name,
 		"namespace", req.Namespace)
@@ -176,7 +211,13 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
-	r.auditSpecChange(ctx, escalation)
+	if r.auditSpecChange(ctx, escalation) {
+		defer func() {
+			if err == nil && result.IsZero() {
+				result.RequeueAfter = escalationAuditRetry
+			}
+		}()
+	}
 
 	// Validate escalation configuration and references
 	now := metav1.Now()

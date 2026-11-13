@@ -260,18 +260,23 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 ### Escalation changes (`escalationChange`)
 
 `escalation.created`, `escalation.updated`, `escalation.deleted`. The
-controller emits them when it observes a new BreakglassEscalation generation
-(created for the first observed generation, updated for a later one) or a
-delete. The event ID is `escalation/<uid>/<generation>` or
-`escalation/<uid>/deleted`. The actor is `system`: the authenticated requester
-is in the Kubernetes API server audit log for the same object UID and
+controller emits `escalation.created` for generation 1 and
+`escalation.updated` for a later generation that it has not audited yet, and
+`escalation.deleted` for an observed delete. The event ID is
+`escalation/<uid>/<generation>` or `escalation/<uid>/deleted`. After a
+controller restart or leader change the current generation of every
+escalation is emitted again with the same ID (without `previousGeneration`);
+deduplicate on `id`. Escalations reconciled before the audit pipeline has
+loaded its AuditConfig are retried until it is ready, so they are not lost at
+startup. The actor is `system`: the authenticated requester is in the
+Kubernetes API server audit log for the same object UID and
 `resourceVersion`. A delete that happens while no controller replica is
 leading is not observed.
 
 | Field | Type | Description |
 |---|---|---|
 | `generation`* | integer | Observed generation. |
-| `previousGeneration` | integer | Previously observed generation (`escalation.updated`). |
+| `previousGeneration` | integer | Previously audited generation (`escalation.updated`), when known. |
 | `escalatedGroup` | string | Granted group. |
 | `specSHA256`* | 64 hex digits | SHA-256 of the JSON-encoded spec; compare it across events to detect changes. |
 | `resourceVersion` | string | Observed resource version; join key to the API server audit log. |
