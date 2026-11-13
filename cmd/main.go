@@ -898,6 +898,9 @@ func validateServerTLS(server config.Server, httpEnabled bool) error {
 	if _, _, err := server.ClientTLS(); err != nil {
 		return fmt.Errorf("validate server TLS config: %w", err)
 	}
+	if err := server.ValidateWebhook(); err != nil {
+		return fmt.Errorf("validate server TLS config: %w", err)
+	}
 	return nil
 }
 

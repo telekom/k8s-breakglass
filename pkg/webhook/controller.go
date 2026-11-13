@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net/url"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
@@ -838,6 +840,47 @@ func (wc *WebhookController) Register(rg *gin.RouterGroup) error {
 	rg.POST("/authorize/:cluster_name", wc.handleAuthorize)
 	wc.log.Debug("Webhook controller routes registered successfully")
 	return nil
+}
+
+// RequireClusterIdentity returns middleware for the dedicated webhook
+// listener (server.webhook). When the TLS handshake verified a client
+// certificate, the certificate must name the :cluster_name of the request,
+// otherwise the request is rejected with 403 before the SubjectAccessReview
+// is evaluated. A request without a verified certificate passes; the
+// listener's clientAuth decides whether one is required.
+func RequireClusterIdentity(log *zap.SugaredLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		state := c.Request.TLS
+		if state == nil || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 {
+			c.Next()
+			return
+		}
+		cluster := c.Param("cluster_name")
+		leaf := state.VerifiedChains[0][0]
+		if !CertificateNamesCluster(leaf, cluster) {
+			log.Warnw("Webhook client certificate does not name the requested cluster",
+				"cluster", cluster, "subjectCN", leaf.Subject.CommonName, "dnsNames", leaf.DNSNames)
+			apiresponses.RespondForbidden(c, fmt.Sprintf("client certificate is not issued for cluster %q", cluster))
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// CertificateNamesCluster reports whether cert identifies cluster: one of
+// its DNS SANs equals cluster, or, only when it has no DNS SANs, its subject
+// common name equals cluster. Like hostname verification (RFC 6125), the
+// common name is ignored once SANs are present, so a certificate cannot
+// claim a second cluster through its CN.
+func CertificateNamesCluster(cert *x509.Certificate, cluster string) bool {
+	if cluster == "" {
+		return false
+	}
+	if len(cert.DNSNames) > 0 {
+		return slices.Contains(cert.DNSNames, cluster)
+	}
+	return cert.Subject.CommonName == cluster
 }
 
 func (b *WebhookController) Handlers() []gin.HandlerFunc {
