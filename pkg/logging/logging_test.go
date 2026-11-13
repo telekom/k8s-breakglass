@@ -8,9 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -207,5 +211,74 @@ func TestNewWriter(t *testing.T) {
 	}
 	if _, err := New("info", FormatText); err == nil {
 		t.Fatal("New must reject the text format")
+	}
+}
+
+// TestNewDoesNotSample proves that repeated identical lines, such as
+// authorization decisions, are all written.
+func TestNewDoesNotSample(t *testing.T) {
+	out := captureStderr(t, func() {
+		logger, err := New("info", FormatJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 1000 {
+			logger.Info("authorization decision", zap.String("decision", "allow"))
+		}
+		_ = logger.Sync()
+	})
+	if n := strings.Count(out, `"msg":"authorization decision"`); n != 1000 {
+		t.Fatalf("got %d of 1000 lines", n)
+	}
+}
+
+// TestRouteLibraryLogsTLSHandshakeError proves that an http.Server without an
+// ErrorLog logs a TLS handshake error as a JSON line.
+func TestRouteLibraryLogsTLSHandshakeError(t *testing.T) {
+	out := captureStderr(t, func() {
+		logger, err := New("info", FormatJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer RouteLibraryLogs(logger)()
+
+		srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+		srv.StartTLS()
+		defer srv.Close()
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = conn.Write([]byte("GET / HTTP/1.0\r\n\r\n")) // plain HTTP to a TLS port
+		_ = conn.Close()
+
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			written, _ := os.ReadFile(os.Stderr.Name())
+			if strings.Contains(string(written), "TLS handshake error") {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("no TLS handshake error logged; output: %q", written)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var e map[string]any
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("not JSON: %q", line)
+		}
+		if msg, _ := e["msg"].(string); strings.Contains(msg, "TLS handshake error") {
+			found = true
+			if e["level"] != "warn" || e["logger"] != "stdlog" {
+				t.Fatalf("fields: %s", line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no TLS handshake error line in %q", out)
 	}
 }

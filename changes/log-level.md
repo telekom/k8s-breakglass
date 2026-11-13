@@ -24,3 +24,8 @@ section: Upgrade notes
   its request lines use the logger format instead of `[DEBUG] [bgctl] …`.
   `cluster-validator` keeps its `cluster-validator: <error>` output (format
   `text`) by default.
+- The controller no longer samples its logs. The `json` format used to keep
+  only the first 100 identical lines per second and then every 100th, which
+  dropped repeated authorization decisions and `audit_event` lines. Lines of
+  the Go standard `log` package (for example `http: TLS handshake error`) are
+  now JSON lines at `warn` with the logger name `stdlog`.

@@ -12,8 +12,11 @@ import (
 	"io"
 	"os"
 
+	"github.com/go-logr/zapr"
+	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/klog/v2"
 )
 
 // Accepted --log-format values. FormatText is accepted by NewWriter only.
@@ -48,6 +51,20 @@ func envOr(key, def string) string {
 	return def
 }
 
+// RouteLibraryLogs sends the output of the standard log package (for example
+// net/http server errors such as "http: TLS handshake error"), client-go
+// (klog) and the OpenTelemetry SDK through logger, so that every line uses its
+// format. Standard log lines are logged at warn with the logger name "stdlog".
+// It returns a function that restores the standard log package.
+func RouteLibraryLogs(logger *zap.Logger) func() {
+	l := zapr.NewLogger(logger)
+	klog.SetLogger(l)
+	otel.SetLogger(l)
+	// RedirectStdLogAt fails only for a level above Fatal.
+	undo, _ := zap.RedirectStdLogAt(logger.Named("stdlog"), zapcore.WarnLevel)
+	return undo
+}
+
 // New creates a logger that writes to stderr for a level (debug, info, warn,
 // error) and a format. The "json" format is zap's production profile and the
 // "console" format its development profile (human-readable; DPanic panics).
@@ -68,6 +85,10 @@ func New(level, format string) (*zap.Logger, error) {
 		return nil, err
 	}
 	cfg.Level = zap.NewAtomicLevelAt(lvl)
+	// No sampling: the production profile would keep only the first 100
+	// identical lines per second and then every 100th, silently dropping
+	// repeated authorization decisions and audit_event lines.
+	cfg.Sampling = nil
 	cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
 	logger, err := cfg.Build(zap.AddStacktrace(zap.DPanicLevel))
 	if err != nil {

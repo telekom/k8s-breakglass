@@ -240,7 +240,8 @@ func isLogger(recv string) bool {
 	case "lg", "rl":
 		return true
 	}
-	return strings.Contains(strings.ToLower(recv), "log")
+	return strings.HasPrefix(recv, "zap.S()") || strings.HasPrefix(recv, "zap.L()") ||
+		strings.Contains(strings.ToLower(recv), "log")
 }
 
 func exprString(fset *token.FileSet, e ast.Expr) string {

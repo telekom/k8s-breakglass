@@ -43,7 +43,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -175,13 +174,11 @@ func run() error {
 		_ = zapLogger.Sync()
 	}()
 
-	// Route controller-runtime, client-go (klog) and the standard library log
-	// package (net/http server errors, for example) through the same logger,
-	// so that every line has the selected format.
-	logrLogger := zapr.NewLogger(zapLogger)
-	ctrl.SetLogger(logrLogger)
-	klog.SetLogger(logrLogger)
-	defer zap.RedirectStdLog(zapLogger)()
+	// Route controller-runtime, client-go (klog), OpenTelemetry and the
+	// standard library log package (net/http server errors, for example)
+	// through the same logger, so that every line has the selected format.
+	ctrl.SetLogger(zapr.NewLogger(zapLogger))
+	defer logging.RouteLibraryLogs(zapLogger)()
 
 	log := zapLogger.Sugar()
 	log.Infow("Starting breakglass controller", "version", system.Version)

@@ -187,13 +187,14 @@ environment variable, choose the level and the format:
 | `--log-format` | `LOG_FORMAT` | `json`, `console` | `json` |
 
 A flag overrides its environment variable. An unknown value stops the
-controller at startup. The defaults produce the same output as earlier
-releases.
+controller at startup. The defaults produce the same format as earlier
+releases. Neither format samples: every log call at or above the level is
+written. Earlier releases kept only the first 100 identical `json` lines per
+second and then every 100th.
 
-- `json` is zap's production profile: one JSON object per line. Repeated
-  identical messages are sampled (the first 100 per second, then every 100th).
-- `console` is zap's development profile: tab-separated, human-readable lines
-  and no sampling. A log call at DPanic level panics. It also puts the HTTP
+- `json` is zap's production encoding: one JSON object per line.
+- `console` is zap's development profile: tab-separated, human-readable lines.
+  A log call at DPanic level panics. It also puts the HTTP
   server (Gin) into debug mode when the level is `debug`, which writes extra
   plain-text lines to stdout. Do not use `console` for log collection.
 
@@ -208,8 +209,9 @@ output, or `--log-level=debug` for JSON.
 
 Every line the controller logger writes in the `json` format is a JSON object
 with the fields below. The controller routes controller-runtime, client-go
-(klog) and the Go standard `log` package (for example `net/http` server
-errors) through this logger, so their lines use the same format. Exceptions,
+(klog), the OpenTelemetry SDK and the Go standard `log` package (for example
+the `http: TLS handshake error` lines of `net/http` servers) through this
+logger, so their lines use the same format. Exceptions,
 which a log collector must tolerate:
 
 - If startup fails, or the logger cannot be built, the process writes one
