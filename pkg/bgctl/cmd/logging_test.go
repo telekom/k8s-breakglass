@@ -7,6 +7,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -69,4 +70,55 @@ func TestLogLevelAndFormat(t *testing.T) {
 		// The parse error is printed, not swallowed.
 		assert.Contains(t, stderr.String(), `invalid log level "trace"`)
 	})
+}
+
+// TestLogLevelPrecedence: --log-level, then --verbose, then LOG_LEVEL, then
+// BGCTL_VERBOSE, then warn.
+func TestLogLevelPrecedence(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+	tests := []struct {
+		name      string
+		env       map[string]string
+		flags     []string
+		wantDebug bool
+	}{
+		{name: "--verbose beats LOG_LEVEL", env: map[string]string{"LOG_LEVEL": "warn"}, flags: []string{"--verbose"}, wantDebug: true},
+		{name: "--log-level beats --verbose", flags: []string{"--verbose", "--log-level=error"}},
+		{name: "LOG_LEVEL beats BGCTL_VERBOSE", env: map[string]string{"LOG_LEVEL": "warn", "BGCTL_VERBOSE": "true"}},
+		{name: "BGCTL_VERBOSE alone", env: map[string]string{"BGCTL_VERBOSE": "true"}, wantDebug: true},
+		{name: "LOG_LEVEL debug", env: map[string]string{"LOG_LEVEL": "debug"}, wantDebug: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, k := range []string{"LOG_LEVEL", "LOG_FORMAT", "BGCTL_VERBOSE"} {
+				t.Setenv(k, tt.env[k])
+			}
+			var stdout, stderr bytes.Buffer
+			root := NewRootCommand(Config{OutputWriter: &stdout})
+			root.SetErr(&stderr)
+			root.SetArgs(append([]string{"--server", server.URL, "--token", "t", "escalation", "list", "-o", "json"}, tt.flags...))
+			require.NoError(t, root.Execute())
+			assert.Equal(t, tt.wantDebug, strings.Contains(stderr.String(), "correlationID="), "stderr: %s", stderr.String())
+		})
+	}
+}
+
+// TestWarningsFollowLogFormatAndLevel: a command warning is a JSON line with
+// --log-format=json and is suppressed with --log-level=error.
+func TestWarningsFollowLogFormatAndLevel(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("LOG_FORMAT", "")
+	t.Setenv("BGCTL_VERBOSE", "")
+	_, stderr, err := runInject(t, nil, http.StatusOK, "--log-format=json")
+	require.NoError(t, err)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stderr)), &entry), "stderr: %s", stderr)
+	assert.Equal(t, "warn", entry["level"])
+	assert.Equal(t, "bgctl", entry["logger"])
+	assert.Contains(t, entry["msg"], "could not read session s1")
+
+	_, stderr, err = runInject(t, nil, http.StatusOK, "--log-level=error")
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
 }

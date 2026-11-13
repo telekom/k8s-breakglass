@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -82,7 +83,7 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			if !rt.verbose {
 				rt.verbose = strings.EqualFold(os.Getenv("BGCTL_VERBOSE"), "true")
 			}
-			if err := rt.setupLogger(cmd.ErrOrStderr()); err != nil {
+			if err := rt.setupLogger(cmd.Flags().Changed, cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 
@@ -273,15 +274,19 @@ func (rt *runtimeState) configPathValue() string {
 	return rt.configPath
 }
 
-// setupLogger builds the stderr logger. Defaults: level warn (debug with
-// --verbose), format console.
-func (rt *runtimeState) setupLogger(stderr io.Writer) error {
+// setupLogger builds the stderr logger. Level precedence: --log-level, then
+// --verbose, then LOG_LEVEL, then BGCTL_VERBOSE, then warn. Format: --log-format
+// or LOG_FORMAT, else console.
+func (rt *runtimeState) setupLogger(changed func(flag string) bool, stderr io.Writer) error {
 	level, format := rt.log.Level, rt.log.Format
-	if level == "" {
+	switch {
+	case changed("log-level"):
+	case changed("verbose") && rt.verbose:
+		level = "debug"
+	case level == "" && rt.verbose:
+		level = "debug"
+	case level == "":
 		level = "warn"
-		if rt.verbose {
-			level = "debug"
-		}
 	}
 	if format == "" {
 		format = logging.FormatConsole
@@ -292,6 +297,16 @@ func (rt *runtimeState) setupLogger(stderr io.Writer) error {
 	}
 	rt.logger = logger.Named("bgctl")
 	return nil
+}
+
+// warnf reports a warning through the logger, so that it follows
+// --log-format and --log-level.
+func (rt *runtimeState) warnf(format string, args ...any) {
+	if rt.logger == nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...)
+		return
+	}
+	rt.logger.WithOptions(zap.AddCallerSkip(1)).Sugar().Warnf(format, args...)
 }
 
 // requestLogger returns the client option that logs API requests at debug

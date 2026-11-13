@@ -233,7 +233,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| bgctl | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
 | controller | 468 | 345 | 353 | 272 | 0 | 0 | 0 |
 
@@ -251,6 +251,7 @@ variable part of a concatenated message.
 | Level | Message | Fields | File |
 |---|---|---|---|
 | debug | (dynamic) |  | root.go |
+| warn | (dynamic) |  | root.go |
 
 ### cluster-validator
 
