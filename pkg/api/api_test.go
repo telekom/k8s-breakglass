@@ -1474,18 +1474,20 @@ func TestReloadingTLSConfig(t *testing.T) {
 					},
 				},
 			}}
-			get := func() (*http.Response, error) {
+			// get returns whether the connection resumed a session.
+			get := func() (bool, error) {
 				resp, err := client.Get("https://" + addr + "/")
-				if err == nil {
-					_ = resp.Body.Close()
+				if err != nil {
+					return false, err
 				}
-				return resp, err
+				defer func() { _ = resp.Body.Close() }()
+				return resp.TLS.DidResume, nil
 			}
 			_, err := get()
 			require.NoError(t, err)
-			resp, err := get()
+			resumed, err := get()
 			require.NoError(t, err)
-			require.True(t, resp.TLS.DidResume, "the session must resume before the rotation")
+			require.True(t, resumed, "the session must resume before the rotation")
 
 			require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
