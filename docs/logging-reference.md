@@ -171,7 +171,7 @@ complete. Fields of an `audit_event` line:
 | `event_id` | string | always |
 | `event_type` | string | always |
 | `severity` | string | always |
-| `timestamp` | RFC 3339 time | always |
+| `timestamp` | event time in the controller's time encoding: in `json`, Unix seconds with fractions (a number, like `ts`); in `console`, an ISO 8601 string | always |
 | `actor_user`† | string | always |
 | `target_kind`, `target_name` | string | always |
 | `actor_idp` | string | when known |
@@ -192,7 +192,7 @@ controller's `--log-format`.
 {"level":"info","ts":1763030400.531,"caller":"api/api.go:260","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042}
 {"level":"warn","ts":1763030401.002,"caller":"cmd/main.go:189","msg":"--debug is deprecated; use --log-level=debug and, for this output format, --log-format=console"}
 {"level":"error","ts":1763030402.877,"caller":"api/api.go:271","msg":"handler_error","cid":"5f0c…","method":"POST","path":"/api/breakglassSessions","remote":"10.0.0.7","error":"…","meta":"…"}
-{"level":"info","ts":1763030403.100,"logger":"audit-service.audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":"2026-11-13T10:00:03Z","actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
+{"level":"info","ts":1763030403.100,"logger":"audit-service.audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":1763030403.099,"actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
 ```
 
 The values and callers above are illustrations, not output to match against.
@@ -683,7 +683,7 @@ variable part of a concatenated message.
 | warn | `No approvers resolved for email notification; cannot send email with empty recipients` | `cluster`, `group`†, `requestorEmail`†, `requestorUsername`† | session_request_helpers.go |
 | warn | `No authenticated identity claims found for session ownership filtering` | `error` | session_controller_status.go |
 | warn | `No escalation groups found for user` | `cluster`, `requestedGroup`†, `resolvedUserGroups`†, `user`† | session_request_helpers.go |
-| warn | `No mail provider configured - email notification skipped` | `recipientCount`†, `session`, `subject`† | session_controller_actions.go |
+| warn | `No mail provider configured - email notification skipped` | `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
 | warn | `No remaining capacity for approvers, skipping group` | `escalation`, `group`†, `totalApproversLimit`† | session_request_helpers.go |
 | warn | `Reason field sanitization failed` | `error` | session_controller.go |
 | warn | `Refusing to create session without matched escalation` | `cluster`, `group`†, `user`† | session_request_helpers.go |
