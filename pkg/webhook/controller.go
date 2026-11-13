@@ -3,6 +3,8 @@ package webhook
 import (
 	"context"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"net/url"
 	"slices"
@@ -870,8 +872,8 @@ func RequireClusterIdentity(log *zap.SugaredLogger) gin.HandlerFunc {
 
 // CertificateNamesCluster reports whether cert identifies cluster: one of
 // its DNS SANs equals cluster exactly, or, only when the certificate has no
-// subject alternative names of any kind (DNS, IP, URI or email), its subject
-// common name equals cluster exactly. A certificate with SANs is matched by
+// subjectAltName extension at all (no DNS, IP, URI, email or other SAN), its
+// subject common name equals cluster exactly. A certificate with SANs is matched by
 // its DNS SANs alone, so it cannot claim a cluster through its common name.
 func CertificateNamesCluster(cert *x509.Certificate, cluster string) bool {
 	if cluster == "" {
@@ -880,10 +882,23 @@ func CertificateNamesCluster(cert *x509.Certificate, cluster string) bool {
 	if len(cert.DNSNames) > 0 {
 		return slices.Contains(cert.DNSNames, cluster)
 	}
-	if len(cert.IPAddresses) > 0 || len(cert.URIs) > 0 || len(cert.EmailAddresses) > 0 {
+	if hasSubjectAltNames(cert) {
 		return false
 	}
 	return cert.Subject.CommonName == cluster
+}
+
+// oidSubjectAltName is the subjectAltName extension (RFC 5280, 4.2.1.6).
+var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
+
+// hasSubjectAltNames reports whether cert has a subjectAltName extension,
+// including SAN types that crypto/x509 does not parse (for example
+// registeredID or otherName), or any parsed SAN.
+func hasSubjectAltNames(cert *x509.Certificate) bool {
+	if len(cert.DNSNames) > 0 || len(cert.IPAddresses) > 0 || len(cert.URIs) > 0 || len(cert.EmailAddresses) > 0 {
+		return true
+	}
+	return slices.ContainsFunc(cert.Extensions, func(ext pkix.Extension) bool { return ext.Id.Equal(oidSubjectAltName) })
 }
 
 func (b *WebhookController) Handlers() []gin.HandlerFunc {

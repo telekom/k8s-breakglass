@@ -281,7 +281,7 @@ server:
 Under `clientAuth: require` every connection must present a certificate signed
 by `clientCAFile`, and the certificate must name the cluster in the request
 path: a DNS SAN equal to the `ClusterConfig` name or, only for a certificate
-without any SANs, a matching common name. A spoke apiserver therefore cannot
+without a subjectAltName extension, a matching common name. A spoke apiserver therefore cannot
 query the webhook for another cluster (HTTP 403). `disableOnMainListener`
 removes the routes from the main listener, so the unauthenticated path is
 closed. Expose port 8443 through its own Service and a TLS-passthrough route

@@ -1,14 +1,20 @@
 package webhook
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -96,4 +102,41 @@ func TestRequireClusterIdentity(t *testing.T) {
 			assert.Equal(t, tt.want == http.StatusOK, reached, "authorize handler reached")
 		})
 	}
+}
+
+// TestCertificateNamesClusterUnparsedSAN uses a parsed certificate whose only
+// SAN is a registeredID, which crypto/x509 does not expose in any field: the
+// SAN extension alone must still disable the CN fallback.
+func TestCertificateNamesClusterUnparsedSAN(t *testing.T) {
+	newCert := func(t *testing.T, extra []pkix.Extension) *x509.Certificate {
+		t.Helper()
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		tmpl := &x509.Certificate{
+			SerialNumber:    big.NewInt(1),
+			Subject:         pkix.Name{CommonName: "prod-eu"},
+			NotBefore:       time.Now().Add(-time.Hour),
+			NotAfter:        time.Now().Add(time.Hour),
+			ExtraExtensions: extra,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		require.NoError(t, err)
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		return cert
+	}
+	oid, err := asn1.Marshal(asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1})
+	require.NoError(t, err)
+	// GeneralNames ::= SEQUENCE OF GeneralName; registeredID is [8] IMPLICIT OID.
+	san, err := asn1.Marshal([]asn1.RawValue{{Class: asn1.ClassContextSpecific, Tag: 8, Bytes: oid[2:]}})
+	require.NoError(t, err)
+
+	registeredID := newCert(t, []pkix.Extension{{Id: asn1.ObjectIdentifier{2, 5, 29, 17}, Value: san}})
+	require.Empty(t, registeredID.DNSNames)
+	require.Empty(t, registeredID.URIs)
+	require.Empty(t, registeredID.IPAddresses)
+	require.Empty(t, registeredID.EmailAddresses)
+	assert.False(t, CertificateNamesCluster(registeredID, "prod-eu"), "registeredID-only SAN must not fall back to the CN")
+
+	assert.True(t, CertificateNamesCluster(newCert(t, nil), "prod-eu"), "a certificate without SANs is matched by its CN")
 }

@@ -330,10 +330,11 @@ client certificate must name `{cluster-name}`:
 
 - if the certificate has DNS subject alternative names, one of them must equal
   `{cluster-name}` exactly; the common name is ignored;
-- if it has no DNS SANs but other SANs (IP, URI or email), it never matches;
-  the common name is ignored;
-- only a certificate without any SANs is matched by its subject common name,
-  which must equal `{cluster-name}` exactly.
+- if it has no DNS SANs but other SANs of any type (IP, URI, email, or types
+  such as `otherName` or `registeredID`), it never matches; the common name
+  is ignored;
+- only a certificate without a subjectAltName extension is matched by its
+  subject common name, which must equal `{cluster-name}` exactly.
 
 Matching is an exact, case-sensitive string comparison, without wildcards.
 Because the common name counts only when there are no SANs at all, a
