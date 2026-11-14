@@ -78,6 +78,11 @@ func DebugSessionAttachedEvent(user string, groups []string, cluster string, ra 
 	if ra == nil || ra.Resource != "pods" || !slices.Contains(DebugSessionAttachOperations, ra.Subresource) {
 		return nil
 	}
+	// The caller's target may not be enriched (audit became ready only after
+	// the decision started); the request always identifies the Pod.
+	if target.Name == "" {
+		target.Kind, target.Name, target.Namespace = ra.Resource, ra.Name, ra.Namespace
+	}
 	target.Cluster = cluster
 	return &Event{
 		Type:   EventDebugSessionAttached,

@@ -6,6 +6,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,6 +75,11 @@ func TestDebugSessionAttachedEvent(t *testing.T) {
 		require.Equal(t, "spoke", event.Target.Cluster)
 		validateBuilt(t, event)
 	}
+	// An unenriched target still identifies the Pod from the request.
+	bare := DebugSessionAttachedEvent("alice", nil, "spoke", ra("pods", "exec"), Target{}, "bg", "dbg", "uid")
+	require.Equal(t, Target{Kind: "pods", Name: "p", Namespace: "n", Cluster: "spoke"}, bare.Target)
+	validateBuilt(t, bare)
+
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", ra("pods", "log"), Target{}, "", "", ""))
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", ra("services", "proxy"), Target{}, "", "", ""))
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", nil, Target{}, "", "", ""))
@@ -102,4 +108,36 @@ func TestDebugSessionAttachedSkipsIdentityLookup(t *testing.T) {
 	svc.enrichResourceIdentity(context.Background(), event)
 	require.Zero(t, lookups.Load())
 	require.Equal(t, "dbg-uid", event.RequestContext.DebugSessionUID)
+}
+
+// The new security events are sensitive: never sampled, and their default
+// severities are fixed.
+func TestSecurityEventsAreNeverSampled(t *testing.T) {
+	for _, eventType := range []EventType{EventEscalationCreated, EventEscalationUpdated, EventEscalationDeleted, EventDebugSessionAttached} {
+		require.True(t, IsSensitiveEvent(eventType), "%s must never be sampled", eventType)
+		require.False(t, IsHighVolumeEvent(eventType), "%s", eventType)
+	}
+	require.Equal(t, SeverityWarning, SeverityForEventType(EventEscalationDeleted))
+	require.Equal(t, SeverityInfo, SeverityForEventType(EventDebugSessionAttached))
+
+	// A Manager that samples them as high-volume types at a rate of zero
+	// still delivers them.
+	security := []EventType{EventEscalationCreated, EventEscalationUpdated, EventEscalationDeleted, EventDebugSessionAttached}
+	var mu sync.Mutex
+	var got []EventType
+	sink := &testSink{name: "sampled", writeFunc: func(e *Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e.Type)
+	}}
+	m := NewManager(sink, ManagerConfig{QueueSize: 16, WorkerCount: 1, SampleRate: 0, sampleRateConfigured: true,
+		HighVolumeEventTypes: append([]EventType{EventConfigChanged}, security...)}, zap.NewNop())
+	require.True(t, m.shouldSample(EventConfigChanged), "control: a non-sensitive high-volume type is sampled out")
+	for _, eventType := range security {
+		m.Emit(context.Background(), &Event{Type: eventType, Actor: Actor{User: "a"}, Target: Target{Kind: "k", Name: "n"}})
+	}
+	require.NoError(t, m.Close())
+	mu.Lock()
+	defer mu.Unlock()
+	require.ElementsMatch(t, security, got)
 }
