@@ -223,7 +223,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| controller | 468 | 346 | 354 | 270 | 0 | 0 | 0 |
+| controller | 468 | 346 | 356 | 270 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -281,6 +281,7 @@ variable part of a concatenated message.
 | warn | `OpenTelemetry initialization failed, tracing disabled` | `error` | main.go |
 | warn | `OpenTelemetry shutdown error` | `error` | main.go |
 | warn | `Session creation rate limiter disabled via --disable-session-rate-limit flag; do not use in production` |  | main.go |
+| warn | `Transitional kubernetes.approverGroupCaseInsensitiveFallback is enabled: approver groups may resolve by a unique case-insensitive Keycloak match` |  | main.go |
 | warn | `artifact storage shutdown error` | `error` | main.go |
 | error | `background component failed, shutting down: %s` |  | main.go |
 
@@ -1217,6 +1218,7 @@ variable part of a concatenated message.
 | info | `Updating escalation status with resolved group members` | `escalation`, `groupCount` | escalation_status_updater.go |
 | warn | `Configured Keycloak group disappeared during lookup` | `error`, `group`† | escalation_status_updater.go |
 | warn | `Configured Keycloak group was not found` | `group`† | escalation_status_updater.go |
+| warn | `Configured approver group is ambiguous; removed cached members from escalation status` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `Configured approver group resolved but has no members` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `Configured approver group was not found; removed stale members from escalation status` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `EscalationManager: configLoader not set, falling back to disk read (performance impact)` |  | escalation_manager.go |
@@ -1247,7 +1249,7 @@ variable part of a concatenated message.
 | error | `Failed updating escalation group sync condition` | `error`, `escalation` | escalation_status_updater.go |
 | error | `Failed updating escalation status` | `error`, `escalation` | escalation_status_updater.go |
 | error | `Keycloak client rejected InsecureSkipVerify=true; configure CertificateAuthority instead` | `baseURL`, `realm` | escalation_status_updater.go |
-| error | `Keycloak group search returned a group without an ID` | `error`, `group`† | escalation_status_updater.go |
+| error | `Keycloak group search returned an unusable match` | `error`, `group`† | escalation_status_updater.go |
 | error | `Keycloak group sync disabled because InsecureSkipVerify=true is not supported` | `baseURL`, `realm` | escalation_status_updater.go |
 | error | `Keycloak groups search failed` | `endpoint`, `error`, `errorType`, `group`†, `params`, `tokenLen` | escalation_status_updater.go |
 | error | `Keycloak members fetch failed` | `endpoint`, `error`, `errorType`, `group`†, `groupID`†, `tokenLen` | escalation_status_updater.go |
