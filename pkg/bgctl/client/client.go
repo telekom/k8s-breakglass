@@ -32,6 +32,7 @@ type Client struct {
 	timeout   time.Duration
 	verbose   bool // Enable verbose logging (correlation IDs, request details)
 	logger    func(format string, args ...any)
+	warnf     func(format string, args ...any)
 }
 
 // DefaultTimeout is the default HTTP client timeout.
@@ -111,7 +112,7 @@ func WithVerbose(logger func(format string, args ...any)) Option {
 
 func WithTLSConfig(caFile string, insecureSkipTLSVerify bool) Option {
 	return func(c *Client) error {
-		tlsConfig, err := loadTLSConfig(caFile, insecureSkipTLSVerify)
+		tlsConfig, err := loadTLSConfig(caFile, insecureSkipTLSVerify, c.warnf)
 		if err != nil {
 			return err
 		}
@@ -121,11 +122,26 @@ func WithTLSConfig(caFile string, insecureSkipTLSVerify bool) Option {
 	}
 }
 
-func loadTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
+// WithWarnf sets the function that reports warnings, such as disabled TLS
+// verification. Apply it before WithTLSConfig. Without it, warnings go to
+// stderr as plain text.
+func WithWarnf(warnf func(format string, args ...any)) Option {
+	return func(c *Client) error {
+		c.warnf = warnf
+		return nil
+	}
+}
+
+func loadTLSConfig(caFile string, insecure bool, warnf func(format string, args ...any)) (*tls.Config, error) {
 	if insecure {
-		// WARNING: InsecureSkipVerify disables TLS certificate verification.
+		// InsecureSkipVerify disables TLS certificate verification.
 		// This is a security risk and should only be used in development/testing.
-		fmt.Fprintln(os.Stderr, "WARNING: TLS certificate verification is disabled. This is insecure and should not be used in production.")
+		const msg = "TLS certificate verification is disabled. This is insecure and should not be used in production."
+		if warnf != nil {
+			warnf(msg)
+		} else {
+			fmt.Fprintln(os.Stderr, "WARNING: "+msg)
+		}
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure} // #nosec G402 -- explicit CLI flag for test/dev endpoints
 	if caFile == "" {

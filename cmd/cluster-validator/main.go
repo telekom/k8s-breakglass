@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/clustervalidator"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
+	"go.uber.org/zap"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -41,6 +43,7 @@ type options struct {
 	timeout          time.Duration
 	includeTimestamp bool
 	skipPods         bool
+	log              logging.Options
 }
 
 func main() {
@@ -48,32 +51,47 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	opts, err := parseOptions(args)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
+	opts, err := parseOptions(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	logger, logErr := logging.NewWriter(stderr, opts.log.Level, opts.log.Format)
+	if logErr != nil {
+		// Without a logger, report the option error and the log option error
+		// as plain lines.
+		for _, e := range []error{err, logErr} {
+			if e != nil {
+				_, _ = fmt.Fprintln(stderr, "cluster-validator:", e)
+			}
 		}
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
+	log := logger.Named("cluster-validator")
+	defer func() { _ = log.Sync() }()
+	if err != nil {
+		log.Error(err.Error())
+		return 2
+	}
+	// client-go (klog) and standard-library log lines use the same format.
+	defer logging.RouteLibraryLogs(log)()
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 	config, err := clientConfig(opts)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not load Kubernetes client configuration", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 	config.Timeout = opts.timeout
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not create Kubernetes client", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not create Kubernetes discovery client", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 
 	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).ValidateWithPodIdentity(
@@ -88,16 +106,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 	)
 	if err := writeReport(report, opts.reportPath); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
+		log.Error("write report to stdout: " + err.Error())
 		return 2
 	}
 	if report.Status != clustervalidator.StatusReady {
@@ -106,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func parseOptions(args []string) (options, error) {
+func parseOptions(args []string, stderr io.Writer) (options, error) {
 	mode := envOr("VALIDATOR_MODE", clustervalidator.ModeOneTime)
 	reportPath := os.Getenv("VALIDATOR_REPORT_PATH")
 	reportPathProvided := reportPath != ""
@@ -120,36 +138,46 @@ func parseOptions(args []string) (options, error) {
 	}
 
 	fs := flag.NewFlagSet("cluster-validator", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	// Parse errors are reported through the logger in run; only --help
+	// prints the usage.
+	fs.SetOutput(io.Discard)
 	fs.StringVar(&mode, "mode", mode, "report mode: one-time or post-upgrade")
 	fs.StringVar(&reportPath, "report", reportPath, "path for the JSON report; use '-' to disable the file")
 	fs.StringVar(&timeoutValue, "timeout", timeoutValue, "overall Kubernetes API timeout")
 	var kubeconfig, contextName string
 	fs.StringVar(&kubeconfig, "kubeconfig", os.Getenv("VALIDATOR_KUBECONFIG"), "kubeconfig path (default: in-cluster, then ~/.kube/config)")
 	fs.StringVar(&contextName, "context", os.Getenv("VALIDATOR_CONTEXT"), "kubeconfig context")
+	// Registered before the first option error, so that every error below
+	// carries the log options (LOG_LEVEL and LOG_FORMAT until flags are parsed).
+	var logOpts logging.Options
+	logOpts.AddFlags(fs, "info", logging.FormatText)
 	includeTimestamp, err := envBool("VALIDATOR_INCLUDE_TIMESTAMP", false)
 	if err != nil {
-		return options{}, err
+		return options{log: logOpts}, err
 	}
 	skipPods, err := envBool("VALIDATOR_SKIP_PODS", false)
 	if err != nil {
-		return options{}, err
+		return options{log: logOpts}, err
 	}
 	fs.BoolVar(&includeTimestamp, "include-timestamp", includeTimestamp, "include a non-deterministic UTC generatedAt field")
 	fs.BoolVar(&skipPods, "skip-pods", skipPods, "skip the cluster-wide pod readiness check")
 	if err := fs.Parse(args); err != nil {
-		return options{}, err
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(stderr)
+			fs.Usage()
+		}
+		return options{log: logOpts}, err
 	}
 	parsedTimeout, err := time.ParseDuration(timeoutValue)
 	if err != nil {
-		return options{}, fmt.Errorf("invalid --timeout %q: %w", timeoutValue, err)
+		return options{log: logOpts}, fmt.Errorf("invalid --timeout %q: %w", timeoutValue, err)
 	}
 	timeout = parsedTimeout
 	if timeout <= 0 {
-		return options{}, errors.New("timeout must be positive")
+		return options{log: logOpts}, errors.New("timeout must be positive")
 	}
 	if mode != clustervalidator.ModeOneTime && mode != clustervalidator.ModePostUpgrade {
-		return options{}, fmt.Errorf("invalid mode %q: must be one-time or post-upgrade", mode)
+		return options{log: logOpts}, fmt.Errorf("invalid mode %q: must be one-time or post-upgrade", mode)
 	}
 	reportFlagProvided := false
 	fs.Visit(func(f *flag.Flag) {
@@ -160,7 +188,7 @@ func parseOptions(args []string) (options, error) {
 		// overwrite a one-time report.
 		reportPath = filepath.Join(defaultReportDirectory, mode+".json")
 	}
-	return options{mode: mode, reportPath: reportPath, kubeconfig: kubeconfig, contextName: contextName, timeout: timeout, includeTimestamp: includeTimestamp, skipPods: skipPods}, nil
+	return options{mode: mode, reportPath: reportPath, kubeconfig: kubeconfig, contextName: contextName, timeout: timeout, includeTimestamp: includeTimestamp, skipPods: skipPods, log: logOpts}, nil
 }
 
 func clientConfig(opts options) (*rest.Config, error) {
@@ -287,14 +315,14 @@ func safeReportPath(path, root string) (string, string, error) {
 	return root, relativePath, nil
 }
 
-func writeResult(report clustervalidator.Report, path string, stdout, stderr io.Writer, exitCode int) int {
+func writeResult(report clustervalidator.Report, path string, stdout io.Writer, log *zap.Logger, exitCode int) int {
 	if err := writeReport(report, path); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
