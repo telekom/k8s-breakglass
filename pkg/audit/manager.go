@@ -238,9 +238,11 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 // emittedHook observes every event that a Manager accepts.
 var emittedHook atomic.Pointer[func(*Event)]
 
-// ObserveEmitted registers fn to observe every event that a Manager accepts,
-// after its defaults (ID, timestamp, severity, schema version) are applied;
-// nil removes it. Contract tests (pkg/audit/audittest) use it to validate
+// ObserveEmitted registers fn to observe every event that a Manager accepted:
+// queued, or written by EmitSync. It runs after the event's defaults (ID,
+// timestamp, severity, schema version) are applied and never for an event
+// that was filtered, sampled, dropped or rejected; nil removes it. fn must
+// only read the event. Contract tests (pkg/audit/audittest) use it to validate
 // emitted events against the published schema.
 func ObserveEmitted(fn func(*Event)) {
 	if fn == nil {
@@ -320,7 +322,6 @@ func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitR
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
-	observeEmitted(event)
 
 	// Non-blocking send to async queue.
 	// Hold closeMu.RLock so that Close cannot close the channel concurrently.
@@ -338,6 +339,7 @@ func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitR
 		select {
 		case m.asyncQueue <- event:
 			m.queuedEvents.Add(1)
+			observeEmitted(event)
 			return emitAccepted
 		case <-m.workerCtx.Done():
 			if countDrops {
@@ -356,6 +358,7 @@ func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitR
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
+		observeEmitted(event)
 		return emitAccepted
 	default:
 		// Queue is full. Emit never writes synchronously: its callers include the
@@ -571,9 +574,11 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
+	if err := m.syncWriteDirect(ctx, event); err != nil {
+		return err
+	}
 	observeEmitted(event)
-
-	return m.syncWriteDirect(ctx, event)
+	return nil
 }
 
 // shouldSample returns true if the event should be sampled (dropped).

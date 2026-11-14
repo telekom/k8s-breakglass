@@ -272,3 +272,23 @@ func TestManagerEnqueueTimeoutCountingSplit(t *testing.T) {
 	require.False(t, m.TryEmit(context.Background(), event()))
 	require.Equal(t, before+1, timeouts(), "counted for callers that do not retry")
 }
+
+// ObserveEmitted sees only accepted events: a dropped enqueue is not
+// observed, so tests that count observations see no phantom duplicates.
+func TestObserveEmittedOnlyAccepted(t *testing.T) {
+	var observed atomic.Int32
+	ObserveEmitted(func(*Event) { observed.Add(1) })
+	t.Cleanup(func() { ObserveEmitted(nil) })
+	sink := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { close(sink.release) })
+	m := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: true}, zap.NewNop())
+	event := func() *Event {
+		return &Event{Type: EventEscalationUpdated, Actor: Actor{User: "system"}, Target: Target{Kind: "BreakglassEscalation", Name: "e"}}
+	}
+	require.True(t, m.TryEmit(context.Background(), event()))
+	<-sink.started
+	require.True(t, m.TryEmit(context.Background(), event()))
+	require.False(t, m.TryEmitRetryable(context.Background(), event()))
+	require.False(t, m.TryEmit(context.Background(), event()))
+	require.EqualValues(t, 2, observed.Load(), "only the two accepted events are observed")
+}
