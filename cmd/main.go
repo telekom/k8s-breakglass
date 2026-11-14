@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -157,7 +158,9 @@ func run() error {
 	}
 
 	// Setup logging with zap
-	zapLogger, err := utils.SetupLogger(cliConfig.Debug)
+	logLevel, logFormat := cliConfig.Logging()
+	debugLogging := logLevel == "debug"
+	zapLogger, err := logging.New(logLevel, logFormat)
 	if err != nil {
 		return fmt.Errorf("setup logger: %w", err)
 	}
@@ -171,14 +174,19 @@ func run() error {
 		_ = zapLogger.Sync()
 	}()
 
+	// Route controller-runtime, client-go (klog), OpenTelemetry and the
+	// standard library log package (net/http server errors, for example)
+	// through the same logger, so that every line has the selected format.
 	ctrl.SetLogger(zapr.NewLogger(zapLogger))
+	defer logging.RouteLibraryLogs(zapLogger)()
 
 	log := zapLogger.Sugar()
 	log.Infow("Starting breakglass controller", "version", system.Version)
 
 	if cliConfig.Debug {
-		log.Debug("Debug logging enabled")
+		log.Warnw("--debug is deprecated; use --log-level=debug and, for this output format, --log-format=console")
 	}
+	log.Debugw("Debug logging enabled", "logLevel", logLevel, "logFormat", logFormat)
 
 	// Log all startup configuration flags for debuggability
 	cliConfig.Print(log)
@@ -202,7 +210,7 @@ func run() error {
 		log.Infow("Log redaction enabled via config")
 	}
 
-	if cliConfig.Debug {
+	if debugLogging {
 		log.Infow("Configuration loaded (redacted)",
 			"configPath", cliConfig.ConfigPath,
 			"enableFrontend", cliConfig.EnableFrontend,
@@ -245,7 +253,9 @@ func run() error {
 		otelShutdown = func(context.Context) error { return nil }
 	}
 
-	server := api.NewServer(zapLogger, cfg, cliConfig.Debug, auth)
+	// Gin's debug mode writes plain-text lines to stdout, so keep it to the
+	// human-readable console format.
+	server := api.NewServer(zapLogger, cfg, debugLogging && logFormat == "console", auth)
 
 	// Create a unified scheme with all CRDs registered
 	scheme, err := utils.CreateScheme()

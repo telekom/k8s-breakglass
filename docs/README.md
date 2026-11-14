@@ -28,6 +28,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
+- **[Logging Reference](./logging-reference.md)** - What every program logs at which level, with fields, personal-data notes and the generated message catalogue
 - **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
 - **[DebugSession authoring guide](./debug-session-authoring.md)** - Generic template, identity, isolation, lifecycle, and utility-mode guidance
 - **[Network-debug runbook](./network-debug-image.md)** - Intent-driven network diagnostics and host/pod capture limits
