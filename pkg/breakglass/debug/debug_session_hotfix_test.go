@@ -706,3 +706,33 @@ func TestHotfixAPIRejectsGenericOverrides(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "hotfix accepts only the typed hotfix request")
 }
+
+// TestHotfixFailsBeforeLeaseWhenRequiredAuxiliaryKindIsNotServed covers #1663
+// for hotfix sessions, which skip deployDebugResources.
+func TestHotfixFailsBeforeLeaseWhenRequiredAuxiliaryKindIsNotServed(t *testing.T) {
+	f := newHotfixFixture(t, 2, 0)
+	f.c.auxiliaryMgr = newTestAuxiliaryResourceManager()
+	f.tmpl.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
+		Name: "policy-exception", Category: "policy-exceptions", CreateBefore: ptr.To(true),
+		TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ .session.name }}\n",
+	}}
+	f.tmpl.Spec.RequiredAuxiliaryResourceCategories = []string{"policy-exceptions"}
+	require.NoError(t, f.hub.Update(t.Context(), f.tmpl))
+	f.c.targetClientFactory = func(*rest.Config) (client.Client, error) {
+		// The spoke serves no PolicyException; List raises NoMatch client-side.
+		return interceptor.NewClient(f.spoke.(client.WithWatch), interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if list.GetObjectKind().GroupVersionKind().Kind == "PolicyExceptionList" {
+				return policyExceptionNoMatch()
+			}
+			return cl.List(ctx, list, opts...)
+		}}), nil
+	}
+	ds := f.drive(t, f.session(t, "plan-unserved", filePlanRequest(map[string]string{"pool": "w"})))
+	require.NotEqual(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+	require.NotNil(t, ds.Status.Hotfix)
+	require.Equal(t, breakglassv1alpha1.HotfixPhaseFailed, ds.Status.Hotfix.Phase)
+	require.Contains(t, ds.Status.Message, "requires policies.kyverno.io/v1 PolicyException")
+	require.Empty(t, ds.Status.Hotfix.ClusterLeaseUID, "no cluster Lease is taken")
+	require.Empty(t, f.leases(t))
+	require.Empty(t, f.pods(t))
+}

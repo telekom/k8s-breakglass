@@ -568,17 +568,116 @@ kubectl get secrets,configmaps -n breakglass-system -o yaml > backup.yaml
 
 ## Uninstalling Breakglass
 
-```bash
-# Delete all custom resources
-kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all
+Uninstall in this order. Keep the controller running until step 6, and the
+ClusterConfigs it needs to reach target clusters until step 5: it cleans up the spoke
+resources of debug sessions and releases the
+`breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
+of Applied DebugSessionCleanupAcknowledgements.
 
-# Delete deployment
+Deleting a DebugSession object is **not** a cleanup barrier. Only sessions
+whose template uses node maintenance, a hotfix or an admission recipe carry a
+finalizer; every other session (workload, hybrid, kubectl-debug) disappears
+at once and leaves its spoke resources behind. So end sessions through the
+API first and delete the objects only after their cleanup has finished:
+
+```bash
+# 1. End every session through the API (or let it expire). Pending sessions
+#    can be rejected instead.
+bgctl debug session list
+bgctl debug session terminate <session>
+
+# 2. Wait until every session reports CleanupComplete=True. The controller
+#    sets it only on a terminal session (Expired, Terminated, Failed or
+#    Rejected) whose tracked spoke resources (deployed, auxiliary and
+#    pod-template resources, kubectl-debug operations and copied pods, node
+#    maintenance, hotfix and admission-recipe state) are all gone and whose
+#    cleanup is not failing.
+#    kubectl wait fails with "no matching resources found" when there are no
+#    sessions, so it runs only if sessions exist. A session whose cleanup
+#    failed (CleanupFailed=True) does not become CleanupComplete until a retry
+#    succeeds or its residuals are acknowledged, so the wait may run into its
+#    timeout; use the check below.
+sessions=$(kubectl get debugsessions -A -o name)
+[ -z "$sessions" ] || kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
+# If the wait times out, list the sessions that are not done yet:
+kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
+# For a session with CLEANUP_FAILED=True, verify its residual resources are
+# gone and retire its resource inventory entries with a
+# DebugSessionCleanupAcknowledgement
+# (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone).
+# kubectl-debug copied Pods, admission-recipe targets and node-maintenance or
+# hotfix state cannot be acknowledged: restore access to the target cluster
+# so cleanup can retry, or delete them on the target. Then wait again. Resources a template keeps on purpose (deleteAfter: false)
+# are not removed by any step.
+
+# 3. Delete the session objects and wait until they are gone.
+kubectl delete debugsessions --all -A --wait=true --timeout=10m
+
+# 4. With no session left, the controller releases every acknowledgement.
+#    Verify that no acknowledgement still carries a finalizer (no output):
+kubectl get debugsessioncleanupacknowledgements -A \
+  -o jsonpath='{range .items[?(@.metadata.finalizers)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+kubectl delete debugsessioncleanupacknowledgements --all -A --wait
+
+# 5. Delete the remaining custom resources.
+kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A --wait
+
+# 6. Only then remove the controller.
 kubectl delete namespace breakglass-system
 
 # On tenant clusters, remove webhook config:
 # 1. Remove authorization-config.yaml
 # 2. Remove webhook kubeconfig
 # 3. Restart kube-apiserver
+```
+
+If the controller was removed first, the namespace or CRD deletion hangs on
+these finalizers. (If only the DebugSession CRD was removed while the
+controller still runs, it releases the acknowledgements itself.) Remove the
+acknowledgement retention finalizer by hand. This drops the retirement
+evidence, which is safe only because no controller will process the sessions
+again, and removing a finalizer is an UPDATE, which the acknowledgement
+validating webhook (`failurePolicy: Fail`) rejects while it is registered
+but no controller serves it. So, in this order:
+
+```bash
+# 1. Make sure no controller runs (skip if its namespace is already gone)
+#    and that no pod remains.
+kubectl -n breakglass-system scale deployment/breakglass-manager --replicas=0
+kubectl -n breakglass-system wait --for=delete pod -l app=breakglass --timeout=2m
+
+# 2. Delete the breakglass ValidatingWebhookConfiguration (its name depends on
+#    the kustomize prefix; find it by the acknowledgement webhook it holds).
+ACK_WEBHOOK=debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com
+kubectl get validatingwebhookconfigurations -o json |
+  jq -r --arg w "$ACK_WEBHOOK" '.items[] | select(any(.webhooks[]?; .name == $w)) | .metadata.name' |
+  xargs -r kubectl delete validatingwebhookconfiguration
+
+# 3. Only then remove the retention finalizers.
+kubectl get debugsessioncleanupacknowledgements -A --no-headers \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name |
+while read -r ns name; do
+  kubectl patch debugsessioncleanupacknowledgement "$name" -n "$ns" \
+    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]'
+done
+```
+
+When downgrading to a version without cleanup acknowledgements, keep the
+controller running (it does not process acknowledgements) and delete only
+the acknowledgement entry of the webhook configuration before step 3:
+applying the older manifests with `kubectl apply` removes the entry, but
+other tooling (for example server-side apply by another field manager) can
+leave it behind, and the older controller does not serve it:
+
+```bash
+ACK_WEBHOOK=debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com
+for vwc in $(kubectl get validatingwebhookconfigurations -o json |
+  jq -r --arg w "$ACK_WEBHOOK" '.items[] | select(any(.webhooks[]?; .name == $w)) | .metadata.name'); do
+  idx=$(kubectl get validatingwebhookconfiguration "$vwc" -o json |
+    jq --arg w "$ACK_WEBHOOK" '.webhooks | map(.name) | index($w)')
+  kubectl patch validatingwebhookconfiguration "$vwc" --type=json \
+    -p="[{\"op\":\"remove\",\"path\":\"/webhooks/$idx\"}]"
+done
 ```
 
 ## Controller Configuration Flags

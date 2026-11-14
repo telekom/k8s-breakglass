@@ -3,6 +3,8 @@ package utils
 import (
 	"fmt"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +30,12 @@ func CreateScheme() (*runtime.Scheme, error) {
 	// Add events.k8s.io/v1 types for SSA-backed event queries
 	if err := eventsv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add eventsv1 to scheme: %w", err)
+	}
+
+	// The DebugSession controller reads ValidatingWebhookConfigurations to
+	// verify that cleanup acknowledgements were admitted by the webhook.
+	if err := admissionregistrationv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add admissionregistrationv1 to scheme: %w", err)
 	}
 
 	// Add custom breakglass CRD types (v1alpha1)

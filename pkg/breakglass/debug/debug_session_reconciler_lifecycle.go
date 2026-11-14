@@ -2,8 +2,11 @@ package debug
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -495,6 +498,11 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	// Process an operator acknowledgement before any mode-specific cleanup, so
+	// a retired auxiliary residual cannot keep a maintenance or hotfix Lease.
+	if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+		return err
+	}
 	if ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted {
 		if err := c.revertAdmissionRecipe(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -530,18 +538,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
 	finishCleanup := func(operationErr error) error {
-		setCleanupCondition(ds)
-		liveWasFailed := false
-		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &liveWasFailed)
-		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
-			if auditManager := c.currentAuditManager(); auditManager != nil {
-				if cleanupConditionFailed(ds) {
-					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
-				} else if liveWasFailed {
-					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
-				}
-			}
-		}
+		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline)
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -635,6 +632,226 @@ const (
 	maxCleanupConditionMessage   = 1024
 )
 
+// processCleanupAcknowledgement applies pending DebugSessionCleanupAcknowledgements
+// for ds and audits each with the acknowledging user as actor.
+//
+// The decision is made durable on the acknowledgement before the session is
+// changed:
+//
+//  1. A replica claims the acknowledgement with an optimistic status write.
+//
+//  2. It decides against the live session and records Applied or Rejected on
+//     the acknowledgement, guarded by the claim's resourceVersion. A replica
+//     whose claim was taken over loses this write and changes nothing.
+//
+//  3. Only a recorded Applied decision is completed on the session. Completion
+//     is idempotent by UID, so a replica that resumes after a crash finishes
+//     it instead of deciding again.
+//
+//  4. The acknowledgement is marked Completed with a guarded write.
+//
+// A rejection is audited by the replica that recorded it; an Applied outcome
+// by the replica whose Completed write wins.
+// ponytail: a replica that stops after that write but before emitting the
+// audit event loses that event (at-most-once).
+func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	pending, err := c.pendingCleanupAcknowledgements(ctx, ds)
+	if err != nil || len(pending) == 0 {
+		return err
+	}
+	webhookActive, webhookSince, err := c.acknowledgementWebhookActive(ctx)
+	if err != nil {
+		return fmt.Errorf("verify the cleanup acknowledgement admission webhook: %w", err)
+	}
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	for i := range pending {
+		ack := &pending[i]
+		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
+		actorVerified := false
+		if ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied {
+			// Decided earlier; only the session completion is outstanding.
+			record = appliedRecord(ack)
+		} else {
+			firstClaim := ack.Status.ClaimedAt == nil
+			claimedAt := metav1.Now()
+			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &claimedAt}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue
+				}
+				return fmt.Errorf("claim cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			if firstClaim && holdCleanupAcknowledgementClaim(ctx, log, ack.Name) {
+				return ctx.Err()
+			}
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			actorRefusal := acknowledgementActorRefusal(ack, webhookActive, webhookSince)
+			actorVerified = actorRefusal == "" // the admission webhook verified acknowledgedBy
+			record = decideCleanupAcknowledgement(live, ack, actorRefusal, c.legacyIdentityFourEyes)
+			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
+				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
+			}
+			if record.Applied {
+				ack.Status.Phase, ack.Status.Retired = breakglassv1alpha1.CleanupAcknowledgementApplied, record.Retired
+				// Retain the acknowledgement before its decision is durable;
+				// it stays the retirement evidence until the session is gone.
+				status := ack.Status
+				if err := c.retainAcknowledgement(ctx, ack); err != nil {
+					if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+						continue // taken over or deleted: change nothing
+					}
+					return fmt.Errorf("retain cleanup acknowledgement %s: %w", ack.Name, err)
+				}
+				ack.Status = status
+			}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue // taken over: this replica changes nothing
+				}
+				return fmt.Errorf("record cleanup acknowledgement %s decision: %w", ack.Name, err)
+			}
+			if !record.Applied {
+				// Rejections change no session state; the deciding replica
+				// audits them.
+				log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", ack.Spec.AcknowledgedBy, "reason", record.Message)
+				if c.shouldEmitAudit(ctx, ds) {
+					if auditManager := c.currentAuditManager(); auditManager != nil {
+						auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, actorVerified, ack.Spec.Reason, false, nil, record.Message)
+					}
+				}
+				continue
+			}
+		}
+
+		// Complete an Applied decision on the session (idempotent), then mark
+		// the acknowledgement Completed with a write guarded by its
+		// resourceVersion. Only the replica that wins that write audits the
+		// Applied outcome, so it is audited exactly once even if the
+		// residuals were already gone or a completion was retried.
+		// First persist the session's cleanup state before completion on the
+		// acknowledgement, so a completion retried after a transient failure
+		// still audits the transition it caused.
+		if ack.Status.Transition == nil {
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			ack.Status.Transition = &breakglassv1alpha1.CleanupAcknowledgementTransition{CleanupFailed: cleanupConditionFailed(live)}
+			if condition := live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+				ack.Status.Transition.ResidualSetDigest = residualSetDigestFromMessage(condition.Message)
+			}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue // another replica is completing it
+				}
+				return fmt.Errorf("record cleanup acknowledgement %s transition: %w", ack.Name, err)
+			}
+		}
+		transition := *ack.Status.Transition
+		recorded := false
+		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+				if ds.UID != "" && current.UID != ds.UID {
+					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
+				}
+				var changed bool
+				if changed, recorded = completeCleanupAcknowledgement(current, record); !changed {
+					return false, nil
+				}
+				setCleanupCondition(current)
+				if current.Generation > 0 {
+					current.Status.ObservedGeneration = current.Generation
+				}
+				return true, nil
+			})
+		if err != nil {
+			return fmt.Errorf("apply cleanup acknowledgement %s: %w", ack.Name, err)
+		}
+		ds.Status = patched.Status
+		ds.ResourceVersion = patched.ResourceVersion
+		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+		if recorded && !acknowledgementProcessed(ds, record.UID) {
+			// The record was written but is absent, so the API server pruned
+			// the field because the DebugSession CRD predates this
+			// controller. The retirement persisted and the acknowledgement
+			// keeps its provenance; only the session record and the
+			// CleanupAcknowledged reason are lost.
+			c.crdOutdatedOnce.Do(func() {
+				log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
+			})
+		}
+		completedAt := metav1.Now()
+		ack.Status.CompletedAt = &completedAt
+		if err := c.client.Status().Update(ctx, ack); err != nil {
+			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+				continue // another replica completed and audits it
+			}
+			return fmt.Errorf("record cleanup acknowledgement %s completion: %w", ack.Name, err)
+		}
+		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", identityStrings(record.Retired))
+		if c.shouldEmitAudit(ctx, ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				// Applied implies the actor was verified when it was decided.
+				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, true, ack.Spec.Reason, true, identityStrings(record.Retired), "")
+				switch {
+				case transition.CleanupFailed && !cleanupConditionFailed(ds):
+					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				case cleanupConditionFailed(ds) && transition.ResidualSetDigest != cleanupResidualSetDigest(ds):
+					// A partial acknowledgement leaves a different residual
+					// set; report it once, as finishCleanup would.
+					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// recordCleanupOutcome persists the CleanupFailed condition for the current
+// inventory and audits the transition: cleanup_failed once per distinct
+// residual set, cleanup_recovered when a failure clears. Every cleanup path,
+// including deletion, uses it.
+func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus) error {
+	setCleanupCondition(ds)
+	var previous metav1.Condition
+	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+		return err
+	}
+	liveWasFailed := previous.Status == metav1.ConditionTrue
+	if !c.shouldEmitAudit(ctx, ds) {
+		return nil
+	}
+	auditManager := c.currentAuditManager()
+	if auditManager == nil {
+		return nil
+	}
+	if cleanupConditionFailed(ds) {
+		// The condition message names the residual set. Emit once per
+		// distinct set rather than on every retry (#1663); the recovered
+		// event is the final event.
+		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
+			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+		}
+	} else if liveWasFailed {
+		auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+	}
+	return nil
+}
+
+func appliedCleanupAcknowledgements(ds *breakglassv1alpha1.DebugSession) []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+	var applied []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
+	for _, record := range ds.Status.CleanupAcknowledgements {
+		if record.Applied {
+			applied = append(applied, record)
+		}
+	}
+	return applied
+}
+
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	return condition != nil && condition.Status == metav1.ConditionTrue
@@ -651,6 +868,18 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "CleanupFailed"
 		condition.Message = boundedCleanupConditionMessage(ds)
+	} else if retirements := appliedCleanupAcknowledgements(ds); len(retirements) > 0 {
+		// Keep the distinction between acknowledged and observed deletion.
+		retired, by := 0, make([]string, 0, len(retirements))
+		for _, ack := range retirements {
+			retired += len(ack.Retired)
+			if !slices.Contains(by, ack.AcknowledgedBy) {
+				by = append(by, ack.AcknowledgedBy)
+			}
+		}
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "CleanupAcknowledged"
+		condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources were retired by operator acknowledgement from %s.", retired, strings.Join(by, ", "))
 	} else {
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "CleanupRecovered"
@@ -663,10 +892,26 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 }
 
 func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
+	return residualIdentities(ds, true)
+}
+
+// cleanupResidualSetDigest identifies the complete residual set, independent
+// of the report and condition-message bounds, so a change beyond those bounds
+// is still a distinct cleanup failure (#1663).
+func cleanupResidualSetDigest(ds *breakglassv1alpha1.DebugSession) string {
+	identities := residualIdentities(ds, false)
+	slices.Sort(identities)
+	sum := sha256.Sum256([]byte(strings.Join(identities, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// residualIdentities lists residual identities; bounded applies the audit
+// report's count and length limits.
+func residualIdentities(ds *breakglassv1alpha1.DebugSession, bounded bool) []string {
 	identities := make([]string, 0, maxCleanupResidualIdentities)
 	seen := make(map[string]struct{}, maxCleanupResidualIdentities)
 	add := func(apiVersion, kind, namespace, name, uid string) {
-		if name == "" || len(identities) >= maxCleanupResidualIdentities {
+		if name == "" || (bounded && len(identities) >= maxCleanupResidualIdentities) {
 			return
 		}
 		identity := kind + "/" + name
@@ -679,7 +924,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		if uid != "" {
 			identity += " (uid=" + uid + ")"
 		}
-		if len(identity) > maxCleanupIdentityLength {
+		if bounded && len(identity) > maxCleanupIdentityLength {
 			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
 		}
 		if _, exists := seen[identity]; exists {
@@ -736,17 +981,32 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	return identities
 }
 
+// cleanupConditionDigestPrefix starts every CleanupFailed message so the
+// residual-set digest survives message truncation.
+const cleanupConditionDigestPrefix = "Cleanup failed (residual set "
+
 func boundedCleanupConditionMessage(ds *breakglassv1alpha1.DebugSession) string {
-	const prefix = "Cleanup failed; residual resources: "
+	digest := cleanupResidualSetDigest(ds)
 	identities := cleanupResidualIdentities(ds)
 	if len(identities) == 0 {
-		return "Cleanup failed; residual resources remain in the durable inventory."
+		return cleanupConditionDigestPrefix + digest + "); residual resources remain in the durable inventory."
 	}
-	message := prefix + strings.Join(identities, ", ")
+	message := cleanupConditionDigestPrefix + digest + "); residual resources: " + strings.Join(identities, ", ")
 	if len(message) <= maxCleanupConditionMessage {
 		return message
 	}
 	return message[:maxCleanupConditionMessage-len("...")] + "..."
+}
+
+// residualSetDigestFromMessage extracts the digest written by
+// boundedCleanupConditionMessage; messages from older controllers yield "".
+func residualSetDigestFromMessage(message string) string {
+	rest, ok := strings.CutPrefix(message, cleanupConditionDigestPrefix)
+	if !ok {
+		return ""
+	}
+	digest, _, _ := strings.Cut(rest, ")")
+	return digest
 }
 
 func residualResourceIdentities(refs []breakglassv1alpha1.DeployedResourceRef) string {
@@ -776,13 +1036,22 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	return c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, observed, nil)
 }
 
-func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, wasFailed *bool) error {
+// patchDebugSessionCleanupStatusWithTransition stores into previous (when
+// non-nil) the live CleanupFailed condition observed before the patch, or the
+// zero condition when none existed.
+func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
 		cleanupBaseline = *baseline
 	}
-	var previouslyFailed bool
+	var previousCondition metav1.Condition
+	// Completed acknowledgements may have retired identities without a
+	// session record; keep those retired against stale writers too.
+	completed, err := c.completedRetirements(ctx, ds)
+	if err != nil {
+		return err
+	}
 	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -790,7 +1059,10 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 				return false, fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
 			}
 
-			previouslyFailed = cleanupConditionFailed(current)
+			previousCondition = metav1.Condition{}
+			if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+				previousCondition = *condition
+			}
 			current.Status.DeployedResources = mergeCleanupInventory(
 				cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
 				deployedResourceKey,
@@ -809,6 +1081,13 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
+			// Acknowledgement records are written only by
+			// processCleanupAcknowledgement against the live status; other
+			// cleanup writers keep the live records as they are.
+			// Residuals retired by an applied acknowledgement stay retired even
+			// when a stale concurrent writer still lists them.
+			retireAcknowledgedResiduals(current)
+			retireIdentities(current, completed, acknowledgedAbsentReason)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)
@@ -824,8 +1103,8 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 		return fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
 
-	if wasFailed != nil {
-		*wasFailed = previouslyFailed
+	if previous != nil {
+		*previous = previousCondition
 	}
 	ds.Status = patched.Status
 	ds.ResourceVersion = patched.ResourceVersion
@@ -1052,6 +1331,34 @@ func mergeAuxiliaryResourceStatuses(
 ) []breakglassv1alpha1.AuxiliaryResourceStatus {
 	desired = promoteObservedCleanupIntents(desired, current)
 	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
+	defer func() {
+		// Deletion evidence is monotonic: a stale writer cannot undo a
+		// concurrently recorded deletion of a primary or child.
+		live := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(current))
+		for _, status := range current {
+			live[auxiliaryResourceStatusKey(status)] = status
+		}
+		for i := range merged {
+			cur, ok := live[auxiliaryResourceStatusKey(merged[i])]
+			if !ok {
+				continue
+			}
+			if cur.Deleted && !merged[i].Deleted {
+				merged[i].Deleted, merged[i].DeletedAt, merged[i].Error = true, cur.DeletedAt, cur.Error
+			}
+			deletedChildren := make(map[string]breakglassv1alpha1.AdditionalResourceRef)
+			for _, child := range cur.AdditionalResources {
+				if child.Deleted {
+					deletedChildren[additionalResourceKey(child)] = child
+				}
+			}
+			for j := range merged[i].AdditionalResources {
+				if child, ok := deletedChildren[additionalResourceKey(merged[i].AdditionalResources[j])]; ok && !merged[i].AdditionalResources[j].Deleted {
+					merged[i].AdditionalResources[j].Deleted, merged[i].AdditionalResources[j].Error = true, child.Error
+				}
+			}
+		}
+	}()
 	desiredByKey := make(map[string]int, len(desired))
 	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
 	for i, status := range desired {
@@ -1791,4 +2098,39 @@ func auxiliaryResourceCoordinatesKnown(ds *breakglassv1alpha1.DebugSession, ref 
 		}
 	}
 	return false
+}
+
+// markCleanupComplete sets CleanupComplete=True once the live session is
+// terminal, tracks no spoke resources and is not failing cleanup, so
+// operators can wait on an explicit marker before deleting the object.
+func (c *DebugSessionController) markCleanupComplete(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if cleanupCompleteRecorded(ds) {
+		return nil
+	}
+	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+			if (ds.UID != "" && current.UID != ds.UID) || !debugSessionTerminal(current) || hasTrackedSpokeResources(current) ||
+				cleanupConditionFailed(current) || cleanupCompleteRecorded(current) {
+				return false, nil
+			}
+			current.SetCondition(metav1.Condition{
+				Type: string(breakglassv1alpha1.DebugSessionConditionCleanupComplete), Status: metav1.ConditionTrue,
+				Reason: "NoTrackedResources", Message: "No tracked spoke resources remain; the session object can be deleted.",
+				ObservedGeneration: current.Generation, LastTransitionTime: metav1.Now(),
+			})
+			return true, nil
+		})
+	if err != nil {
+		return fmt.Errorf("record cleanup completion: %w", err)
+	}
+	if patched != nil {
+		ds.Status, ds.ResourceVersion = patched.Status, patched.ResourceVersion
+	}
+	return nil
+}
+
+func cleanupCompleteRecorded(ds *breakglassv1alpha1.DebugSession) bool {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupComplete))
+	return condition != nil && condition.Status == metav1.ConditionTrue
 }
