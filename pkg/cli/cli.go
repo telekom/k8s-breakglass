@@ -51,6 +51,9 @@ type Config struct {
 	BreakglassNamespace     string
 	DisableEmail            bool
 	DisableSessionRateLimit bool
+	// RequireSyncedApproverGroups denies approval by approver groups that have
+	// not been synced yet instead of falling back to token groups.
+	RequireSyncedApproverGroups bool
 
 	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
 	DisableDebugSessionUnservedKindHandling bool
@@ -211,6 +214,8 @@ func Parse() *Config {
 	flag.BoolVar(&config.AllowLegacyIdentityCleanupAcknowledgement, "allow-legacy-identity-cleanup-acknowledgement",
 		getEnvBool("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", false),
 		"Transitional escape hatch: accept DebugSessionCleanupAcknowledgements for sessions whose requester, participant or approver identities were recorded incompletely (for example before an upgrade), comparing only the recorded identities")
+	flag.BoolVar(&config.RequireSyncedApproverGroups, "require-synced-approver-groups", getEnvBool("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", false),
+		"Deny approval by an approver group until its members have been synced, instead of falling back to token groups")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -298,6 +303,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
 		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
 		"allow_legacy_identity_cleanup_acknowledgement", c.AllowLegacyIdentityCleanupAcknowledgement,
+		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,

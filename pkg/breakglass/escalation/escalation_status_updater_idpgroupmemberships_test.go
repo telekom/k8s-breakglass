@@ -940,11 +940,9 @@ func TestEscalationStatusUpdaterPrunesRemovedApproverGroupsWithStatusUpdate(t *t
 	assert.Equal(t, map[string][]string{
 		"admin": {"alice@example.com"},
 	}, updated.Status.ApproverGroupMembers)
-	assert.Equal(t, map[string]map[string][]string{
-		"idp-a": {
-			"admin": {"alice@example.com"},
-		},
-	}, updated.Status.IDPGroupMemberships)
+	// Legacy mode does not refresh per-IdP snapshots, so it drops them
+	// instead of keeping memberships that could approve after removal.
+	assert.Nil(t, updated.Status.IDPGroupMemberships)
 	assert.Equal(t, int64(1), updated.Status.ObservedGeneration) // Group sync preserves validator-owned generation.
 }
 
