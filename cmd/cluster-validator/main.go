@@ -51,18 +51,19 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	opts, err := parseOptions(args)
+	opts, err := parseOptions(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	logger, logErr := logging.NewWriter(stderr, opts.log.Level, opts.log.Format)
 	if logErr != nil {
-		// Without a logger, report the option error (or the log option error)
-		// as a plain line.
-		if err == nil {
-			err = logErr
+		// Without a logger, report the option error and the log option error
+		// as plain lines.
+		for _, e := range []error{err, logErr} {
+			if e != nil {
+				_, _ = fmt.Fprintln(stderr, "cluster-validator:", e)
+			}
 		}
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	log := logger.Named("cluster-validator")
@@ -123,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func parseOptions(args []string) (options, error) {
+func parseOptions(args []string, stderr io.Writer) (options, error) {
 	mode := envOr("VALIDATOR_MODE", clustervalidator.ModeOneTime)
 	reportPath := os.Getenv("VALIDATOR_REPORT_PATH")
 	reportPathProvided := reportPath != ""
@@ -162,7 +163,7 @@ func parseOptions(args []string) (options, error) {
 	fs.BoolVar(&skipPods, "skip-pods", skipPods, "skip the cluster-wide pod readiness check")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fs.SetOutput(os.Stderr)
+			fs.SetOutput(stderr)
 			fs.Usage()
 		}
 		return options{log: logOpts}, err

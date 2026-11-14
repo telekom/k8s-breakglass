@@ -23,7 +23,7 @@ func TestParseOptionsUsesModeSpecificDefaultReport(t *testing.T) {
 	t.Setenv("VALIDATOR_MODE", "")
 	t.Setenv("VALIDATOR_REPORT_PATH", "")
 	t.Setenv("VALIDATOR_TIMEOUT", "")
-	opts, err := parseOptions([]string{"--mode", clustervalidator.ModePostUpgrade, "--timeout", "2s"})
+	opts, err := parseOptions([]string{"--mode", clustervalidator.ModePostUpgrade, "--timeout", "2s"}, io.Discard)
 	require.NoError(t, err)
 	require.Equal(t, clustervalidator.ModePostUpgrade, opts.mode)
 	require.Equal(t, "/reports/post-upgrade.json", opts.reportPath)
@@ -32,21 +32,22 @@ func TestParseOptionsUsesModeSpecificDefaultReport(t *testing.T) {
 
 func TestParseOptionsRejectsInvalidValues(t *testing.T) {
 	t.Setenv("VALIDATOR_TIMEOUT", "not-a-duration")
-	_, err := parseOptions(nil)
+	_, err := parseOptions(nil, io.Discard)
 	require.ErrorContains(t, err, "invalid --timeout")
 
 	t.Setenv("VALIDATOR_TIMEOUT", "")
-	_, err = parseOptions([]string{"--mode", "unsupported"})
+	_, err = parseOptions([]string{"--mode", "unsupported"}, io.Discard)
 	require.ErrorContains(t, err, "invalid mode")
 
 	t.Setenv("VALIDATOR_INCLUDE_TIMESTAMP", "maybe")
-	_, err = parseOptions(nil)
+	_, err = parseOptions(nil, io.Discard)
 	require.ErrorContains(t, err, "invalid VALIDATOR_INCLUDE_TIMESTAMP")
 }
 
 func TestRunHelpExitsSuccessfully(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, 0, run([]string{"--help"}, &stdout, &stderr))
+	require.Contains(t, stderr.String(), "-mode")
 }
 
 func TestWriteResultProducesContractAndExitCode(t *testing.T) {
@@ -166,4 +167,11 @@ func TestRunLogFormats(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "verbose")
 	require.Equal(t, 2, run(args, &stdout, &stderr))
 	require.Contains(t, stderr.String(), `cluster-validator: invalid log level "verbose"`)
+
+	// Without a logger, both the option error and the log option error are
+	// printed.
+	stderr.Reset()
+	require.Equal(t, 2, run([]string{"--mode", "x"}, &stdout, &stderr))
+	require.Equal(t, "cluster-validator: invalid mode \"x\": must be one-time or post-upgrade\n"+
+		"cluster-validator: invalid log level \"verbose\": must be debug, info, warn or error\n", stderr.String())
 }
