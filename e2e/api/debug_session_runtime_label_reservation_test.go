@@ -235,7 +235,8 @@ spec:
 	require.Eventually(t, func() bool {
 		for _, p := range sessionPods.Items {
 			live := &corev1.Pod{}
-			if err := s.Client.Get(ctx, client.ObjectKeyFromObject(&p), live); err == nil && live.UID == p.UID {
+			err := s.Client.Get(ctx, client.ObjectKeyFromObject(&p), live)
+			if !apierrors.IsNotFound(err) && (err != nil || live.UID == p.UID) {
 				return false
 			}
 		}
