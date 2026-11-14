@@ -40,3 +40,15 @@ section: Behaviour changes
   `debug_session.cleanup_failed`, because their condition message predates the
   residual-set digest. Their next retry then waits the full 5-minute backoff,
   since they have been failing since before the upgrade (#1663).
+- Sessions created, joined or approved before this version have no recorded
+  party identities, so four-eyes cannot compare them fully: every cleanup
+  acknowledgement for them is rejected (fail closed), including sessions
+  already in `CleanupFailed`. To retire residuals of such a session, run the
+  controller with `--allow-legacy-identity-cleanup-acknowledgement`, which
+  compares only the identities that were recorded, create the
+  acknowledgement, then remove the flag again (#1663).
+- Downgrading: older controllers never remove the
+  `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
+  from Applied acknowledgements, so deleting an acknowledgement or its
+  namespace hangs. Remove the finalizer by hand as described in
+  `docs/installation.md#uninstalling-breakglass` (#1663).
