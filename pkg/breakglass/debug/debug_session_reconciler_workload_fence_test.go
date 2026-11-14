@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -96,7 +97,7 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 			return cl.Create(ctx, obj, opts...)
 		}}).
 		Build()
-	target := fake.NewClientBuilder().WithScheme(s).
+	target := fake.NewClientBuilder().WithScheme(s).WithRESTMapper(servedKinds(s, schema.GroupVersionKind{Group: "kyverno.io", Version: "v2", Kind: "PolicyException"})).
 		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, cl client.WithWatch, cfg runtime.ApplyConfiguration, opts ...client.ApplyOption) error {

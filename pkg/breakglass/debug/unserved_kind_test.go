@@ -17,8 +17,10 @@ import (
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,6 +31,17 @@ import (
 )
 
 var policyExceptionGVK = schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+
+// servedKinds is a target RESTMapper that serves every kind of s (with its
+// real scope) and the extra namespaced kinds, as the API server's discovery
+// would. Kinds it does not list are unserved: RESTMapping returns NoMatch.
+func servedKinds(s *runtime.Scheme, extra ...schema.GroupVersionKind) meta.RESTMapper {
+	mapper := meta.NewDefaultRESTMapper(nil)
+	for _, gvk := range extra {
+		mapper.Add(gvk, meta.RESTScopeNamespace)
+	}
+	return meta.MultiRESTMapper{testrestmapper.TestOnlyStaticRESTMapper(s), mapper}
+}
 
 func policyExceptionNoMatch() error {
 	return &meta.NoKindMatchError{GroupKind: policyExceptionGVK.GroupKind(), SearchedVersions: []string{"v1"}}
@@ -76,7 +89,7 @@ func unservedTarget(t *testing.T, funcs interceptor.Funcs) client.Client {
 		}
 		return cl.List(ctx, list, opts...)
 	}
-	return fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build()
+	return fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(servedKinds(Scheme)).WithInterceptorFuncs(funcs).Build()
 }
 
 func TestIsKindNotServedError(t *testing.T) {

@@ -839,11 +839,11 @@ func (m *AuxiliaryResourceManager) PreflightAuxiliaryKinds(
 			if err := yaml.Unmarshal(doc, &obj.Object); err != nil || obj.GetKind() == "" {
 				continue
 			}
-			// A bounded List resolves the exact rendered version through the
-			// target RESTMapper; NoMatch is raised before any request is sent.
-			list := &unstructured.UnstructuredList{}
-			list.SetGroupVersionKind(obj.GroupVersionKind().GroupVersion().WithKind(obj.GetKind() + "List"))
-			if listErr := targetClient.List(ctx, list, client.Limit(1)); isKindNotServedError(listErr) {
+			// Resolve the exact rendered version through the target
+			// RESTMapper. A served kind sends no request (a cache miss only
+			// reloads discovery); an unserved one yields NoMatch.
+			gvk := obj.GroupVersionKind()
+			if _, mapErr := targetClient.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version); isKindNotServedError(mapErr) {
 				return fmt.Errorf("%w: auxiliary resource %q requires %s %s, which target cluster %q does not serve; install the API on the target or remove the resource from the template",
 					errAuxiliaryKindNotServed, auxRes.Name, obj.GetAPIVersion(), obj.GetKind(), session.Spec.Cluster)
 			}
