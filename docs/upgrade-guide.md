@@ -183,7 +183,9 @@ controller. When upgrading or downgrading, note:
   already in `CleanupFailed`. To retire residuals of such a session, run the
   controller with `--allow-legacy-identity-cleanup-acknowledgement`, which
   compares only the identities that were recorded, create the
-  acknowledgement, then remove the flag again.
+  acknowledgement, wait until its `status.phase` is `Applied` (each
+  acknowledgement is decided once; without the flag it is rejected), then
+  remove the flag again.
 - Downgrading: older controllers never remove the
   `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
   from Applied acknowledgements, so deleting an acknowledgement or its
