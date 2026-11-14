@@ -7,36 +7,10 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
-
-func TestSetupLoggerLevels(t *testing.T) {
-	for _, debug := range []bool{false, true} {
-		name := "production"
-		if debug {
-			name = "development"
-		}
-		t.Run(name, func(t *testing.T) {
-			logger, err := SetupLogger(debug)
-			if err != nil {
-				t.Fatalf("SetupLogger(%t): %v", debug, err)
-			}
-			t.Cleanup(func() { _ = logger.Sync() }) // Standard streams may not support Sync.
-			if logger.Core().Enabled(zap.DebugLevel) != debug {
-				t.Fatal("development/production debug-level defaults changed")
-			}
-			for _, level := range []zapcore.Level{zap.InfoLevel, zap.WarnLevel, zap.ErrorLevel} {
-				if !logger.Core().Enabled(level) {
-					t.Fatalf("expected %s to be enabled", level.String())
-				}
-			}
-		})
-	}
-}
 
 func TestCreateScheme(t *testing.T) {
 	// Create scheme once and reuse across all subtests for better performance

@@ -16,8 +16,8 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/jsimonetti/rtnetlink/v2 v2.2.0 // indirect
 	github.com/leonhwangprojects/bice v0.1.3 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-colorable v0.1.16 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/mdlayher/netlink v1.8.0 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect

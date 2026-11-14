@@ -19,6 +19,7 @@ package helpers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -52,6 +53,8 @@ type ServerReplica struct {
 	Flags        map[string]string
 	Volumes      []corev1.Volume
 	VolumeMounts []corev1.VolumeMount
+	// Ports are extra container ports the Service exposes next to 8080.
+	Ports []int32
 }
 
 // DeployServerReplica creates the replica and registers it for cleanup. It
@@ -98,6 +101,10 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 	}
 	c.Args = OverrideFlags(c.Args, flags)
 
+	ports := []corev1.ServicePort{{Name: "http", Port: 8080, TargetPort: intstr.FromInt32(8080)}}
+	for _, p := range r.Ports {
+		ports = append(ports, corev1.ServicePort{Name: fmt.Sprintf("port-%d", p), Port: p, TargetPort: intstr.FromInt32(p)})
+	}
 	meta := metav1.ObjectMeta{Name: r.Name, Namespace: s.Namespace, Labels: labels}
 	s.MustCreateResource(&corev1.ConfigMap{ObjectMeta: meta, Data: map[string]string{path.Base(cfgPath): string(raw)}})
 	replicas := int32(1)
@@ -113,7 +120,7 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 		ObjectMeta: meta,
 		Spec: corev1.ServiceSpec{
 			Selector: labels,
-			Ports:    []corev1.ServicePort{{Name: "http", Port: 8080, TargetPort: intstr.FromInt32(8080)}},
+			Ports:    ports,
 		},
 	})
 }
@@ -122,23 +129,36 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 // log of any pod of the replica contains want.
 func ServerReplicaLogsContain(t *testing.T, ctx context.Context, namespace, name, want string) bool {
 	t.Helper()
-	kube, err := kubernetes.NewForConfig(GetConfig(t))
-	require.NoError(t, err)
-	pods, err := kube.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: ServerReplicaLabel + "=" + name})
-	if err != nil {
-		return false
-	}
-	for _, p := range pods.Items {
-		for _, previous := range []bool{false, true} {
-			logs, err := kube.CoreV1().Pods(namespace).GetLogs(p.Name, &corev1.PodLogOptions{
-				Container: p.Spec.Containers[0].Name, Previous: previous,
-			}).DoRaw(ctx)
-			if err == nil && bytes.Contains(logs, []byte(want)) {
+	for _, previous := range []bool{false, true} {
+		for _, logs := range ServerReplicaLogs(t, ctx, namespace, name, previous) {
+			if bytes.Contains(logs, []byte(want)) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// ServerReplicaLogs returns the current (or, with previous, the previous)
+// container log of each pod of the replica that has one.
+func ServerReplicaLogs(t *testing.T, ctx context.Context, namespace, name string, previous bool) [][]byte {
+	t.Helper()
+	kube, err := kubernetes.NewForConfig(GetConfig(t))
+	require.NoError(t, err)
+	pods, err := kube.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: ServerReplicaLabel + "=" + name})
+	if err != nil {
+		return nil
+	}
+	var out [][]byte
+	for _, p := range pods.Items {
+		logs, err := kube.CoreV1().Pods(namespace).GetLogs(p.Name, &corev1.PodLogOptions{
+			Container: p.Spec.Containers[0].Name, Previous: previous,
+		}).DoRaw(ctx)
+		if err == nil {
+			out = append(out, logs)
+		}
+	}
+	return out
 }
 
 // OverrideFlags replaces or appends --name=value flags.

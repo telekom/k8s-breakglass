@@ -11,6 +11,15 @@ updates:
       - /utils/images/storage-debug/kubestr
     allow:
       - dependency-type: "all"
+    ignore:
+      # Versions dictated by kubestr v0.4.49 (indirect in this tool module).
+      # kanister: the only tag (v0.113.0-alpha.1) is older than kubestr's
+      # pseudo-version and changes NewSnapshotter's signature; it moves when
+      # kubestr is bumped. gnostic-models >= 0.7 switches to go.yaml.in/yaml/v3,
+      # which the kube-openapi kubestr pulls in can't compile against.
+      - dependency-name: "github.com/kanisterio/kanister"
+      - dependency-name: "github.com/google/gnostic-models"
+        versions: [">= 0.7.0"]
     schedule:
       interval: "daily"
     cooldown:

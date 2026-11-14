@@ -11,12 +11,15 @@ import (
 
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
 	"go.uber.org/zap"
 )
 
 type Config struct {
-	// Application flags
+	// Logging flags. Debug is the deprecated alias for Log.Level "debug";
+	// use Logging for the effective level and format.
 	Debug bool
+	Log   logging.Options
 
 	// Metrics server flags
 	MetricsAddr     string
@@ -93,7 +96,10 @@ func Parse() *Config {
 	config := &Config{}
 	// Define command-line flags with environment variable fallbacks.
 	// The pattern: flag.XxxVar(&variable, "flag-name", defaultValueOrEnvValue, "help text")
-	flag.BoolVar(&config.Debug, "debug", false, "Enable debug level logging")
+	flag.BoolVar(&config.Debug, "debug", false,
+		"Deprecated: use --log-level=debug. Without --log-format it also selects console output, as before")
+	// Empty defaults: Logging resolves them, taking --debug into account.
+	config.Log.AddFlags(flag.CommandLine, "", "")
 
 	// Webhook server configuration
 	flag.StringVar(&config.Webhook.BindAddr, "webhook-bind-address", getEnvString("WEBHOOK_BIND_ADDRESS", "0.0.0.0:9443"),
@@ -212,8 +218,31 @@ func Parse() *Config {
 	return config
 }
 
+// Logging returns the effective log level and format. An unset level or
+// format defaults to info and json; the deprecated --debug flag changes these
+// defaults to debug and console, which is the output --debug always produced.
+func (c *Config) Logging() (level, format string) {
+	level, format = c.Log.Level, c.Log.Format
+	if level == "" {
+		level = "info"
+		if c.Debug {
+			level = "debug"
+		}
+	}
+	if format == "" {
+		format = "json"
+		if c.Debug {
+			format = "console"
+		}
+	}
+	return level, format
+}
+
 // Validate checks settings required by the enabled runtime roles.
 func (c *Config) Validate() error {
+	if c.Debug && c.Log.Level != "" && c.Log.Level != "debug" {
+		return fmt.Errorf("--debug conflicts with --log-level=%s (LOG_LEVEL); drop the deprecated --debug", c.Log.Level)
+	}
 	if (c.EnableAPI || c.EnableControllers || c.EnableCleanup) && strings.TrimSpace(c.BreakglassNamespace) == "" {
 		return fmt.Errorf("--breakglass-namespace (BREAKGLASS_NAMESPACE) is required when API, controllers, or cleanup is enabled")
 	}
@@ -221,9 +250,13 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) Print(log *zap.SugaredLogger) {
+	// The effective values, after --debug and the defaults are applied.
+	logLevel, logFormat := c.Logging()
 	log.Infow("CLI Configuration",
 		// Debug and logging
 		"debug", c.Debug,
+		"log_level", logLevel,
+		"log_format", logFormat,
 		// Webhook server configuration
 		"webhook_bind_address", c.Webhook.BindAddr,
 		"webhook_cert_path", c.Webhook.CertPath,
