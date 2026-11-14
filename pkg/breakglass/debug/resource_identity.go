@@ -314,7 +314,7 @@ func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj cl
 func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession, createErr error) error {
 	if !apierrors.IsAlreadyExists(createErr) && !isAmbiguousCreateError(createErr) {
 		err := fmt.Errorf("create tracked resource: %w", createErr)
-		if apierrors.IsBadRequest(createErr) || apierrors.IsInvalid(createErr) || apierrors.IsForbidden(createErr) || apierrors.IsUnauthorized(createErr) {
+		if apierrors.IsBadRequest(createErr) || apierrors.IsInvalid(createErr) || apierrors.IsForbidden(createErr) || apierrors.IsUnauthorized(createErr) || isKindNotServedError(createErr) {
 			return &trackedCreateRejectedError{err: err}
 		}
 		return err

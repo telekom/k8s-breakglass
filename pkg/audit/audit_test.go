@@ -44,7 +44,7 @@ var allSensitiveEventTypes = []EventType{
 	EventDebugSessionValidated, EventDebugSessionValidationFailed,
 	EventDebugSessionTerminated, EventDebugSessionFailed,
 	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
-	EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
+	EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered, EventDebugSessionCleanupAcknowledged,
 	EventDebugSessionBindingUnresolved,
 	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 	EventResourceImpersonate, EventPolicyBypassed,
