@@ -260,42 +260,46 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 
 ### Escalation changes (`escalationChange`)
 
-`escalation.created`, `escalation.updated`, `escalation.deleted`. Only the
-leading controller replica records them: every generation that its watch
-delivers (`escalation.created` for generation 1, `escalation.updated` for a
-later one) and every delete that its watch delivers (`escalation.deleted`),
-independently of how the work queue coalesces reconciles. Changes that the
-watch never delivers (for example several edits within one re-list after a
-watch interruption) appear only as their final generation. The event ID is
-`escalation/<uid>/<generation>` or `escalation/<uid>/deleted`; deduplicate on
-`id`.
+`escalation.created`, `escalation.updated`, `escalation.deleted`. Every
+controller replica that runs the reconcilers (`--enable-controllers`, the
+default) records them; the reconciler manager does not use leader election.
+Each replica records every generation that its watch delivers
+(`escalation.created` for generation 1, `escalation.updated` for a later one)
+and every delete that its watch delivers (`escalation.deleted`),
+independently of how its work queue coalesces reconciles. Changes that a watch
+never delivers (for example several edits within one re-list after a watch
+interruption) appear only as their final generation. The event ID is
+`escalation/<uid>/<generation>` or `escalation/<uid>/deleted`, the same on
+every replica, so with several replicas each change arrives once per replica:
+deduplicate on `id`.
 
-When a replica starts leading (after a restart or a leader change), it
-reconciles every existing escalation and emits its current generation again
-with the same ID (without `previousGeneration`). It cannot reconstruct what
-happened before it led: intermediate generations, and escalations deleted
-while no replica was leading or that the previous leader had not delivered.
+When a replica process starts, it reconciles every existing escalation and
+emits its current generation again with the same ID (without
+`previousGeneration`). It cannot reconstruct what happened before it started:
+intermediate generations, and escalations deleted while it was not running.
+Other replicas that were running at the time still emit those.
 
 Delivery guarantee: every recorded generation and delete is its own event
-snapshot, kept in memory until the audit manager's ingress queue accepts it.
-Acceptance is not delivery to a sink: after it, the event follows the sink
-delivery rules in [Audit delivery](audit-delivery.md), including their counted
-losses. Until then (no AuditConfig loaded yet, or the ingress queue full or
-timing out) the leader retries the snapshot with exponential backoff (5 s up
-to 5 min), oldest first, keeping the time it first observed the change; a
-later edit or the delete does not replace an earlier pending snapshot.
-Retention is bounded: at most 2000 pending events, each for at most one hour;
-beyond that the oldest event is dropped with a warning log. With no
+snapshot, kept in the replica's memory until the audit manager's ingress queue
+accepts it. Acceptance is not delivery to a sink: after it, the event follows
+the sink delivery rules in [Audit delivery](audit-delivery.md), including their
+counted losses. Until then (no AuditConfig loaded yet, or the ingress queue
+full or timing out) the replica retries the snapshot with exponential backoff
+(5 s up to 5 min), oldest first, keeping the time it first observed the
+change; a later edit or the delete does not replace an earlier pending
+snapshot. Retention is bounded: at most 2000 pending events, each for at most
+one hour; beyond that the oldest event is dropped with a warning log. With no
 AuditConfig at all, auditing is disabled and nothing is recorded.
 
-So hand-off to the audit pipeline is at least once while the leading process
-runs. On a graceful shutdown (SIGTERM, or a fatal manager error such as a lost
-leader lease) the process delivers all retained events, for up to 10 s, before
-the audit pipeline closes; events it cannot
-deliver in time, and changes its watch delivers after that drain, are counted
-in `breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`.
-A process that ends without a graceful shutdown (crash or OOM kill) loses its
-retained events without counting them.
+So hand-off to the audit pipeline is at least once per running replica. On a
+graceful shutdown of a replica (SIGTERM, or a fatal error that ends the
+process through the normal shutdown path) it delivers all retained events,
+for up to 10 s, before its audit pipeline closes; events it cannot deliver in
+time, and changes its watch delivers after that drain, are counted in
+`breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`.
+A replica that ends without a graceful shutdown (crash or OOM kill) loses its
+retained events without counting them; another running replica may still
+deliver the same events.
 
 The actor is `system`; the event does not identify who changed the spec.
 `resourceVersion` is the version that the controller observed, which can
