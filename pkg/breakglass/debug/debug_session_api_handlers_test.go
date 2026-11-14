@@ -5202,3 +5202,106 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), "platform-debug")
 	})
 }
+
+func TestHandleApproveDebugSession_PersistsEveryApproverIdentity(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default", Labels: map[string]string{DebugSessionLabelKey: "pending-session"}},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "requester@example.com", TemplateRef: "test-template"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:            breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"alice"}}},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	router := setupAuthenticatedDebugSessionRouter(t, NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil), "alice", "alice@example.com", []string{})
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+	require.NotNil(t, stored.Status.Approval)
+	assert.Equal(t, "alice", stored.Status.Approval.ApprovedBy)
+	assert.Equal(t, []string{"alice", "alice@example.com"}, stored.Status.Approval.ApprovedByIdentities)
+	assert.True(t, sessionPartyMatches(stored, "oidc:alice@example.com"), "the approver's hub identity matches their email claim")
+}
+
+func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCreation(t *testing.T) {
+	prefix := "oidc:"
+	clusterConfig := func(name, namespace, tenant string, claim breakglassv1alpha1.UserIdentifierClaimType) *breakglassv1alpha1.ClusterConfig {
+		return &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: tenant, UserIdentifierClaim: claim, UserIdentifierPrefix: &prefix}}
+	}
+	sub, email := breakglassv1alpha1.UserIdentifierClaimSub, breakglassv1alpha1.UserIdentifierClaimEmail
+	for name, tc := range map[string]struct {
+		cluster    string
+		configs    []client.Object
+		subject    string
+		mapped     string
+		want       []string
+		unresolved bool
+	}{
+		// The hub names the approver by a mapped username without a colon
+		// prefix, which only the recorded mapped identity matches.
+		"mapped hub username":        {cluster: "spoke-e", subject: "subject-123", mapped: "corp/alice", configs: []client.Object{clusterConfig("spoke-e", "default", "", email)}, want: []string{"alice", "alice@example.com", "corp/alice", "oidc:alice@example.com", "subject-123"}},
+		"tenant alias":               {cluster: "tenant-a", subject: "alice-sub", configs: []client.Object{clusterConfig("spoke-a", "default", "tenant-a", sub)}, want: []string{"alice", "alice-sub", "alice@example.com", "oidc:alice-sub"}},
+		"ClusterConfig in namespace": {cluster: "spoke-b", subject: "alice-sub", configs: []client.Object{clusterConfig("spoke-b", "clusters", "", sub)}, want: []string{"alice", "alice-sub", "alice@example.com", "oidc:alice-sub"}},
+		// The spoke maps by email, the hub API server by subject: the
+		// approver acknowledges as oidc:subject-123, which only the recorded
+		// token subject matches.
+		"email-mapped spoke, subject-mapped hub": {cluster: "spoke-e", subject: "subject-123", configs: []client.Object{clusterConfig("spoke-e", "default", "", email)}, want: []string{"alice", "alice@example.com", "oidc:alice@example.com", "subject-123"}},
+		"missing subject fails closed":           {cluster: "spoke-e", configs: []client.Object{clusterConfig("spoke-e", "default", "", email)}, unresolved: true, want: []string{"alice", "alice@example.com", "oidc:alice@example.com"}},
+		"ambiguous alias fails closed":           {cluster: "tenant-c", subject: "alice-sub", unresolved: true, configs: []client.Object{clusterConfig("c1", "x", "tenant-c", sub), clusterConfig("c2", "y", "tenant-c", sub)}, want: []string{"alice", "alice-sub", "alice@example.com"}},
+		"missing config fails closed":            {cluster: "unknown", subject: "alice-sub", unresolved: true, want: []string{"alice", "alice-sub", "alice@example.com"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default", Labels: map[string]string{DebugSessionLabelKey: "pending-session"}},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster, RequestedBy: "requester@example.com", RequestedByIdentities: []string{"requester-sub", "requester@example.com"}, TemplateRef: "test-template"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:            breakglassv1alpha1.DebugSessionStatePendingApproval,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"alice"}}},
+				},
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(append(tc.configs, session)...).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true)
+				c.Set("username", "alice")
+				c.Set("email", "alice@example.com")
+				if tc.subject != "" {
+					c.Set("user_id", tc.subject)
+				}
+				if tc.mapped != "" {
+					c.Set("authenticated_username", tc.mapped)
+				}
+				c.Next()
+			})
+			require.NoError(t, NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil).Register(router.Group("/api").Group("/debugSessions")))
+			req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+			stored := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+			require.NotNil(t, stored.Status.Approval)
+			assert.Equal(t, tc.unresolved, stored.Status.Approval.ApprovedByIdentitiesIncomplete)
+			assert.Equal(t, tc.want, stored.Status.Approval.ApprovedByIdentities)
+			if tc.subject != "" {
+				assert.True(t, sessionPartyMatches(stored, "oidc:"+tc.subject), "the approver cannot acknowledge as their hub subject identity")
+			}
+			if tc.mapped != "" {
+				assert.True(t, sessionPartyMatches(stored, tc.mapped), "the approver cannot acknowledge as their mapped hub username")
+			}
+			if tc.unresolved {
+				ack := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{Spec: breakglassv1alpha1.DebugSessionCleanupAcknowledgementSpec{AcknowledgedBy: "oidc:someone-else"}}
+				assert.Contains(t, decideCleanupAcknowledgement(stored, ack, "", false).Message, "approvedByIdentitiesIncomplete", "an incomplete approver identity set fails closed")
+			}
+		})
+	}
+}

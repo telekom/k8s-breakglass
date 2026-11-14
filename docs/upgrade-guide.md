@@ -170,6 +170,33 @@ Observable effects:
 Time to resolution for a genuinely transient case (a reference created moments
 after the escalation) is unchanged in practice, since early retries are still fast.
 
+#### Behaviour change: DebugSession cleanup acknowledgements
+
+Residuals the controller cannot prove gone (for example objects of an
+uninstalled CRD) are retired with a `DebugSessionCleanupAcknowledgement`; see
+[DebugSession cleanup](debug-session-cleanup.md). Apply the CRDs before the
+controller. When upgrading or downgrading, note:
+
+- Sessions created, joined or approved before this version have no recorded
+  party identities, so four-eyes cannot compare them fully: every cleanup
+  acknowledgement for them is rejected (fail closed), including sessions
+  already in `CleanupFailed`. To retire residuals of such a session, run the
+  controller with `--allow-legacy-identity-cleanup-acknowledgement`, which
+  compares only the identities that were recorded, create the
+  acknowledgement, wait until its `status.phase` is `Applied` (each
+  acknowledgement is decided once; without the flag it is rejected), then
+  remove the flag again.
+- Downgrading: older controllers never remove the
+  `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
+  from Applied acknowledgements, so deleting an acknowledgement or its
+  namespace hangs. Remove the finalizer by hand as described in
+  [Uninstalling](installation.md#uninstalling-breakglass). First make sure
+  the acknowledgement entry is gone from the breakglass
+  ValidatingWebhookConfiguration (`kubectl apply` of the older manifests
+  removes it; other tooling may not; the commands are in the same section):
+  the older controller does not serve it, and with `failurePolicy: Fail` it
+  rejects the finalizer removal.
+
 #### Breaking Changes
 
 1. **Session SAR Metrics Label Changes**
