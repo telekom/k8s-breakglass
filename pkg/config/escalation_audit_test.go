@@ -280,6 +280,25 @@ func TestEscalationReconcileDoesNotWaitForAuditDelivery(t *testing.T) {
 	h.reconcile() // still returns while delivery is blocked
 }
 
+// The informer hooks record each generation, so changes that the work queue
+// coalesces into one reconcile, and a create followed by a delete before any
+// reconcile, are all audited.
+func TestEscalationAuditRecordsCoalescedChanges(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	for generation := int64(1); generation <= 3; generation++ {
+		a.observe(auditedEscalation(generation))
+	}
+	a.deletion(auditedEscalation(3))
+	a.observe(&breakglassv1alpha1.IdentityProvider{}) // other kinds are ignored
+	require.Zero(t, a.flush(context.Background()))
+	var ids []string
+	for _, e := range capture.take() {
+		ids = append(ids, e.ID)
+	}
+	require.ElementsMatch(t, []string{"escalation/esc-uid/1", "escalation/esc-uid/2", "escalation/esc-uid/3", "escalation/esc-uid/deleted"}, ids)
+}
+
 type blockingEmitter struct {
 	release chan struct{}
 	entered chan struct{}

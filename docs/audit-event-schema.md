@@ -260,9 +260,12 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 ### Escalation changes (`escalationChange`)
 
 `escalation.created`, `escalation.updated`, `escalation.deleted`. The
-controller emits `escalation.created` for generation 1 and
-`escalation.updated` for a later generation that it has not audited yet, and
-`escalation.deleted` for an observed delete. The event ID is
+controller records every generation that its watch delivers
+(`escalation.created` for generation 1, `escalation.updated` for a later one)
+and every observed delete (`escalation.deleted`), independently of how the
+work queue coalesces reconciles. Changes that the watch itself never delivers
+(for example several edits within one re-list after a watch interruption)
+appear only as their final generation. The event ID is
 `escalation/<uid>/<generation>` or `escalation/<uid>/deleted`. After a
 controller restart or leader change the current generation of every
 escalation is emitted again with the same ID (without `previousGeneration`);

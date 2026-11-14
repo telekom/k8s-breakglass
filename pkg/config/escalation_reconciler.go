@@ -401,11 +401,18 @@ func (r *EscalationReconciler) GetCachedEscalationIDPMapping() map[string][]stri
 func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Predicate filters status-only updates while still reconciling spec generation
 	// changes from apply tools and deletion timestamp transitions.
+	// The audit hooks record every generation the informer delivers, so
+	// work-queue coalescing cannot skip an intermediate or short-lived change;
+	// they only take a lock and never block the informer.
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
+			r.auditor.observe(e.ObjectNew)
 			return shouldReconcileEscalationUpdate(e.ObjectOld, e.ObjectNew)
 		},
-		CreateFunc: func(e event.CreateEvent) bool { return true },
+		CreateFunc: func(e event.CreateEvent) bool {
+			r.auditor.observe(e.Object)
+			return true
+		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			r.auditor.deletion(e.Object)
 			return true

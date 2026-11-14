@@ -144,6 +144,13 @@ func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalat
 	a.notify()
 }
 
+// observe records the generation of an escalation delivered by the informer.
+func (a *escalationAuditor) observe(obj client.Object) {
+	if esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation); ok {
+		a.specChange(esc)
+	}
+}
+
 // deletion records escalation.deleted for an observed delete; run delivers
 // it. It runs in the informer's event handler and never blocks. Earlier
 // snapshots of the escalation stay pending.
