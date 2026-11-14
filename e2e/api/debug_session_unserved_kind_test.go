@@ -252,6 +252,11 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 	}
 	session := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, s.Client.Get(ctx, key, session))
+	// The session's requester, by their recorded username, may create
+	// acknowledgements too: four-eyes must reject them.
+	sessionRequester := session.Spec.RequestedBy
+	require.NotEmpty(t, sessionRequester)
+	require.NoError(t, s.CreateResource(bind(suffix+"-ack-requester", acknowledge.Name, sessionRequester)))
 	ack := func(name, by string) *breakglassv1alpha1.DebugSessionCleanupAcknowledgement {
 		return &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{
 			ObjectMeta: metav1.ObjectMeta{Name: suffix + "-" + name, Namespace: key.Namespace},
@@ -279,6 +284,26 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 	err = as(operator).Create(ctx, ack("forged", requester))
 	require.Error(t, err, "acknowledgedBy must name the creating user")
 	assert.True(t, apierrors.IsInvalid(err), "the admission policy rejects a forged actor as Invalid, got %v", err)
+
+	// Four-eyes runs before any cleanup check: the requester's own
+	// acknowledgement is rejected although the API server admitted it.
+	require.Eventually(t, func() bool {
+		obj := ack("by-requester", sessionRequester)
+		if err := as(sessionRequester).Create(ctx, obj); err != nil {
+			t.Logf("requester create: %v", err)
+			return false
+		}
+		s.Cleanup.Add(obj)
+		return true
+	}, time.Minute, 2*time.Second, "the requester holds create on the resource")
+	require.Eventually(t, func() bool {
+		processed := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+		if s.Client.Get(ctx, client.ObjectKey{Namespace: key.Namespace, Name: suffix + "-by-requester"}, processed) != nil {
+			return false
+		}
+		return processed.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementRejected &&
+			strings.Contains(processed.Status.Message, "four-eyes") && strings.Contains(processed.Status.Message, sessionRequester)
+	}, helpers.WaitForStateTimeout, time.Second, "the requester's own acknowledgement must be rejected by four-eyes")
 
 	// The controller records the outcome on the acknowledgement. The session
 	// is not CleanupFailed, so the acknowledgement is rejected and retires
