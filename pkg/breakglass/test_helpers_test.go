@@ -22,6 +22,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/audit/audittest"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -43,6 +44,7 @@ func NewMockAuditEmitter(enabled bool) *MockAuditEmitter {
 
 // Emit implements AuditEmitter.
 func (m *MockAuditEmitter) Emit(_ context.Context, event *audit.Event) {
+	audittest.Record(event)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, event)
