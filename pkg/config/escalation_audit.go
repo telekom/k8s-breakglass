@@ -114,8 +114,17 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 			oldest, oldestEntry = k, e
 		}
 	}
-	delete(a.pending, oldest)
+	a.drop(oldest)
 	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)
+}
+
+// drop discards an unaccepted snapshot under a.mu. It also forgets the
+// generation, so a later reconcile (for example on a newly elected leader or
+// after auditing is enabled again) records the current generation again
+// instead of treating it as audited.
+func (a *escalationAuditor) drop(key escalationAuditKey) {
+	delete(a.pending, key)
+	delete(a.seen, key)
 }
 
 // pruneSeen evicts the oldest dedup entries beyond the bound.
@@ -220,9 +229,9 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 	for key, entry := range a.pending {
 		switch {
 		case state == audit.ConfigurationDisabled:
-			delete(a.pending, key)
+			a.drop(key)
 		case now.Sub(entry.since) > escalationAuditTTL:
-			delete(a.pending, key)
+			a.drop(key)
 			a.logger.Warnw("Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window", "event", entry.event.ID)
 		case entry.inflight || now.Before(entry.next):
 		case state != audit.ConfigurationReady:

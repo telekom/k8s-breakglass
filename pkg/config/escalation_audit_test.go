@@ -358,13 +358,21 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 
 	now = now.Add(escalationAuditTTL + time.Minute)
 	require.Zero(t, a.flush(context.Background()), "expired events are dropped")
+	require.Empty(t, a.seen, "a dropped event is forgotten, so a later reconcile records it again")
+	capture.set(audit.ConfigurationReady, false)
+	a.specChange(auditedEscalation(1))
+	require.Zero(t, a.flush(context.Background()))
+	require.Len(t, capture.take(), 1, "the current generation is replayed after its earlier snapshot expired")
 
-	// The dedup set is bounded too, evicting the oldest entries.
+	// The dedup set of delivered generations is bounded too, evicting the
+	// oldest entries.
 	for i := range escalationAuditSeenLimit + 10 {
 		esc := auditedEscalation(int64(i + 2))
 		now = now.Add(time.Millisecond)
 		a.specChange(esc)
+		a.flush(context.Background())
 	}
+	capture.take()
 	require.Len(t, a.seen, escalationAuditSeenLimit)
 	a.specChange(auditedEscalation(escalationAuditSeenLimit + 11))
 	_, kept := a.seen[escalationAuditKey{uid: "esc-uid", generation: escalationAuditSeenLimit + 11}]
