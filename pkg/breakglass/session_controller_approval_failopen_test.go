@@ -341,6 +341,46 @@ func TestAmbiguousApproverGroupDoesNotApproveByTokenGroup(t *testing.T) {
 	}
 }
 
+// --require-synced-approver-groups closes the window before an approver
+// group's first sync, when approval would otherwise fall back to cluster or
+// token groups (which members of a same-named nested group also carry).
+func TestRequireSyncedApproverGroups(t *testing.T) {
+	tests := []struct {
+		name          string
+		require       bool
+		members       map[string][]string // nil: not synced yet
+		clusterLookup error               // non-nil: cluster lookup fails, token groups are used
+		want          ApprovalDenialReason
+	}{
+		{name: "flag off, not synced: cluster-group fallback approves"},
+		{name: "flag off, not synced: token-group fallback approves", clusterLookup: errors.New("spoke down")},
+		{name: "flag on, not synced: cluster group denied", require: true, want: ApprovalDenialApproverGroupsNotSynced},
+		{name: "flag on, not synced: token group denied", require: true, clusterLookup: errors.New("spoke down"), want: ApprovalDenialApproverGroupsNotSynced},
+		{name: "flag on, synced with the approver: approves", require: true, members: map[string][]string{"cluster-approvers": {"approver@example.com"}}},
+		{name: "flag on, synced without the approver: not an approver", require: true, members: map[string][]string{"cluster-approvers": {"other@example.com"}}, want: ApprovalDenialNotAnApprover},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.members
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation).WithRequireSyncedApproverGroups(tt.require)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				if tt.clusterLookup != nil {
+					return nil, tt.clusterLookup
+				}
+				return []string{"cluster-approvers"}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "")
+			c.Set("groups", []string{"cluster-approvers"})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.Equal(t, tt.want == ApprovalDenialNone, result.Allowed, "reason %s", result.Reason)
+			require.Equal(t, tt.want, result.Reason)
+		})
+	}
+}
+
 // Per-IdP memberships authorize approval only while they are part of the
 // group's current resolution (an ApproverGroupMembers entry that contains the
 // member). Stale snapshots, for example left behind after a fallback to legacy

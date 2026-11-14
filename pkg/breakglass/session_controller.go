@@ -85,6 +85,8 @@ const (
 	ApprovalDenialClusterApprovalPolicyAmbiguous ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_AMBIGUOUS"
 	// ApprovalDenialClusterApprovalPolicyLookupFailed indicates the cluster approval policy lookup failed before uniqueness could be determined.
 	ApprovalDenialClusterApprovalPolicyLookupFailed ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_LOOKUP_FAILED"
+	// ApprovalDenialApproverGroupsNotSynced indicates --require-synced-approver-groups blocked approval by a group that has not been synced yet.
+	ApprovalDenialApproverGroupsNotSynced ApprovalDenialReason = "APPROVER_GROUPS_NOT_SYNCED"
 )
 
 // BreakglassSessionRequest is defined in clusteruser.go and includes an optional Reason field.
@@ -110,6 +112,10 @@ type BreakglassSessionController struct {
 	clusterConfigManager *ClusterConfigManager
 
 	sessionCreationLimiter *ratelimit.IPRateLimiter
+
+	// requireSyncedApproverGroups disables the token/cluster-group fallback
+	// for approver groups without a synced approverGroupMembers entry.
+	requireSyncedApproverGroups bool
 
 	// inFlightCreates prevents TOCTOU race conditions during session creation.
 	// Without this guard, two concurrent requests for the same (cluster, user, group)

@@ -770,6 +770,25 @@ top-level `admins`) does not resolve: it is reported as not found, like a
 missing group. A not-found group is stored as an empty list, which blocks
 token-group approval and notifications for that group.
 
+#### Approval before the first group sync
+
+Until the status updater has synced an approver group (after an escalation is
+created, or after a group is added, until the next sync), the group has no
+`status.approverGroupMembers` entry and the `ApprovalGroupMembersResolved`
+condition is missing or does not cover it. During that window approval falls
+back to the approver's cluster or token groups. With `full.path=false`, members
+of a same-named nested group such as `/x/admins` carry the same `admins` claim,
+so they can approve during the window even though the first sync will deny
+them as ambiguous.
+
+Set `--require-synced-approver-groups` (`BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS=true`)
+to close the window: approval through a group without a synced entry is denied
+with reason `APPROVER_GROUPS_NOT_SYNCED`. The cost is a possible lockout until
+the first sync succeeds (bounded by `--escalation-status-update-interval` while
+the identity provider is reachable), and group-based approval never works for
+providers without group sync. Direct user approvers are not affected. The flag
+is off by default.
+
 #### Condition Reasons
 
 | Reason | Status | Description |

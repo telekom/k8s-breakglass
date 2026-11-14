@@ -364,12 +364,20 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 
 		if len(fallbackApproverGroups) > 0 {
 			if matchedGroup, ok := firstMatchingApproverGroup(approverGroups, fallbackApproverGroups); ok {
+				if wc.requireSyncedApproverGroups {
+					mostSpecificDenial = unsyncedApproverGroupDenial(mostSpecificDenial, reqLog, session.Name, esc.Name, matchedGroup)
+					continue
+				}
 				reqLog.Debugw("User is session approver (target cluster group)",
 					"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
 				return ApprovalCheckResult{Allowed: true}
 			}
 			if shouldUseRequestContextApproverGroups(approverGroups, requestContextGroups) {
 				if matchedGroup, ok := firstMatchingApproverGroup(requestContextGroups, fallbackApproverGroups); ok {
+					if wc.requireSyncedApproverGroups {
+						mostSpecificDenial = unsyncedApproverGroupDenial(mostSpecificDenial, reqLog, session.Name, esc.Name, matchedGroup)
+						continue
+					}
 					if groupsUnverified {
 						// The approval is load-bearing on unverified (JWT-claim)
 						// groups because the cluster-side lookup failed. Allow it
@@ -415,6 +423,23 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	return mostSpecificDenial
+}
+
+// unsyncedApproverGroupDenial records that --require-synced-approver-groups
+// blocked an approval by a group that has no approverGroupMembers entry yet
+// (no successful sync). It does not override a more specific earlier denial.
+func unsyncedApproverGroupDenial(current ApprovalCheckResult, reqLog *zap.SugaredLogger, session, escalation, group string) ApprovalCheckResult {
+	reqLog.Warnw("Approval by an unsynced approver group denied (--require-synced-approver-groups)",
+		"session", session, "escalation", escalation, "group", system.RedactGroupName(group))
+	switch current.Reason {
+	case ApprovalDenialNone, ApprovalDenialIdentityProviderNotAllowed, ApprovalDenialNotAnApprover:
+		return ApprovalCheckResult{
+			Allowed: false,
+			Reason:  ApprovalDenialApproverGroupsNotSynced,
+			Message: "Approver group members for this escalation have not been synced yet; approval by group is available after the first successful sync",
+		}
+	}
+	return current
 }
 
 func sessionHasEscalationOwner(session breakglassv1alpha1.BreakglassSession) bool {
@@ -875,6 +900,14 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	}
 
 	return ctrl
+}
+
+// WithRequireSyncedApproverGroups denies approval by an approver group that
+// has not completed a successful sync instead of falling back to token or
+// cluster groups.
+func (wc *BreakglassSessionController) WithRequireSyncedApproverGroups(require bool) *BreakglassSessionController {
+	wc.requireSyncedApproverGroups = require
+	return wc
 }
 
 func (wc *BreakglassSessionController) WithSessionCreationRateLimiter(rl *ratelimit.IPRateLimiter) *BreakglassSessionController {

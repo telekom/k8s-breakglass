@@ -223,7 +223,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| controller | 468 | 346 | 356 | 270 | 0 | 0 | 0 |
+| controller | 468 | 346 | 357 | 270 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -652,6 +652,7 @@ variable part of a concatenated message.
 | info | `stopping pending session expiry because context is cancelled` | `error` | expire_pending_sessions.go |
 | info | `stopping scheduled session activation because context is cancelled` | `error` | scheduled_activation.go |
 | warn | `Approval authorized on UNVERIFIED groups: cluster group lookup failed and the JWT-claim group fallback was load-bearing for this decision` | `approver`†, `cluster`, `identityProvider`†, `matchedGroup`†, `remediation`, `session` | session_controller_approval_utils.go |
+| warn | `Approval by an unsynced approver group denied (--require-synced-approver-groups)` | `escalation`, `group`†, `session` | session_controller_approval_utils.go |
 | warn | `Approver authenticated with disallowed identity provider` | `allowedIdentityProviderCount`, `approver`†, `escalation`, `identityProvider`† | session_controller_approval_utils.go |
 | warn | `Approver email does not match allowed domains for escalation` | `allowedDomains`, `approver`†, `escalation` | session_controller_approval_utils.go |
 | warn | `Approver group has too many members, truncating` | `escalation`, `group`†, `limit`, `originalCount` | session_request_helpers.go |
@@ -1282,7 +1283,7 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `CLI Configuration` | `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_email`†, `disable_session_rate_limit`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
+| info | `CLI Configuration` | `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_email`†, `disable_session_rate_limit`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
 | warn | (dynamic) |  | cli.go |
 
 #### `pkg/cluster`
