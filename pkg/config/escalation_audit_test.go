@@ -568,38 +568,50 @@ func TestAuditConfigInitialSyncSerializesWithReconcile(t *testing.T) {
 // Shutdown delivers a deletion that waits in retry backoff, and counts what
 // it cannot deliver before its deadline.
 func TestEscalationAuditDrainOnShutdown(t *testing.T) {
+	shutdownDrops := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown"))
+	}
+
+	// A deletion in retry backoff is delivered: the drain ignores the backoff.
 	capture := newEscalationAuditCapture()
 	capture.set(audit.ConfigurationReady, true)
 	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
 	a.deletion(auditedEscalation(5))
 	require.Equal(t, 1, a.flush(context.Background()), "rejected once: now in backoff")
 	capture.set(audit.ConfigurationReady, false)
-	r := &EscalationReconciler{auditor: a}
-	r.DrainAudit()
+	(&EscalationReconciler{auditor: a}).DrainAudit()
 	events := capture.take()
-	require.Len(t, events, 1, "the drain ignores the retry backoff")
+	require.Len(t, events, 1)
 	require.Equal(t, "escalation/esc-uid/deleted", events[0].ID)
 	require.Empty(t, a.pending)
 
-	capture.set(audit.ConfigurationReady, true)
-	a.deletion(auditedEscalation(6))
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	a.drain(ctx)
-	require.Less(t, time.Since(start), 2*time.Second, "the drain is bounded by its context")
-
-	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
-
 	// Changes observed after the drain are counted, not retained.
-	lost := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown"))
+	before := shutdownDrops()
 	a.deletion(auditedEscalation(7))
 	late := auditedEscalation(8)
 	late.UID = "late"
 	a.specChange(late)
-	require.Equal(t, lost+2, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown")))
-	require.NotContains(t, a.pending, escalationAuditKey{uid: "esc-uid", generation: 7, deleted: true})
-	require.NotContains(t, a.pending, escalationAuditKey{uid: "late", generation: 8})
+	require.Equal(t, before+2, shutdownDrops())
+	require.Empty(t, a.pending)
+
+	// A pipeline that keeps rejecting: the drain ends at its deadline and
+	// counts the undelivered event.
+	rejecting := newEscalationAuditCapture()
+	rejecting.set(audit.ConfigurationReady, true)
+	b := newEscalationAuditor(rejecting, zap.NewNop().Sugar())
+	b.deletion(auditedEscalation(6))
+	require.Len(t, b.pending, 1, "the deletion is pending before the drain")
+	before = shutdownDrops()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	b.drain(ctx)
+	require.GreaterOrEqual(t, time.Since(start), 200*time.Millisecond, "the drain retries until its deadline")
+	require.Less(t, time.Since(start), 2*time.Second, "the drain is bounded by its deadline")
+	require.Equal(t, before+1, shutdownDrops(), "the undelivered event is counted")
+	require.Empty(t, rejecting.take())
+
+	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
 }
 
 // The drain runs from audit.Service.Close while the pipeline still accepts.
