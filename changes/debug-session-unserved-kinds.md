@@ -23,7 +23,8 @@ section: Behaviour changes
   `config/components/cleanup-acknowledgement-policy`: its
   ValidatingAdmissionPolicy enforces `acknowledgedBy` in the API server, even
   before the webhook is deployed. Acknowledgements are processed only while their validating webhook
-  is active with `failurePolicy: Fail`. An acknowledgement by the session's
+  is active for CREATE and UPDATE with `failurePolicy: Fail`; it also keeps
+  the acknowledgement spec immutable on hubs without CEL validation. An acknowledgement by the session's
   requester, approver or a participant is rejected (#1663).
 - Upgrade order: apply the CRDs (the new
   `debugsessioncleanupacknowledgements` CRD and the DebugSession status field

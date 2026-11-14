@@ -1267,3 +1267,21 @@ func TestFourEyesComparesEveryRecordedPartyIdentity(t *testing.T) {
 		assert.True(t, decide(ds, "corp/operator", true).Applied, name+": the legacy opt-out compares the recorded identities")
 	}
 }
+
+// A rejection whose actor the webhook verified is audited with that operator
+// as actor, unlike a rejection for an unverified actor.
+func TestVerifiedRejectionIsAuditedWithTheOperatorAsActor(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", Email: "operator@example.com", Identities: []string{"operator", "operator-sub", "operator@example.com"}}}
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", allResidualsOfFailingSession...))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	status := acknowledgementPhase(t, f, "a")
+	require.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase)
+	require.Contains(t, status.Message, "four-eyes")
+	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
+	require.Len(t, acks, 1)
+	assert.Equal(t, false, acks[0].Details["applied"])
+	assert.Equal(t, "operator@example.com", acks[0].Actor.User, "the verified operator is the actor")
+	assert.Equal(t, true, acks[0].Details["actorVerified"])
+	assert.NotContains(t, acks[0].Details, "claimedAcknowledgedBy")
+}

@@ -176,7 +176,9 @@ subjects:
 To allow acknowledgements in one namespace only, reference the same
 ClusterRole from a RoleBinding in the session's namespace instead.
 
-- The object is immutable: the CRD rejects any change to `spec`.
+- The object is immutable: the validating webhook rejects any change to
+  `spec` (on hubs with CEL validation, Kubernetes 1.25+, the CRD rule
+  `self == oldSelf` rejects it as well).
 - It is bound to one session instance by `sessionUID`.
 - `acknowledgedBy` must equal the creating user, so the audit actor cannot be
   forged. The validating webhook
@@ -221,8 +223,10 @@ ClusterRole from a RoleBinding in the session's namespace instead.
 **Requirements.**
 
 - **Validating webhook.** The controller processes acknowledgements only while
-  that webhook is registered for CREATE with `failurePolicy: Fail` and no
-  namespace selector, object selector or match conditions. Otherwise (for
+  that webhook is registered for both CREATE and UPDATE (in the same rule,
+  or with `*`) with `failurePolicy: Fail` and no namespace selector, object
+  selector or match conditions: CREATE verifies `acknowledgedBy`, UPDATE
+  keeps the spec immutable where CEL validation is not enforced. Otherwise (for
   example with `--enable-webhooks=false` or `ENABLE_VALIDATING_WEBHOOKS=false`)
   `acknowledgedBy` is unverified, so every acknowledgement is rejected,
   recorded and audited with this reason.
