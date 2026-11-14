@@ -671,7 +671,9 @@ TTL. A per-IDP membership authorizes approval only while the group has an
 is no longer part of the current resolution cannot approve. When IDP discovery
 fails or finds no enabled IDP, the updater falls back to the legacy single
 resolver and removes all per-IDP memberships, because legacy mode does not
-refresh them. A transient lookup failure keeps the last resolved members until
+refresh them. The `approverGroupMembers` entries built from them are reset
+too: only groups the legacy resolver resolves regain members, and a failed
+lookup leaves the group empty (deny). A transient lookup failure keeps the last resolved members until
 the next successful sync and sets `ApprovalGroupMembersResolved=False`; remove an
 approver from a group by fixing the identity provider, and the next successful
 sync drops them.

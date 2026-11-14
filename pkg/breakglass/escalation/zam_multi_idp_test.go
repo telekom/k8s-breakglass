@@ -224,3 +224,31 @@ func TestLegacyFallbackDropsStaleProviderMemberships(t *testing.T) {
 		})
 	}
 }
+
+// A failed multi-IdP-to-legacy transition must not keep the aggregate built
+// from per-IdP results: without provider scoping it would let identities from
+// another provider approve. Failed legacy lookups leave the group empty.
+func TestLegacyFallbackWithFailedLookupClearsProviderAggregate(t *testing.T) {
+	cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
+	updated := escalation.DeepCopy()
+	updated.Spec.AllowedIdentityProvidersForRequests = nil
+	updated.Spec.AllowedIdentityProvidersForApprovers = nil
+	require.NoError(t, cli.Update(context.Background(), updated))
+
+	log := zap.NewNop().Sugar()
+	updater := EscalationStatusUpdater{
+		Log:           log,
+		K8sClient:     cli,
+		IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
+		EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
+		Resolver:      &MockResolver{errors: map[string]error{"approvers": errors.New("identity provider unavailable")}},
+	}
+
+	updater.runOnce(context.Background(), log)
+
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+	members, present := updated.Status.ApproverGroupMembers["approvers"]
+	require.True(t, present, "the group must keep an entry so approval cannot fall back to token groups")
+	assert.Empty(t, members, "provider-scoped aggregate must not survive the transition to legacy mode")
+	assert.Empty(t, updated.Status.IDPGroupMemberships)
+}

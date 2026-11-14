@@ -795,6 +795,13 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			// members cannot keep approving.
 			if pruneProviderGroupMemberships(updated) {
 				changed = true
+				// The aggregate entries were built from per-IdP results. Without
+				// that scoping they would let an identity from another provider
+				// approve, so only groups the legacy resolver resolves below
+				// regain members; failed lookups stay empty (deny).
+				for _, g := range groups {
+					updated.Status.ApproverGroupMembers[g] = []string{}
+				}
 			}
 
 			resolvedGroupCount := 0
