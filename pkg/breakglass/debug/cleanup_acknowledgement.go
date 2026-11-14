@@ -310,8 +310,12 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 	if user == "" {
 		return false
 	}
+	// The hub API server may prefix a username claim with any of these
+	// separators (oidc:, keycloak#, the issuer URL plus # for non-email
+	// claims, corp/), so compare what follows the last one. Cutting more
+	// only adds matches: four-eyes can only get stricter.
 	unprefixed := func(name string) string {
-		if i := strings.LastIndex(name, ":"); i >= 0 {
+		if i := strings.LastIndexAny(name, ":#/"); i >= 0 {
 			return name[i+1:]
 		}
 		return name

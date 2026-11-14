@@ -193,10 +193,22 @@ ClusterRole from a RoleBinding in the session's namespace instead.
   hubs from Kubernetes 1.24 keep working.
 - **Four-eyes.** An acknowledgement whose `acknowledgedBy` is the session's
   requester, approver or a participant is rejected, recorded and audited.
-  Usernames are also compared without any `prefix:` part, because the hub API
-  server may prefix usernames (for example `oidc:alice@example.com`) while
-  session identities are stored unprefixed or with a spoke prefix. Group
-  membership is not compared: four-eyes concerns the acting person.
+  Usernames are also compared without any prefix up to the last `:`, `#` or
+  `/`, because the hub API server may prefix usernames (for example
+  `oidc:alice@example.com`, `keycloak#123`, `corp/alice`, or the issuer URL
+  plus `#` that Kubernetes uses by default for claims other than `email`)
+  while session identities are stored unprefixed or with a spoke prefix.
+  Group membership is not compared: four-eyes concerns the acting person.
+
+  **Requirement:** the hub API server must name users by a claim the
+  breakglass IdentityProvider records: username (`preferred_username`),
+  `email` or `sub`, or the IdentityProvider's mapped username, with any
+  prefix. If the hub uses another claim (for example `upn`) or a mapping the
+  IdentityProvider does not reproduce, the controller cannot compare that
+  name with the session's parties, and an acknowledgement by a party under
+  that name is not reliably rejected. Configure the hub's
+  `--oidc-username-claim` (or `claimMappings.username` in its
+  AuthenticationConfiguration) to match the IdentityProvider.
   Every party is compared by every identity the hub API server may name them
   by: username, email, verified token subject and mapped hub username (for
   example `oidc:<sub>` or `corp/alice` while the target cluster maps users by

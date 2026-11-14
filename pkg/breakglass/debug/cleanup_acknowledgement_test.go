@@ -1285,3 +1285,24 @@ func TestVerifiedRejectionIsAuditedWithTheOperatorAsActor(t *testing.T) {
 	assert.Equal(t, true, acks[0].Details["actorVerified"])
 	assert.NotContains(t, acks[0].Details, "claimedAcknowledgedBy")
 }
+
+// A party is recognised under every username form a kube-apiserver OIDC
+// authenticator can produce for its recorded claims.
+func TestFourEyesMatchesEveryHubUsernamePrefix(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{}
+	ds.Spec.RequestedBy = "alice"
+	ds.Spec.RequestedByEmail = "alice@example.com"
+	ds.Spec.RequestedByIdentities = []string{"alice", "alice@example.com", "123", "corp/alice"}
+	for _, by := range []string{
+		"oidc:123", "OIDC:Alice@Example.com", "tdi_security_oidc:alice", "corp/alice",
+		"keycloak#123",                           // --oidc-username-prefix=keycloak#
+		"https://idp.example.com#123",            // implicit default prefix for non-email claims
+		"https://idp.example.com/realms/x#alice", // implicit default, preferred_username claim
+		"corp/123",                               // prefix corp/ over sub
+	} {
+		assert.True(t, sessionPartyMatches(ds, by), "party not recognised as %q: four-eyes bypass", by)
+	}
+	for _, by := range []string{"system:serviceaccount:ns:bob", "oidc:bob", "https://idp.example.com#456"} {
+		assert.False(t, sessionPartyMatches(ds, by), "independent %q wrongly matched", by)
+	}
+}
