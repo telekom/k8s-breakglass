@@ -669,11 +669,14 @@ sync (`--escalation-status-update-interval`, default 10m); there is no separate
 TTL. A per-IDP membership authorizes approval only while the group has an
 `approverGroupMembers` entry that also contains the member, so a snapshot that
 is no longer part of the current resolution cannot approve. When IDP discovery
-fails or finds no enabled IDP, the updater falls back to the legacy single
-resolver and removes all per-IDP memberships, because legacy mode does not
-refresh them. The `approverGroupMembers` entries built from them are reset
-too: only groups the legacy resolver resolves regain members, and a failed
-lookup leaves the group empty (deny). A transient lookup failure keeps the last resolved members until
+fails, the updater keeps the last synced, provider-scoped status and sets
+`ApprovalGroupMembersResolved=False` (`GroupSyncFailed`); it does not switch to
+the legacy resolver, whose results carry no provider provenance. When discovery
+finds no enabled IDP, the updater falls back to the legacy single resolver and
+removes all per-IDP memberships, because legacy mode does not refresh them. The
+`approverGroupMembers` entries built from them are reset too: only groups the
+legacy resolver resolves regain members, and a failed lookup leaves the group
+empty (deny). A transient lookup failure keeps the last resolved members until
 the next successful sync and sets `ApprovalGroupMembersResolved=False`; remove an
 approver from a group by fixing the identity provider, and the next successful
 sync drops them.
@@ -785,7 +788,9 @@ them as ambiguous.
 
 Set `--require-synced-approver-groups` (`BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS=true`)
 to close the window: approval through a group without a synced entry is denied
-with reason `APPROVER_GROUPS_NOT_SYNCED`. The cost is a possible lockout until
+with HTTP `403` (`FORBIDDEN`) and a message that the approver group members
+have not been synced yet; the controller logs the warning
+`Approval by an unsynced approver group denied (--require-synced-approver-groups)` with the escalation and group. The cost is a possible lockout until
 the first sync succeeds (bounded by `--escalation-status-update-interval` while
 the identity provider is reachable), and group-based approval never works for
 providers without group sync. Direct user approvers are not affected. The flag

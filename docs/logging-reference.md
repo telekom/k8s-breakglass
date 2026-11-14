@@ -1269,7 +1269,7 @@ variable part of a concatenated message.
 | warn | `Configured approver group was not found; removed stale members from escalation status` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `EscalationManager: configLoader not set, falling back to disk read (performance impact)` |  | escalation_manager.go |
 | warn | `Failed to create resolver for IDP` | `escalation`, `idp` | escalation_status_updater.go |
-| warn | `Failed to load IDPs for auto-detection, falling back to legacy mode` | `error`, `escalation` | escalation_status_updater.go |
+| warn | `Failed to load IDPs for auto-detection; keeping the last synced approver status` | `error`, `escalation` | escalation_status_updater.go |
 | warn | `Failed to load system cert pool; only the custom CA will be trusted` | `error` | escalation_status_updater.go |
 | warn | `Failed to parse CA certificate PEM; falling back to system certificates` | `baseURL`, `realm` | escalation_status_updater.go |
 | warn | `Failed to resolve group members from IDP` | `error`, `escalation`, `group`†, `idp` | escalation_status_updater.go |

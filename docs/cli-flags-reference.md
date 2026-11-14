@@ -841,8 +841,9 @@ BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS=true breakglass-controller
 When **enabled**:
 - An approver group without a `status.approverGroupMembers` entry (before the
   escalation's first successful sync, or a newly added group until the next
-  sync) cannot approve; the API answers `403` with reason
-  `APPROVER_GROUPS_NOT_SYNCED` and a warning is logged
+  sync) cannot approve; the API answers HTTP `403` (`FORBIDDEN`) with a message
+  that the approver group members have not been synced yet, and the controller
+  logs the warning `Approval by an unsynced approver group denied (--require-synced-approver-groups)`
 - Closes the pre-sync window described in
   [Approval before the first group sync](breakglass-escalation.md#approval-before-the-first-group-sync)
 - Group-based approval is unavailable until the first sync succeeds; enable it

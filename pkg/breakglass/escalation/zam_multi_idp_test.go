@@ -180,49 +180,69 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 	}
 }
 
-// When IdP discovery fails or finds no enabled IdP, the updater falls back to
-// legacy mode, which never refreshes per-IdP memberships. They must be dropped
-// so a member removed upstream cannot keep approving.
+// When IdP discovery finds no enabled IdP, the updater falls back to legacy
+// mode, which never refreshes per-IdP memberships. They must be dropped so a
+// member removed upstream cannot keep approving.
 func TestLegacyFallbackDropsStaleProviderMemberships(t *testing.T) {
-	for _, discoveryFails := range []bool{false, true} {
-		name := "no enabled identity provider"
-		if discoveryFails {
-			name = "identity provider discovery fails"
-		}
-		t.Run(name, func(t *testing.T) {
-			cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
-			updated := escalation.DeepCopy()
-			updated.Spec.AllowedIdentityProvidersForRequests = nil
-			updated.Spec.AllowedIdentityProvidersForApprovers = nil
-			require.NoError(t, cli.Update(context.Background(), updated))
+	cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
+	updated := escalation.DeepCopy()
+	updated.Spec.AllowedIdentityProvidersForRequests = nil
+	updated.Spec.AllowedIdentityProvidersForApprovers = nil
+	require.NoError(t, cli.Update(context.Background(), updated))
 
-			loaderClient := cli
-			if discoveryFails {
-				loaderClient = interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
-					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-						if _, ok := list.(*breakglassv1alpha1.IdentityProviderList); ok {
-							return errors.New("identity provider list unavailable")
-						}
-						return c.List(ctx, list, opts...)
-					},
-				})
-			}
-			log := zap.NewNop().Sugar()
-			updater := EscalationStatusUpdater{
-				Log:           log,
-				K8sClient:     cli,
-				IDPLoader:     cfgpkg.NewIdentityProviderLoader(loaderClient),
-				EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
-				Resolver:      &MockResolver{members: map[string][]string{"approvers": {"current@example.com"}}},
-			}
-
-			updater.runOnce(context.Background(), log)
-
-			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
-			assert.Equal(t, []string{"current@example.com"}, updated.Status.ApproverGroupMembers["approvers"])
-			assert.Empty(t, updated.Status.IDPGroupMemberships, "legacy mode must drop per-IdP snapshots it does not refresh")
-		})
+	log := zap.NewNop().Sugar()
+	updater := EscalationStatusUpdater{
+		Log:           log,
+		K8sClient:     cli,
+		IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
+		EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
+		Resolver:      &MockResolver{members: map[string][]string{"approvers": {"current@example.com"}}},
 	}
+
+	updater.runOnce(context.Background(), log)
+
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+	assert.Equal(t, []string{"current@example.com"}, updated.Status.ApproverGroupMembers["approvers"])
+	assert.Empty(t, updated.Status.IDPGroupMemberships, "legacy mode must drop per-IdP snapshots it does not refresh")
+}
+
+// When IdP discovery fails, the legacy resolver may belong to a provider that
+// is no longer enabled and its results carry no provider provenance. The
+// updater must not switch to it: the last provider-scoped status stays and the
+// failure is reported.
+func TestDiscoveryFailureKeepsProviderScopedStatus(t *testing.T) {
+	cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
+	updated := escalation.DeepCopy()
+	updated.Spec.AllowedIdentityProvidersForRequests = nil
+	updated.Spec.AllowedIdentityProvidersForApprovers = nil
+	require.NoError(t, cli.Update(context.Background(), updated))
+
+	loaderClient := interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*breakglassv1alpha1.IdentityProviderList); ok {
+				return errors.New("identity provider list unavailable")
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
+	log := zap.NewNop().Sugar()
+	updater := EscalationStatusUpdater{
+		Log:           log,
+		K8sClient:     cli,
+		IDPLoader:     cfgpkg.NewIdentityProviderLoader(loaderClient),
+		EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
+		Resolver:      &MockResolver{members: map[string][]string{"approvers": {"other-provider@example.com"}}},
+	}
+
+	updater.runOnce(context.Background(), log)
+
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+	assert.Equal(t, staleTwoIDPStatus().ApproverGroupMembers, updated.Status.ApproverGroupMembers, "unscoped legacy results must not replace the aggregate")
+	assert.Equal(t, staleTwoIDPStatus().IDPGroupMemberships, updated.Status.IDPGroupMemberships, "provider scoping must be kept")
+	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, groupSyncReasonFailed, condition.Reason)
 }
 
 // A failed multi-IdP-to-legacy transition must not keep the aggregate built

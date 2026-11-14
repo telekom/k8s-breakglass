@@ -669,7 +669,19 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					log.Debugw("Stopping escalation status update cycle because IDP loading was canceled", "error", err)
 					return
 				}
-				log.Warnw("Failed to load IDPs for auto-detection, falling back to legacy mode", "error", err, "escalation", esc.Name)
+				// Without discovery the approver providers are unknown. The
+				// legacy resolver may belong to a provider that is no longer
+				// enabled, and its results carry no provider provenance, so keep
+				// the last synced (provider-scoped) status and report the failure.
+				log.Warnw("Failed to load IDPs for auto-detection; keeping the last synced approver status", "error", err, "escalation", esc.Name)
+				updated := esc.DeepCopy()
+				if setApprovalGroupMembersResolvedCondition(updated, metav1.ConditionFalse, groupSyncReasonFailed,
+					"Identity provider discovery failed; approver group members were not refreshed.") {
+					if err := u.patchStatus(ctx, updated); err != nil {
+						log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
+					}
+				}
+				continue
 			} else if len(allIDPs) > 0 {
 				idpsToUse = make([]string, 0, len(allIDPs))
 				for name := range allIDPs {

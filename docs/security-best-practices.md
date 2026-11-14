@@ -545,7 +545,8 @@ during that window anyone who can create a same-named subgroup can approve.
 After the sync, such ambiguous groups are denied.
 
 Enable `--require-synced-approver-groups` to deny approval through a group
-until it has been synced (reason `APPROVER_GROUPS_NOT_SYNCED`). This closes the
+until it has been synced (HTTP `403`, logged as
+`Approval by an unsynced approver group denied (--require-synced-approver-groups)`). This closes the
 window at the cost of possible lockout until the first sync succeeds, so only
 enable it when group sync is configured and healthy for every approver
 identity provider. Also restrict who can create groups in the identity
