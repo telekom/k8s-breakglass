@@ -631,16 +631,49 @@ kubectl delete namespace breakglass-system
 If the controller was removed first, the namespace or CRD deletion hangs on
 these finalizers. (If only the DebugSession CRD was removed while the
 controller still runs, it releases the acknowledgements itself.) Remove the
-acknowledgement retention finalizer by hand
-(this drops the retirement evidence, which is safe only because no
-controller will write the sessions again):
+acknowledgement retention finalizer by hand. This drops the retirement
+evidence, which is safe only because no controller will process the sessions
+again, and removing a finalizer is an UPDATE, which the acknowledgement
+validating webhook (`failurePolicy: Fail`) rejects while it is registered
+but no controller serves it. So, in this order:
 
 ```bash
+# 1. Make sure no controller runs (skip if its namespace is already gone)
+#    and that no pod remains.
+kubectl -n breakglass-system scale deployment/breakglass-manager --replicas=0
+kubectl -n breakglass-system wait --for=delete pod -l app=breakglass --timeout=2m
+
+# 2. Delete the breakglass ValidatingWebhookConfiguration (its name depends on
+#    the kustomize prefix; find it by the acknowledgement webhook it holds).
+ACK_WEBHOOK=debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com
+kubectl get validatingwebhookconfigurations -o json |
+  jq -r --arg w "$ACK_WEBHOOK" '.items[] | select(any(.webhooks[]?; .name == $w)) | .metadata.name' |
+  xargs -r kubectl delete validatingwebhookconfiguration
+
+# 3. Only then remove the retention finalizers.
 kubectl get debugsessioncleanupacknowledgements -A --no-headers \
   -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name |
 while read -r ns name; do
   kubectl patch debugsessioncleanupacknowledgement "$name" -n "$ns" \
     --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]'
+done
+```
+
+When downgrading to a version without cleanup acknowledgements, keep the
+controller running (it does not process acknowledgements) and delete only
+the acknowledgement entry of the webhook configuration before step 3:
+applying the older manifests with `kubectl apply` removes the entry, but
+other tooling (for example server-side apply by another field manager) can
+leave it behind, and the older controller does not serve it:
+
+```bash
+ACK_WEBHOOK=debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com
+for vwc in $(kubectl get validatingwebhookconfigurations -o json |
+  jq -r --arg w "$ACK_WEBHOOK" '.items[] | select(any(.webhooks[]?; .name == $w)) | .metadata.name'); do
+  idx=$(kubectl get validatingwebhookconfiguration "$vwc" -o json |
+    jq --arg w "$ACK_WEBHOOK" '.webhooks | map(.name) | index($w)')
+  kubectl patch validatingwebhookconfiguration "$vwc" --type=json \
+    -p="[{\"op\":\"remove\",\"path\":\"/webhooks/$idx\"}]"
 done
 ```
 

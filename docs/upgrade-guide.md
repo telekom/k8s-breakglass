@@ -188,7 +188,12 @@ controller. When upgrading or downgrading, note:
   `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
   from Applied acknowledgements, so deleting an acknowledgement or its
   namespace hangs. Remove the finalizer by hand as described in
-  [Uninstalling](installation.md#uninstalling-breakglass).
+  [Uninstalling](installation.md#uninstalling-breakglass). First make sure
+  the acknowledgement entry is gone from the breakglass
+  ValidatingWebhookConfiguration (`kubectl apply` of the older manifests
+  removes it; other tooling may not; the commands are in the same section):
+  the older controller does not serve it, and with `failurePolicy: Fail` it
+  rejects the finalizer removal.
 
 #### Breaking Changes
 
