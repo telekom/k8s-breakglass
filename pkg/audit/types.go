@@ -42,6 +42,8 @@ const (
 	EventEscalationRevoked   EventType = "escalation.revoked"
 	EventEscalationUpdated   EventType = "escalation.updated"
 	EventEscalationValidated EventType = "escalation.validated"
+	// EventEscalationDeleted records that a BreakglassEscalation was deleted.
+	EventEscalationDeleted EventType = "escalation.deleted"
 
 	// === Access decision events (per-request granularity) ===
 	EventAccessAllowed      EventType = "access.allowed"
@@ -398,7 +400,7 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
 		EventDebugSessionValidationFailed,
 		EventDebugSessionCleanupFailed, EventDebugSessionCleanupAcknowledged, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
-		EventDebugSessionBindingUnresolved:
+		EventDebugSessionBindingUnresolved, EventEscalationDeleted:
 		return SeverityWarning
 
 	// Info events - normal operation
@@ -552,6 +554,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionBindingUnresolved,
 		EventDebugSessionTerminalRecordingStarted, EventDebugSessionTerminalRecordingFinalized,
 		EventDebugSessionTerminalRecordingFailed, EventDebugSessionTerminalRecordingAccessed,
+		EventDebugSessionAttached, EventEscalationCreated, EventEscalationUpdated, EventEscalationDeleted,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:
