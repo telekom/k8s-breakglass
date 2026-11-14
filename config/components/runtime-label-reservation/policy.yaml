@@ -33,7 +33,9 @@
 # workload only with propagationPolicy Background (the kubectl default) or
 # Foreground; deletes without a policy or with Orphan are denied, because Jobs
 # and ReplicationControllers orphan their Pods by default. They may not delete
-# a marked ControllerRevision at all. Other requests are
+# a marked ControllerRevision at all, nor delete a marked Pod with a grace
+# period longer than its own; evictions (which carry no Pod labels) may not
+# set a grace period above 30 seconds for any Pod. Other requests are
 # allowed, so kubelet status updates, scaling and annotation edits keep
 # working.
 #
@@ -56,10 +58,11 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     resourceRules:
+    # DELETE and pods/eviction: a long grace period keeps a marked Pod running.
     - apiGroups: [""]
       apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
-      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "pods/binding", "bindings"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "pods/binding", "bindings", "pods/eviction"]
     # DELETE: an orphaning delete would detach the workload's marked children.
     - apiGroups: [""]
       apiVersions: ["v1"]
@@ -108,6 +111,7 @@ spec:
   - name: newMeta
     expression: >-
       object.kind in ['Pod', 'Binding'] ? object.metadata :
+      object.kind == 'Eviction' ? {} :
       object.kind == 'CronJob' ? (has(object.spec.jobTemplate.spec.template.metadata) ? object.spec.jobTemplate.spec.template.metadata : {}) :
       object.kind == 'ControllerRevision' ? (has(object.data) && has(object.data.spec) && has(object.data.spec.template) &&
         has(object.data.spec.template.metadata) ? object.data.spec.template.metadata : {}) :
@@ -123,7 +127,7 @@ spec:
   # What runs: the Pod spec, or the pod template spec of a workload.
   - name: newSpec
     expression: >-
-      object.kind == 'Binding' ? null :
+      object.kind in ['Binding', 'Eviction'] ? null :
       object.kind == 'Pod' ? object.spec :
       object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec :
       object.kind == 'ControllerRevision' ? (has(object.data) && has(object.data.spec) && has(object.data.spec.template) &&
@@ -174,7 +178,7 @@ spec:
   - name: oldLabels
     expression: "oldObject == null || !has(oldObject.metadata.labels) ? {} : oldObject.metadata.labels"
   - name: newSelector
-    expression: "object.kind in ['Pod', 'Binding', 'ControllerRevision'] || !has(object.spec.selector) ? null : object.spec.selector"
+    expression: "object.kind in ['Pod', 'Binding', 'ControllerRevision', 'Eviction'] || !has(object.spec.selector) ? null : object.spec.selector"
   - name: oldSelector
     expression: "oldObject == null || oldObject.kind in ['Pod', 'Binding', 'ControllerRevision'] || !has(oldObject.spec.selector) ? null : oldObject.spec.selector"
   - name: newFinalizers
@@ -187,7 +191,7 @@ spec:
       (has(request.userInfo.groups) && request.userInfo.groups.exists(g, g in variables.controllerGroups)) ||
       request.userInfo.username in variables.workloadControllerUsers
   validations:
-  # On DELETE there is no new object; only the last two validations apply.
+  # On DELETE there is no new object; only the delete validations at the end apply.
   - expression: >-
       request.operation == 'DELETE' || variables.exempt ||
       (variables.newReserved.all(e, e in variables.oldReserved) &&
@@ -224,7 +228,7 @@ spec:
   # Only the kube-controller-manager writes workload status.
   - expression: >-
       request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
-      object.kind in ['Pod', 'Binding', 'ControllerRevision'] ||
+      object.kind in ['Pod', 'Binding', 'ControllerRevision', 'Eviction'] ||
       (has(object.status) ? object.status : null) == (has(oldObject.status) ? oldObject.status : null)
     messageExpression: >-
       'the status of a breakglass debug workload is reserved for the kube-controller-manager; '
@@ -234,9 +238,10 @@ spec:
   # garbage collector is exempt, so this must be refused at the delete
   # itself. Jobs and ReplicationControllers orphan by default, so an explicit
   # cascading policy is required for every kind (kubectl sends Background by
-  # default).
+  # default). Pods have no dependents; the kubelet deletes them without one.
   - expression: >-
       request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      oldObject.kind == 'Pod' ||
       (request.options != null &&
        has(request.options.propagationPolicy) && request.options.propagationPolicy in ['Background', 'Foreground'] &&
        !(has(request.options.orphanDependents) && request.options.orphanDependents == true))
@@ -256,6 +261,28 @@ spec:
     messageExpression: >-
       'the ControllerRevisions of breakglass debug workloads are reserved for the kube-controller-manager; '
       + request.userInfo.username + ' may not delete them'
+    reason: Forbidden
+  # A delete with a grace period longer than the Pod's own keeps a marked Pod
+  # running past the session (a debug container that ignores SIGTERM runs
+  # until it ends), and later deletes without a grace period do not shorten
+  # it. Unset options and an unset spec field mean the Pod's own period.
+  - expression: >-
+      request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      oldObject.kind != 'Pod' || request.options == null || !has(request.options.gracePeriodSeconds) ||
+      request.options.gracePeriodSeconds <= (has(oldObject.spec.terminationGracePeriodSeconds) ? oldObject.spec.terminationGracePeriodSeconds : 30)
+    messageExpression: >-
+      'breakglass debug pods may not be deleted with a grace period longer than their terminationGracePeriodSeconds; '
+      + request.userInfo.username + ' may not extend it'
+    reason: Forbidden
+  # An Eviction skips Pod DELETE admission and does not carry the Pod's
+  # labels, so its grace period is capped for every Pod: at most 30 seconds
+  # (the Kubernetes default terminationGracePeriodSeconds) for non-exempt users.
+  - expression: >-
+      variables.exempt || object.kind != 'Eviction' || !has(object.deleteOptions) ||
+      !has(object.deleteOptions.gracePeriodSeconds) || object.deleteOptions.gracePeriodSeconds <= 30
+    messageExpression: >-
+      'evictions may not set a grace period above 30 seconds while breakglass debug-session labels are reserved; '
+      + request.userInfo.username + ' may not extend it'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

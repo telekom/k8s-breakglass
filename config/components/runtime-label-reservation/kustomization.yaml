@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Kustomize Component: reserve the debug-session pod labels and annotations
-# (`breakglass.telekom.com/debug-session*`, `breakglass.telekom.com/ephemeral.*`)
+# (`breakglass.telekom.com/debug-session*`, `breakglass.telekom.com/ephemeral.*`,
+# and the MOTD hook annotation `breakglass.t-caas.telekom.com/motd-profile`)
 # for the breakglass controller, so runtime-security tools can trust them.
 #
 # Opt-in. Deploy it on every cluster where debug pods run (each target

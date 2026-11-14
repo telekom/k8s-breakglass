@@ -21,6 +21,7 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -149,6 +150,38 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "debug"}, p))
 		p.Spec.Containers[0].Image = "attacker/image"
 		denied(t, forger.Update(ctx, p))
+	})
+
+	t.Run("debug pods may not outlive the session through a long grace period", func(t *testing.T) {
+		// The API server deletes unscheduled Pods at once, so bind them to a node.
+		debugPod := pod("debug-scheduled", sessionLabel, nil)
+		debugPod.Spec.NodeName = "node-1"
+		require.NoError(t, controller.Create(ctx, debugPod))
+		plainPod := pod("plain-scheduled", nil, nil)
+		plainPod.Spec.NodeName = "node-1"
+		require.NoError(t, forger.Create(ctx, plainPod))
+		long := client.GracePeriodSeconds(1_000_000)
+		err := forger.Delete(ctx, debugPod.DeepCopy(), long, client.DryRunAll)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "may not be deleted with a grace period longer than their terminationGracePeriodSeconds")
+		assert.NoError(t, forger.Delete(ctx, debugPod.DeepCopy(), client.GracePeriodSeconds(30), client.DryRunAll), "the Pod's own period")
+		assert.NoError(t, forger.Delete(ctx, debugPod.DeepCopy(), client.DryRunAll), "no options")
+		kubelet, _ := as("system:node:node-1", "system:nodes")
+		assert.NoError(t, kubelet.Delete(ctx, debugPod.DeepCopy(), client.GracePeriodSeconds(0), client.DryRunAll),
+			"the kubelet's final delete carries no propagation policy")
+		assert.NoError(t, forger.Delete(ctx, plainPod.DeepCopy(), long, client.DryRunAll), "unmarked pods are unaffected")
+
+		evict := func(name string, grace *int64) error {
+			return forgerKube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+				DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: grace, DryRun: []string{metav1.DryRunAll}}})
+		}
+		// An Eviction does not carry the Pod's labels, so the cap applies to every Pod.
+		err = evict(debugPod.Name, ptr.To[int64](1_000_000))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "evictions may not set a grace period above 30 seconds")
+		assert.Error(t, evict(plainPod.Name, ptr.To[int64](31)))
+		assert.NoError(t, evict(debugPod.Name, ptr.To[int64](30)))
+		assert.NoError(t, evict(debugPod.Name, nil), "kubectl drain without --grace-period")
 	})
 
 	t.Run("binding annotations are reserved", func(t *testing.T) {

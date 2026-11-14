@@ -566,6 +566,20 @@ reserved in the same places: it is projected into a file that interactive
 shells in the debug Pod source, so whoever could edit it could run code in
 the participants' shells without exec rights.
 
+A marked Pod must also not outlive its session through a long grace period:
+a debug container that ignores SIGTERM keeps running until the grace period
+ends, and a later delete without one does not shorten it. Non-exempt deletes
+of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
+`terminationGracePeriodSeconds`. An Eviction does not go through Pod DELETE
+admission and does not carry the Pod's labels, so the policy cannot tell
+whether it targets a debug Pod; it caps `deleteOptions.gracePeriodSeconds` at
+30 seconds (the Kubernetes default) for every non-exempt eviction in the
+cluster. Trade-off: `kubectl drain --grace-period` above 30 and node
+autoscalers that evict with a longer grace period (the cluster-autoscaler
+sends the Pod's own period, up to `--max-graceful-termination-sec`) are
+denied for Pods with a longer `terminationGracePeriodSeconds` while the policy
+is installed; evictions without a grace period are unaffected.
+
 Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
 created by the kube-controller-manager, not by the controller. The policy therefore also
 exempts the kube-controller-manager users that copy a template into Pods
@@ -712,7 +726,8 @@ instead of trying to vouch for existing objects:
      -A -o json | jq -r '.items[]
        | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata, .data.spec.template.metadata)
            | (.labels // {}), (.annotations // {}) | keys[]
-           | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral."))]
+           | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral.")
+               or . == "breakglass.t-caas.telekom.com/motd-profile")]
          | length > 0)
        | "\(.kind) \(.metadata.namespace)/\(.metadata.name)"'
    ```

@@ -22,7 +22,8 @@ validatingAdmissionPolicy:
 # ==========================================
 # Optional cluster-scoped ValidatingAdmissionPolicy that reserves the
 # breakglass.telekom.com/debug-session* and breakglass.telekom.com/ephemeral.*
-# pod labels and annotations (and the same keys in workload pod templates) for
+# pod labels and annotations and the breakglass.t-caas.telekom.com/motd-profile
+# MOTD hook annotation (and the same keys in workload pod templates) for
 # the breakglass controller, so runtime-security tools such as Falco or
 # Tetragon can trust them. Render it for every cluster where debug pods run.
 # Requires Kubernetes 1.30 or newer. See docs/security-best-practices.md.

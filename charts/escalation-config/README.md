@@ -652,7 +652,8 @@ validatingAdmissionPolicy:
 
 `runtimeLabelReservation.enabled=true` renders an enforcing
 ValidatingAdmissionPolicy that reserves the `breakglass.telekom.com/debug-session*`
-and `breakglass.telekom.com/ephemeral.*` pod labels and annotations (and the
+and `breakglass.telekom.com/ephemeral.*` pod labels and annotations and the
+`breakglass.t-caas.telekom.com/motd-profile` MOTD hook annotation (and the
 same keys in workload pod templates) for the breakglass controller, so
 runtime-security tools such as Falco or Tetragon can trust them. It is the
 same policy as `config/components/runtime-label-reservation`; render it for
