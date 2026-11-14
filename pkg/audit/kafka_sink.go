@@ -414,23 +414,10 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	// Use event ID as the key for partitioning
 	key := []byte(event.ID)
 
-	// Add headers for metadata
-	headers := []kafka.Header{
-		{Key: "event-type", Value: []byte(event.Type)},
-		{Key: "severity", Value: []byte(event.Severity)},
-		{Key: "timestamp", Value: []byte(event.Timestamp.Format(time.RFC3339))},
-	}
-	if event.Actor.User != "" {
-		headers = append(headers, kafka.Header{Key: "actor", Value: []byte(event.Actor.User)})
-	}
-	if event.RequestContext != nil && event.RequestContext.CorrelationID != "" {
-		headers = append(headers, kafka.Header{Key: "correlation-id", Value: []byte(event.RequestContext.CorrelationID)})
-	}
-
 	msg := kafka.Message{
 		Key:     key,
 		Value:   value,
-		Headers: headers,
+		Headers: kafkaHeaders(event),
 	}
 
 	// Track in-flight messages
@@ -540,6 +527,26 @@ func (s *KafkaSink) Name() string {
 	return s.name
 }
 
+// kafkaHeaders returns the record headers of an event, identical for single
+// and batched writes (docs/audit-event-schema.md).
+func kafkaHeaders(event *Event) []kafka.Header {
+	headers := []kafka.Header{
+		{Key: "event-type", Value: []byte(event.Type)},
+		{Key: "severity", Value: []byte(event.Severity)},
+		{Key: "timestamp", Value: []byte(event.Timestamp.Format(time.RFC3339))},
+	}
+	if event.SchemaVersion != "" {
+		headers = append(headers, kafka.Header{Key: "schema-version", Value: []byte(event.SchemaVersion)})
+	}
+	if event.Actor.User != "" {
+		headers = append(headers, kafka.Header{Key: "actor", Value: []byte(event.Actor.User)})
+	}
+	if event.RequestContext != nil && event.RequestContext.CorrelationID != "" {
+		headers = append(headers, kafka.Header{Key: "correlation-id", Value: []byte(event.RequestContext.CorrelationID)})
+	}
+	return headers
+}
+
 // buildTLSConfig creates a TLS configuration from KafkaTLSConfig.
 func buildTLSConfig(cfg *KafkaTLSConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
@@ -617,16 +624,10 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 			return fmt.Errorf("marshal audit batch event %q: %w: %w", event.ID, ErrSerialization, err)
 		}
 
-		headers := []kafka.Header{
-			{Key: "event-type", Value: []byte(event.Type)},
-			{Key: "severity", Value: []byte(event.Severity)},
-			{Key: "timestamp", Value: []byte(event.Timestamp.Format(time.RFC3339))},
-		}
-
 		messages = append(messages, kafka.Message{
 			Key:     []byte(event.ID),
 			Value:   value,
-			Headers: headers,
+			Headers: kafkaHeaders(event),
 		})
 	}
 

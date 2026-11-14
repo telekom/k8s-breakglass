@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/audit/audittest"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +30,7 @@ type cleanupAuditCaptureSink struct {
 }
 
 func (s *cleanupAuditCaptureSink) Write(_ context.Context, event *audit.Event) error {
+	audittest.Record(event)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, event)
