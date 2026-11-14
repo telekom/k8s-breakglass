@@ -53,27 +53,48 @@ breakglass-controller \
 
 ### Debug and Logging
 
-#### `--debug`
+#### `--log-level`
 
-Enable debug level logging (verbose output)
+Minimum level of the log lines the controller writes
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` (`debug`, `info`, `warn`, `error`) |
+| **Default** | `info` (`debug` with `--debug`) |
+| **Environment** | `LOG_LEVEL` |
+| **Example** | `--log-level=debug` |
+
+#### `--log-format`
+
+Log output format
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` (`json`, `console`) |
+| **Default** | `json` (`console` with `--debug`) |
+| **Environment** | `LOG_FORMAT` |
+| **Example** | `--log-format=json` |
+
+`json` writes one JSON object per line with the fields documented in
+[Logging and Debugging](logging-and-debugging.md#json-fields). `console` writes
+human-readable development output and is not meant for log collection.
+
+```bash
+breakglass-controller --log-level=debug --log-format=json
+```
+
+#### `--debug` (deprecated)
+
+Alias for `--log-level=debug`. Without `--log-format` or `LOG_FORMAT` it also
+selects `--log-format=console`, so it produces the same output as before.
+It cannot be combined with a `--log-level` other than `debug`.
 
 | Property | Value |
 |----------|-------|
 | **Type** | `bool` |
 | **Default** | `false` |
-| **Environment** | `DEBUG` |
-| **Example** | `--debug` |
-
-```bash
-breakglass-controller --debug
-```
-
-When enabled:
-- Logs are output in development format (more readable)
-- Additional diagnostic information included
-- Performance may be impacted (not for production)
-
----
+| **Environment** | none |
+| **Example** | `--debug` (use `--log-level=debug --log-format=console`) |
 
 ### Webhook Server Configuration
 

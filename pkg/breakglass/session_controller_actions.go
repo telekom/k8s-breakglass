@@ -429,7 +429,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 
 	wc.log.Debugw("Rendering breakglass session request email",
 		"session", bs.Name,
-		"subject", subject,
+		"subjectLength", len(subject),
 		"group", system.RedactGroupName(bs.Spec.GrantedGroup),
 		"recipientCount", len(approvers),
 		"approvers", system.RedactSlice(approvers),
@@ -578,7 +578,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email via mail service",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			return err
 		}
@@ -595,7 +595,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Warnw("Failed to enqueue session request email (will not retry)",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			// Don't fall back to synchronous send - if queue is configured but failing,
 			// synchronous send would likely fail too. Just log and continue.
@@ -616,7 +616,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 			wc.log.Errorw("failed to send request email",
 				"session", bs.Name,
 				"recipientCount", len(approvers),
-				"subject", subject,
+				"subjectLength", len(subject),
 				"error", err)
 			return err
 		}
@@ -631,7 +631,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	wc.log.Warnw("No mail provider configured - email notification skipped",
 		"session", bs.Name,
 		"recipientCount", len(approvers),
-		"subject", subject)
+		"subjectLength", len(subject))
 	return nil
 }
 

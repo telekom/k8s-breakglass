@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"go.uber.org/zap"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -37,21 +36,4 @@ func CreateScheme() (*runtime.Scheme, error) {
 	}
 
 	return scheme, nil
-}
-
-// SetupLogger creates and configures a zap logger for the application.
-// If debug is true, it uses development mode; otherwise production mode.
-// Stacktraces are only added for DPanic level and above to reduce log noise
-// during normal error handling (transient network errors, etc.).
-func SetupLogger(debug bool) (*zap.Logger, error) {
-	cfg := zap.NewProductionConfig()
-	if debug {
-		cfg = zap.NewDevelopmentConfig()
-	}
-	cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
-	logger, err := cfg.Build(zap.AddStacktrace(zap.DPanicLevel))
-	if err != nil {
-		return nil, fmt.Errorf("unable to create logger (debug: %t): %w", debug, err)
-	}
-	return logger, nil
 }
