@@ -260,45 +260,49 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 
 ### Escalation changes (`escalationChange`)
 
-`escalation.created`, `escalation.updated`, `escalation.deleted`. The
-controller records every generation that its watch delivers
-(`escalation.created` for generation 1, `escalation.updated` for a later one)
-and every observed delete (`escalation.deleted`), independently of how the
-work queue coalesces reconciles. Changes that the watch itself never delivers
-(for example several edits within one re-list after a watch interruption)
-appear only as their final generation. The event ID is
-`escalation/<uid>/<generation>` or `escalation/<uid>/deleted`. After a
-controller restart or leader change the current generation of every
-escalation is emitted again with the same ID (without `previousGeneration`);
-deduplicate on `id`.
+`escalation.created`, `escalation.updated`, `escalation.deleted`. Only the
+leading controller replica records them: every generation that its watch
+delivers (`escalation.created` for generation 1, `escalation.updated` for a
+later one) and every delete that its watch delivers (`escalation.deleted`),
+independently of how the work queue coalesces reconciles. Changes that the
+watch never delivers (for example several edits within one re-list after a
+watch interruption) appear only as their final generation. The event ID is
+`escalation/<uid>/<generation>` or `escalation/<uid>/deleted`; deduplicate on
+`id`.
 
-Delivery guarantee: every observed generation and every observed delete
-becomes its own event snapshot, which the controller keeps until the audit
-manager's ingress queue accepted it. Acceptance is not delivery to a sink:
-after it, the event follows the sink delivery rules in
-[Audit delivery](audit-delivery.md), including its counted losses. Until then (no AuditConfig loaded yet, or the ingress
-queue full or timing out) the controller retains the snapshot in memory and
-retries it with exponential backoff (5 s up to 5 min), keeping the time it
-first observed the change; a later edit or the delete does not replace an
-earlier pending snapshot. Retention is bounded: at most 2000 pending events,
-each for at most one hour; beyond that the oldest event is dropped with a
-warning log. So hand-off to the audit pipeline is at least once while the controller
-runs; delivery to Kafka then has the guarantees of the Kafka sink above. Events
-are lost when the controller crashes before they were accepted (a new leader
-re-emits the current generation of each existing escalation, but not
-intermediate generations or a delete it did not observe) or when the pipeline
-does not accept them within the retention bounds. With no AuditConfig at all,
-auditing is disabled and nothing is retained or retried. On a graceful shutdown
-the controller delivers all retained events (up to 10 s) before the audit
-pipeline closes; changes the watch delivers after that drain, and events it
-cannot deliver in time, are counted in
-`breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`. The actor is `system`; the event does not identify who changed the spec.
+When a replica starts leading (after a restart or a leader change), it
+reconciles every existing escalation and emits its current generation again
+with the same ID (without `previousGeneration`). It cannot reconstruct what
+happened before it led: intermediate generations, and escalations deleted
+while no replica was leading or that the previous leader had not delivered.
+
+Delivery guarantee: every recorded generation and delete is its own event
+snapshot, kept in memory until the audit manager's ingress queue accepts it.
+Acceptance is not delivery to a sink: after it, the event follows the sink
+delivery rules in [Audit delivery](audit-delivery.md), including their counted
+losses. Until then (no AuditConfig loaded yet, or the ingress queue full or
+timing out) the leader retries the snapshot with exponential backoff (5 s up
+to 5 min), oldest first, keeping the time it first observed the change; a
+later edit or the delete does not replace an earlier pending snapshot.
+Retention is bounded: at most 2000 pending events, each for at most one hour;
+beyond that the oldest event is dropped with a warning log. With no
+AuditConfig at all, auditing is disabled and nothing is recorded.
+
+So hand-off to the audit pipeline is at least once while the leading process
+runs. On a graceful shutdown (SIGTERM, or a fatal manager error such as a lost
+leader lease) the process delivers all retained events, for up to 10 s, before
+the audit pipeline closes; events it cannot
+deliver in time, and changes its watch delivers after that drain, are counted
+in `breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`.
+A process that ends without a graceful shutdown (crash or OOM kill) loses its
+retained events without counting them.
+
+The actor is `system`; the event does not identify who changed the spec.
 `resourceVersion` is the version that the controller observed, which can
 belong to a later status or metadata write. To attribute a change, search the
 Kubernetes API server audit log for create, update, patch and delete requests
 on the object UID and take the request that produced this generation (compare
-the request body with `specSHA256` or the spec it implies). A delete that happens while no controller replica is
-leading is not observed.
+the request body with `specSHA256` or the spec it implies).
 
 | Field | Type | Description |
 |---|---|---|
