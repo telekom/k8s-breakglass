@@ -1165,7 +1165,9 @@ func (wc *WebhookController) auditTargetFromSARWithoutEnrichment(sar *authorizat
 // correlated by the DebugSession name and UID.
 func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, username string, groups []string, cluster string,
 	sar *authorizationv1.SubjectAccessReview, target audit.Target, sessionNamespace, sessionName, sessionUID string) {
-	if wc.auditService == nil || sar == nil {
+	// Audit that is intentionally disabled at decision time records nothing;
+	// a later re-enable must not emit traffic authorized while it was off.
+	if wc.auditService == nil || sar == nil || wc.auditService.ConfigurationState() == audit.ConfigurationDisabled {
 		return
 	}
 	event := audit.DebugSessionAttachedEvent(username, groups, cluster, sar.Spec.ResourceAttributes, target,

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,12 +38,16 @@ import (
 func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 	var mu sync.Mutex
 	var attached []*audit.Event
+	var decisionAt time.Time
 	audit.ObserveEmitted(func(event *audit.Event) {
 		audittest.Record(event)
-		if event.Type == audit.EventDebugSessionAttached {
-			mu.Lock()
+		mu.Lock()
+		defer mu.Unlock()
+		switch event.Type {
+		case audit.EventDebugSessionAttached:
 			attached = append(attached, event)
-			mu.Unlock()
+		case audit.EventAccessGranted:
+			decisionAt = event.Timestamp
 		}
 	})
 	t.Cleanup(func() { audit.ObserveEmitted(audittest.Record) })
@@ -140,6 +145,8 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			require.Equal(t, "requester", event.Actor.User)
 			require.Equal(t, "session-uid", event.RequestContext.DebugSessionUID)
 			require.Equal(t, "cluster", event.Target.Cluster)
+			require.False(t, event.Timestamp.After(decisionAt),
+				"stamped before the access-decision enqueue, which can block on a full queue")
 			require.NoError(t, audittest.Check(event))
 		})
 	}
@@ -330,4 +337,28 @@ func TestDebugSessionAttachedAuditPipelineStates(t *testing.T) {
 	require.Never(t, func() bool { return unavailable() != before || delivered() != 1 }, 200*time.Millisecond, 10*time.Millisecond,
 		"disabled audit neither delivers nor counts")
 	wc.StopAttachedAudit(context.Background())
+
+	// Traffic authorized while audit is disabled is not emitted after a
+	// re-enable, even if it was still waiting in the handoff.
+	release := make(chan struct{})
+	gated := audit.NewService(cli, nil, zap.NewNop(), "controller")
+	t.Cleanup(func() { _ = gated.Close() })
+	require.NoError(t, gated.ReloadMultipleWithAvailability(context.Background(), nil, false)) // disabled
+	var handedOn atomic.Int32
+	wc2 := &WebhookController{log: zap.NewNop().Sugar(), auditService: gated,
+		attachedEmit: func(ctx context.Context, e *audit.Event) bool {
+			<-release
+			handedOn.Add(1)
+			return gated.TryEmit(ctx, e)
+		}}
+	wc2.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	require.NoError(t, gated.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "attached"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	close(release)
+	wc2.StopAttachedAudit(context.Background())
+	require.Zero(t, handedOn.Load(), "nothing was handed off while audit was disabled")
 }
