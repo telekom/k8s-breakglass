@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,23 @@ func TestRunLogFormats(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
 	require.Equal(t, "error", entry["level"])
 	require.Contains(t, entry["msg"], `invalid mode "unsupported"`)
+
+	// Flag syntax errors, too: the flag package itself writes nothing.
+	stderr.Reset()
+	realStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	exitCode := run([]string{"--log-format=json", "--skip-pods=invalid"}, &stdout, &stderr)
+	os.Stderr = realStderr
+	require.NoError(t, w.Close())
+	direct, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, 2, exitCode)
+	require.Empty(t, string(direct))
+	entry = nil
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Contains(t, entry["msg"], `invalid boolean value "invalid" for -skip-pods`)
 
 	stderr.Reset()
 	t.Setenv("LOG_LEVEL", "verbose")

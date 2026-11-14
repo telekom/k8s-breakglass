@@ -137,7 +137,9 @@ func parseOptions(args []string) (options, error) {
 	}
 
 	fs := flag.NewFlagSet("cluster-validator", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	// Parse errors are reported through the logger in run; only --help
+	// prints the usage.
+	fs.SetOutput(io.Discard)
 	fs.StringVar(&mode, "mode", mode, "report mode: one-time or post-upgrade")
 	fs.StringVar(&reportPath, "report", reportPath, "path for the JSON report; use '-' to disable the file")
 	fs.StringVar(&timeoutValue, "timeout", timeoutValue, "overall Kubernetes API timeout")
@@ -159,6 +161,10 @@ func parseOptions(args []string) (options, error) {
 	fs.BoolVar(&includeTimestamp, "include-timestamp", includeTimestamp, "include a non-deterministic UTC generatedAt field")
 	fs.BoolVar(&skipPods, "skip-pods", skipPods, "skip the cluster-wide pod readiness check")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stderr)
+			fs.Usage()
+		}
 		return options{log: logOpts}, err
 	}
 	parsedTimeout, err := time.ParseDuration(timeoutValue)
