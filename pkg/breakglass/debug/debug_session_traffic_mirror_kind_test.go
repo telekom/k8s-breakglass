@@ -127,7 +127,7 @@ func TestTrafficMirrorKind(t *testing.T) {
 	// The victims carry the target label: the rename subtests break their
 	// networking, so they never serve the other subtests.
 	for _, pod := range []*corev1.Pod{shell("target", "target", server), shell("decoy", "decoy", server),
-		shell("victim-a", "target", server), shell("victim-b", "target", server)} {
+		shell("victim-a", "target", server), shell("victim-b", "target", server), shell("victim-c", "target", server)} {
 		require.NoError(t, hub.Create(ctx, pod))
 	}
 	podIP := func(name string) string {
@@ -149,7 +149,7 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: workloads, Name: name}, pod))
 		return pod
 	}
-	target, victimA, victimB := podOf("target"), podOf("victim-a"), podOf("victim-b")
+	target, victimA, victimB, victimC := podOf("target"), podOf("victim-a"), podOf("victim-b"), podOf("victim-c")
 
 	raw, err := os.ReadFile(kubeconfig)
 	require.NoError(t, err)
@@ -309,6 +309,8 @@ func TestTrafficMirrorKind(t *testing.T) {
 		Pod: &breakglassv1alpha1.TrafficMirrorPodSource{Namespace: workloads, MatchLabels: map[string]string{"app": "target"}}, Interfaces: []string{"eth0"}}, "10m")
 	template("mirror-node", "tcp port 6443", breakglassv1alpha1.TrafficMirrorSource{
 		Node: &breakglassv1alpha1.TrafficMirrorNodeSource{}, Interfaces: []string{"eth0"}}, "1m")
+	template("mirror-jumbo", "udp port 9999", breakglassv1alpha1.TrafficMirrorSource{
+		Pod: &breakglassv1alpha1.TrafficMirrorPodSource{Namespace: workloads, MatchLabels: map[string]string{"app": "target"}}, Interfaces: []string{"eth0"}}, "10m")
 	podSource := breakglassv1alpha1.TrafficMirrorRequest{PodNamespace: workloads, PodName: "target", Interface: "eth0"}
 
 	t.Run("allowlist is enforced", func(t *testing.T) {
@@ -405,14 +407,19 @@ func TestTrafficMirrorKind(t *testing.T) {
 	})
 
 	t.Run("a foreign filter at a higher preference keeps classifying", func(t *testing.T) {
+		// The mirror preference is 0xC000-0xFFFF. One session in 16384 takes
+		// 65535, which leaves no higher preference, so it is replaced.
 		session := request("mirror-pod", "10m", podSource, http.StatusCreated)
+		for attempt := 0; ; attempt++ {
+			if _, pref, _ := trafficMirrorTuple(session.Status.TrafficMirror.OperationID); pref != "65535" {
+				break
+			}
+			require.Less(t, attempt, 3, "every session took the highest preference")
+			call("requester@example.com", http.MethodPost, "/debugSessions/"+session.Name+"/terminate?namespace="+session.Namespace, nil, http.StatusOK)
+			requireCleaned(session, string(target.UID))
+			session = request("mirror-pod", "10m", podSource, http.StatusCreated)
+		}
 		requireMirrored(session, targetIP+".8080")
-		_, pref, _ := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
-		// The mirror preference is 0xC000-0xFFFF; 65535 is above it except
-		// for one session in 16384.
-		mirrorPref, err := strconv.Atoi(pref)
-		require.NoError(t, err)
-		require.Less(t, mirrorPref, 65535, "the foreign filter needs a higher preference than the mirror")
 		inNetns(target, "tc filter add dev eth0 egress pref 65535 protocol all basic action gact pass")
 		packets := func() int {
 			value, _ := strconv.Atoi(strings.TrimSpace(inNetns(target,
@@ -464,5 +471,19 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, session.Status.State, session.Status.Message)
 		requireCleaned(session, string(victimB.UID))
 		requireRenamedClean(session, victimB)
+	})
+
+	t.Run("a jumbo frame reaches the capture", func(t *testing.T) {
+		// The source uses jumbo frames before the attach reads its MTU.
+		inNetns(victimC, "ip link set eth0 mtu 9000")
+		session := request("mirror-jumbo", "10m", breakglassv1alpha1.TrafficMirrorRequest{PodNamespace: workloads, PodName: victimC.Name, Interface: "eth0"}, http.StatusCreated)
+		// One 8000-byte write (dd; head writes in chunks) leaves eth0 as one
+		// frame; a mirror device at the default MTU of 1500 would drop its copy.
+		require.Eventually(t, func() bool {
+			inNetns(victimC, "bash -c 'dd if=/dev/zero bs=8000 count=1 2>/dev/null >/dev/udp/"+decoyIP+"/9999' || true")
+			return strings.Contains(captureLog(session), "UDP, length 8000")
+		}, time.Minute, 2*time.Second, "the capture never saw the jumbo frame")
+		call("requester@example.com", http.MethodPost, "/debugSessions/"+session.Name+"/terminate?namespace="+session.Namespace, nil, http.StatusOK)
+		requireCleaned(session, string(victimC.UID))
 	})
 }

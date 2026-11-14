@@ -57,8 +57,9 @@ with `hostPID`, created only after the capture Pod runs.
   every filter is attached; that is the capture's start signal. The pair carries mirrored copies only: both ends have
   `addrgenmode none` (no IPv6 link-local address) and ARP off, and a
   `basic action drop` ingress filter on the source-side end drops every
-  frame sent from the capture side before the source network stack. The
-  agent puts a
+  frame sent from the capture side before the source network stack. Both
+  ends take the source interface's MTU, so a jumbo frame's copy is not
+  dropped at the mirror device. The agent puts a
   `tbf` on the mirror device (`maxBandwidthMbps`; excess copies are dropped,
   the original traffic is never shaped), adds `clsact` if absent and one
   `basic` (no ematch, so match-all) filter per direction with

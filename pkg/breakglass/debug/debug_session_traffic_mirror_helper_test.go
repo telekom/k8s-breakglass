@@ -317,3 +317,30 @@ func TestTrafficMirrorHelperAttachRefusesUnreadableInterfaceIdentity(t *testing.
 	require.Contains(t, output, "inspect-failed")
 	require.NotContains(t, h.calls(), "mirred", "no mirror filter is attached")
 }
+
+func TestTrafficMirrorHelperAttachCopiesSourceMTU(t *testing.T) {
+	h := newHelperHost(t)
+	// A jumbo-frame source: a mirror device at the default 1500 would drop
+	// every larger copy before the capture.
+	jumbo := strings.Replace(helperLink(3, "eth0"), "mtu 1500", "mtu 9000", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.link.eth0"), []byte(jumbo), 0o644))
+	code, output := h.run("attach")
+	require.Equal(t, 0, code, output)
+	calls := h.calls()
+	require.Contains(t, calls, "ip link set dev "+helperVeth+" addrgenmode none arp off mtu 9000")
+	require.Contains(t, calls, "ip link set dev bgmirror0 addrgenmode none arp off mtu 9000")
+	require.Less(t, strings.Index(calls, "mtu 9000"), strings.Index(calls, "ip link set bgmirror0 up"), "the MTU is set before the capture side comes up")
+}
+
+func TestTrafficMirrorHelperRescansWhenAPodProcessExits(t *testing.T) {
+	h := newHelperHost(t)
+	h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+	// PID 10 of the target Pod is scanned first and exits right after its
+	// namespace was inspected, like a short-lived process the Pod forks.
+	h.process(10, "0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod"+strings.ReplaceAll(helperTargetUID, "-", "_")+".slice/cri-containerd-c.scope", "target")
+	exit := "rm -rf " + filepath.Join(h.dir, "proc", "10")
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(exit+"\n"), 0o644))
+	code, output := h.run("teardown")
+	require.Equal(t, 0, code, output)
+	require.Contains(t, output, "teardown-verified")
+}

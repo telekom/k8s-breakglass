@@ -80,34 +80,55 @@ check_scan() {
 	grep -q -s kubepods "$proc"/[0-9]*/cgroup || fail scan-failed "cannot see Pod cgroups in /proc; hostPID is required"
 }
 
-# target_pid prints the target network namespace owner: PID 1 for a Node.
-# It prints nothing when the target Pod is gone from this Node.
-target_pid() {
-	if [ -z "${MIRROR_POD_UID:-}" ]; then
-		printf '1\n'
+# pin_target opens the target network namespace once and sets tpid to its
+# owner: PID 1 for a Node, else as pin. Every later step enters it through
+# descriptor 3, so a reused PID can never redirect the helper into another
+# namespace after the identity checks.
+pin_target() {
+	if [ -n "${MIRROR_POD_UID:-}" ]; then
+		pin 3 "$MIRROR_POD_UID" "${MIRROR_POD_IP:?}"
+		tpid=$pinned_pid
 		return 0
 	fi
-	pod_pid "$MIRROR_POD_UID" "${MIRROR_POD_IP:?}"
+	tpid=1
+	command exec 3<"$proc/1/ns/net" || fail inspect-failed "cannot open the target network namespace"
+	confirm_pinned 3 1
 }
 
-# pin_target opens the target network namespace once. Every later step
-# enters it through descriptor 3, so a reused PID can never redirect the
-# helper into another namespace after the identity checks.
-pin_target() {
-	exec 3<"$proc/$tpid/ns/net" || fail inspect-failed "cannot open the target network namespace"
-	confirm_pinned 3 "$tpid" "${MIRROR_POD_UID:-}"
+# pin FD UID IP opens on descriptor FD the network namespace of the Pod
+# process whose namespace owns IP and sets pinned_pid to that PID, or to ""
+# or "recreated" as pod_pid prints. Pods fork short-lived processes, so a PID
+# that exits between the scan and the checks is scanned for again; a live
+# PID that fails a check stops the script.
+pin() {
+	for _ in 1 2 3 4 5; do
+		pinned_pid=$(pod_pid "$2" "$3") || exit 1
+		case "$pinned_pid" in "" | recreated) return 0 ;; esac
+		if eval "command exec $1<\"\$proc/\$pinned_pid/ns/net\"" 2>/dev/null; then
+			pinned_to "$1" "$pinned_pid" "$2" && return 0
+			[ ! -e "$proc/$pinned_pid" ] || confirm_pinned "$1" "$pinned_pid" "$2"
+		elif [ -e "$proc/$pinned_pid" ]; then
+			fail inspect-failed "cannot open the network namespace of PID $pinned_pid"
+		fi
+	done
+	fail inspect-failed "the processes of Pod $2 kept exiting during the scan"
 }
 
-# confirm_pinned FD PID [UID] rejects a PID that was reused between the scan
-# and the open: the descriptor must still be that PID's namespace, and the
-# PID must still belong to the Pod.
+# pinned_to FD PID [UID] succeeds when descriptor FD is still PID's network
+# namespace and PID still belongs to the Pod.
+pinned_to() {
+	[ "$(ns_id "/proc/self/fd/$1")" = "$(ns_id "$proc/$2/ns/net" 2>/dev/null)" ] || return 1
+	[ -z "${3:-}" ] && return 0
+	alt=$(printf '%s' "$3" | tr - _)
+	grep -q -e "pod$3" -e "pod$alt" "$proc/$2/cgroup" 2>/dev/null
+}
+
+# confirm_pinned FD PID [UID] stops the script with the reason pinned_to
+# fails, for a PID that was reused between the scan and the open.
 confirm_pinned() {
 	[ "$(ns_id "/proc/self/fd/$1")" = "$(ns_id "$proc/$2/ns/net" 2>/dev/null)" ] ||
 		fail target-mismatch "PID $2 changed its network namespace while it was pinned"
-	if [ -n "${3:-}" ]; then
-		alt=$(printf '%s' "$3" | tr - _)
-		grep -q -e "pod$3" -e "pod$alt" "$proc/$2/cgroup" 2>/dev/null || fail target-mismatch "PID $2 no longer belongs to Pod $3"
-	fi
+	pinned_to "$@" || fail target-mismatch "PID $2 no longer belongs to Pod $3"
 }
 
 in_target() {
@@ -242,25 +263,26 @@ attach() {
 	require_env
 	check_scan
 	[ "$(remaining)" -gt 0 ] || fail expired "the approved session has expired"
-	tpid=$(target_pid) || exit 1
+	pin_target
 	case "$tpid" in
 	"") fail target-missing "the target Pod has no process on this Node" ;;
 	recreated) fail target-mismatch "no network namespace of the target Pod owns the approved Pod IP" ;;
 	esac
-	pin_target
 	verify_pinned_target
-	cpid=$(pod_pid "${MIRROR_CAPTURE_POD_UID:?}" "${MIRROR_CAPTURE_POD_IP:?}") || exit 1
-	case "$cpid" in
+	pin 4 "${MIRROR_CAPTURE_POD_UID:?}" "${MIRROR_CAPTURE_POD_IP:?}"
+	case "$pinned_pid" in
 	"" | recreated) fail capture-missing "the capture Pod is not running with its approved IP on this Node" ;;
 	esac
-	exec 4<"$proc/$cpid/ns/net" || fail inspect-failed "cannot open the capture network namespace"
-	confirm_pinned 4 "$cpid" "$MIRROR_CAPTURE_POD_UID"
 	[ "$(ns_id /proc/self/fd/4)" != "$(ns_id "$proc/1/ns/net")" ] || fail capture-missing "the capture Pod uses the host network"
 	[ "$(ns_id /proc/self/fd/4)" != "$(ns_id /proc/self/fd/3)" ] || fail capture-missing "the capture Pod shares the target network namespace"
 	in_capture ip -o addr show | grep -F -q " $MIRROR_CAPTURE_POD_IP/" || fail capture-missing "the capture network namespace does not own the capture Pod IP"
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
 	ifid=$(link_id)
 	[ -n "$ifid" ] || fail inspect-failed "cannot read the index and address of $MIRROR_INTERFACE"
+	# The pair carries the source's largest frames: veth drops a copy above
+	# its MTU before tcpdump sees it.
+	mtu=$(in_target ip -o link show dev "$MIRROR_INTERFACE" | sed -n 's/.* mtu \([0-9]*\) .*/\1/p')
+	[ -n "$mtu" ] || fail inspect-failed "cannot read the MTU of $MIRROR_INTERFACE"
 	detach
 	for hook in ingress egress; do
 		if [ -n "$(in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF")" ]; then
@@ -277,9 +299,9 @@ attach() {
 	# no IPv6 link-local addresses, no ARP, and every frame arriving from the
 	# capture side is dropped before the source network stack.
 	# shellcheck disable=SC2046 # addrgen prints nothing or two words.
-	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off
+	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off mtu "$mtu"
 	# shellcheck disable=SC2046
-	in_capture ip link set dev "$peer" $(addrgen) arp off
+	in_capture ip link set dev "$peer" $(addrgen) arp off mtu "$mtu"
 	in_target tc qdisc add dev "$MIRROR_VETH" clsact
 	in_target tc filter add dev "$MIRROR_VETH" ingress pref 1 protocol all basic action drop
 	in_target ip link set "$MIRROR_VETH" up
@@ -346,14 +368,13 @@ capture() {
 teardown() {
 	require_env
 	check_scan
-	tpid=$(target_pid) || exit 1
+	pin_target
 	case "$tpid" in
 	"") verified "the target network namespace is gone" ;;
 	# A namespace that lost the approved IP may still hold the filters, so
 	# this is never treated as proof of absence.
 	recreated) fail teardown-unverifiable "the target Pod runs but no namespace of it owns the approved Pod IP; an operator must inspect the Node" ;;
 	esac
-	pin_target
 	verify_pinned_target
 	detach
 	verify_detached
