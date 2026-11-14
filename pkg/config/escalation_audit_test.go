@@ -760,3 +760,33 @@ func (c *countingEmitter) TryEmit(_ context.Context, e *audit.Event) bool {
 func (*countingEmitter) ConfigurationState() audit.ConfigurationState {
 	return audit.ConfigurationReady
 }
+
+// Several snapshots wait behind one blocked enqueue when the drain gives up:
+// once that enqueue fails, every snapshot of the pass is counted, attempted
+// or not, and none stays pending.
+func TestEscalationAuditAbandonedPassCountsUnattempted(t *testing.T) {
+	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	slow := &gatedEmitter{gate: gate, entered: entered, accept: false}
+	a := newEscalationAuditor(slow, zap.NewNop().Sugar())
+	for i := range 4 {
+		esc := auditedEscalation(1)
+		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
+		a.deletion(esc)
+	}
+	passDone := make(chan struct{})
+	go func() { a.flush(context.Background()); close(passDone) }() // the run loop's pass
+	<-entered
+	drops := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown"))
+	}
+	before := drops()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	a.drain(ctx)
+	cancel()
+	require.Equal(t, before, drops(), "nothing counted while the pass holds the snapshots")
+	close(gate)
+	<-passDone
+	require.Equal(t, before+4, drops(), "all four snapshots of the abandoned pass are counted")
+	require.Empty(t, a.pending)
+}

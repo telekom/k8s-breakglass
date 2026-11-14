@@ -292,17 +292,19 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 		if a.pending[d.key] != d.entry {
 			continue // evicted or dropped meanwhile
 		}
-		if i >= attempted {
-			continue // not attempted in this pass
-		}
-		if accepted[i] {
+		if i < attempted && accepted[i] {
 			delete(a.pending, d.key)
 			continue
 		}
 		if a.abandoned {
+			// The drain gave up while this pass held these snapshots: count
+			// every one that was not accepted, attempted or not.
 			delete(a.pending, d.key)
 			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Inc()
 			continue
+		}
+		if i >= attempted {
+			continue // not attempted in this pass
 		}
 		d.entry.attempts++
 		d.entry.next = now.Add(a.backoff(d.entry.attempts))
