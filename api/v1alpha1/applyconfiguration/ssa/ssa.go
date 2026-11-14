@@ -261,6 +261,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		}
 		result.WithNodeMaintenance(maintenance)
 	}
+	if status.TrafficMirror != nil {
+		result.WithTrafficMirror(TrafficMirrorStatusFrom(status.TrafficMirror))
+	}
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
@@ -1009,6 +1012,68 @@ func KubectlDebugEphemeralContainerIntentFrom(e *breakglassv1alpha1.KubectlDebug
 		WithStdin(e.Stdin)
 }
 
+// TrafficMirrorStatusFrom converts a TrafficMirrorStatus to its ApplyConfiguration.
+func TrafficMirrorStatusFrom(s *breakglassv1alpha1.TrafficMirrorStatus) *ac.TrafficMirrorStatusApplyConfiguration {
+	result := ac.TrafficMirrorStatus().WithOperationID(s.OperationID).WithCreateAttempted(s.CreateAttempted).
+		WithTeardownVerified(s.TeardownVerified).WithStopAudited(s.StopAudited).WithReleased(s.Released)
+	if s.State != "" {
+		result.WithState(s.State)
+	}
+	if s.PodUID != "" {
+		result.WithPodUID(s.PodUID)
+	}
+	if s.CapturePodUID != "" {
+		result.WithCapturePodUID(s.CapturePodUID)
+	}
+	if s.TeardownResult != "" {
+		result.WithTeardownResult(s.TeardownResult)
+	}
+	if s.ClusterConfigUID != "" {
+		result.WithClusterConfigUID(s.ClusterConfigUID)
+	}
+	if s.NamespaceUID != "" {
+		result.WithNamespaceUID(s.NamespaceUID)
+	}
+	if s.SourcePodIP != "" {
+		result.WithSourcePodIP(s.SourcePodIP)
+	}
+	if s.Message != "" {
+		result.WithMessage(s.Message)
+	}
+	return result
+}
+
+// DebugSessionTrafficMirrorFrom converts a DebugSessionTrafficMirror to its ApplyConfiguration.
+func DebugSessionTrafficMirrorFrom(m *breakglassv1alpha1.DebugSessionTrafficMirror) *ac.DebugSessionTrafficMirrorApplyConfiguration {
+	result := ac.DebugSessionTrafficMirror().WithImage(m.Image).WithCapturePayload(m.CapturePayload)
+	for _, source := range m.AllowedSources {
+		value := ac.TrafficMirrorSource().WithInterfaces(source.Interfaces...)
+		if source.Pod != nil {
+			value.WithPod(ac.TrafficMirrorPodSource().WithNamespace(source.Pod.Namespace).WithMatchLabels(source.Pod.MatchLabels))
+		}
+		if source.Node != nil {
+			value.WithNode(ac.TrafficMirrorNodeSource().WithMatchLabels(source.Node.MatchLabels))
+		}
+		result.WithAllowedSources(value)
+	}
+	if m.Direction != "" {
+		result.WithDirection(m.Direction)
+	}
+	if m.Filter != "" {
+		result.WithFilter(m.Filter)
+	}
+	if m.SnapLength != 0 {
+		result.WithSnapLength(m.SnapLength)
+	}
+	if m.MaxPackets != 0 {
+		result.WithMaxPackets(m.MaxPackets)
+	}
+	if m.MaxBandwidthMbps != 0 {
+		result.WithMaxBandwidthMbps(m.MaxBandwidthMbps)
+	}
+	return result
+}
+
 // DebugSessionTemplateSpecFrom converts a DebugSessionTemplateSpec to its ApplyConfiguration.
 func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec) *ac.DebugSessionTemplateSpecApplyConfiguration {
 	if t == nil {
@@ -1016,6 +1081,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	}
 
 	result := ac.DebugSessionTemplateSpec()
+	if t.TrafficMirror != nil {
+		result.WithTrafficMirror(DebugSessionTrafficMirrorFrom(t.TrafficMirror))
+	}
 	if profile := t.NodeMaintenance; profile != nil {
 		maintenance := ac.DebugSessionNodeMaintenance().WithAction(profile.Action).WithImage(profile.Image)
 		for _, target := range profile.AllowedTargets {

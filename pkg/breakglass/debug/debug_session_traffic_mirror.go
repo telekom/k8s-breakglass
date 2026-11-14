@@ -395,8 +395,15 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 		return fmt.Errorf("trafficMirror ClusterConfig %s was replaced", ds.Spec.Cluster)
 	}
 	if ds.Status.TrafficMirror == nil {
+		namespace := &corev1.Namespace{}
+		if err := target.Get(ctx, ctrlclient.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace); err != nil {
+			return fmt.Errorf("operator must provision the common maintenance namespace: %w", err)
+		}
+		if namespace.UID == "" || !namespace.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("trafficMirror requires a live maintenance namespace UID")
+		}
 		inventory := &breakglassv1alpha1.TrafficMirrorStatus{OperationID: breakglassv1alpha1.TrafficMirrorOperationID(string(ds.UID)),
-			State: breakglassv1alpha1.TrafficMirrorStatePending, ClusterConfigUID: clusterConfigUID}
+			State: breakglassv1alpha1.TrafficMirrorStatePending, ClusterConfigUID: clusterConfigUID, NamespaceUID: string(namespace.UID)}
 		receipt := ds.DeepCopy()
 		receipt.Status.TrafficMirror = inventory
 		if err := c.auditTrafficMirror(ctx, receipt, audit.EventDebugSessionTrafficMirrorStarted, "start", "mirror approved and starting"); err != nil {
@@ -716,6 +723,16 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 	// operator resolves a replaced ClusterConfig by hand.
 	if status.ClusterConfigUID != "" && status.ClusterConfigUID != clusterConfigUID {
 		return fmt.Errorf("trafficMirror cleanup refused: ClusterConfig %s was replaced since the mirror was created", ds.Spec.Cluster)
+	}
+	// An edited ClusterConfig keeps its UID but may point at another cluster
+	// now; the maintenance namespace incarnation recorded at activation
+	// tells them apart and survives credential rotation.
+	namespace := &corev1.Namespace{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace); err != nil {
+		return fmt.Errorf("trafficMirror cleanup cannot confirm the target cluster: %w", err)
+	}
+	if string(namespace.UID) != status.NamespaceUID {
+		return fmt.Errorf("trafficMirror cleanup refused: ClusterConfig %s now points at another cluster", ds.Spec.Cluster)
 	}
 	// The agent detaches on SIGTERM; a killed agent leaves filters that only
 	// mirror into a deleted device until the teardown Pod removes them.

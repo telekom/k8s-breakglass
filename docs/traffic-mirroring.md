@@ -24,12 +24,21 @@ controller with `--disable-traffic-mirror`.
   template.
 - The ClusterConfig credential of the target cluster must be allowed to
   create, get and delete `pods` and `networking.k8s.io/networkpolicies` in
-  `breakglass-node-maintenance`, and to get `pods` in the source namespaces
-  and `nodes`.
+  `breakglass-node-maintenance`, and to get `pods` in the source namespaces,
+  `nodes` and the `breakglass-node-maintenance` namespace itself.
 - The CNI must enforce NetworkPolicy. Otherwise the per-operation deny-all
   policy has no effect and the capture Pod is not isolated on the Pod
   network; the controller cannot detect this, so verify it before enabling
   a mirror template.
+- NetworkPolicy allows are additive: any other policy that selects the
+  capture Pod and allows ingress or egress (for example a namespace-wide
+  allow in `breakglass-node-maintenance`, or a cluster-wide CNI policy such
+  as a CiliumClusterwideNetworkPolicy or a Calico GlobalNetworkPolicy)
+  overrides the per-operation deny-all policy. Keep
+  `breakglass-node-maintenance` free of such policies and verify the
+  effective isolation before enabling a mirror template, for example by
+  checking that a Pod with the capture Pod's labels can neither reach nor be
+  reached from another Pod.
 - Use an image with `ip`, `tc`, `nsenter`, `timeout` and `tcpdump`, pinned
   by digest, for example the [network-debug](network-debug-image.md) utility.
 - The source Node kernel needs `sch_ingress` (`clsact`), `cls_basic`,
@@ -175,7 +184,10 @@ applies when the source Pod still runs but none of its namespaces owns the
 approved Pod IP any more: the teardown cannot prove that the old filters are
 gone, so an operator inspects the Node (`tc filter show dev <interface>
 ingress|egress` in the Pod's namespace, looking for the session's cookie)
-before removing the finalizer.
+before removing the finalizer. Cleanup also refuses a ClusterConfig that was
+replaced or now points at another cluster (its `breakglass-node-maintenance`
+namespace is not the one recorded at activation): clean up the original
+cluster by hand, then remove the finalizer.
 
 ## Audit
 

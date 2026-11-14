@@ -80,10 +80,16 @@ with `hostPID`, created only after the capture Pod runs.
   field passed as one argument, never through a shell.
 - A per-operation deny-all NetworkPolicy selects the capture, agent and
   teardown Pods, so the capture cannot send the mirrored data anywhere. This
-  requires a CNI that enforces NetworkPolicy.
+  requires a CNI that enforces NetworkPolicy and no other policy that
+  allows traffic for these Pods: allows are additive, so an operator keeps
+  the namespace free of them and verifies the effective isolation.
 - `status.trafficMirror.clusterConfigUID` binds the operation to the exact
-  ClusterConfig; cleanup refuses a replaced ClusterConfig of the same name
-  and leaves it to an operator.
+  ClusterConfig; cleanup refuses a replaced ClusterConfig of the same name.
+  `status.trafficMirror.namespaceUID` records the target cluster's
+  `breakglass-node-maintenance` namespace incarnation, so cleanup also
+  refuses a ClusterConfig edited to point at another cluster, while a
+  credential rotation for the same cluster keeps working. Both refusals keep
+  the finalizer and leave the cleanup to an operator.
 - Session participants may read the capture container's logs unless the
   template or binding sets `allowedPodOperations.logs: false`; exec, attach
   and port-forward stay denied (`AllowedPodOperations` and a UID-fenced

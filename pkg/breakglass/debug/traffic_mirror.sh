@@ -299,12 +299,16 @@ attach() {
 	: >"$run_dir/attached"
 	log mirror-started "$MIRROR_INTERFACE"
 	# The absolute approved expiry ends the mirror even without the controller.
-	while left=$(remaining) && [ "$left" -gt 0 ]; do
+	# The identity is checked right after the attach, after every wait and at
+	# the expiry: the filters follow a renamed interface and vanish with a
+	# re-created one.
+	while :; do
+		[ "$(link_id)" = "$ifid" ] || fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created; the mirror is lost"
+		left=$(remaining)
+		[ "$left" -gt 0 ] || break
 		[ "$left" -le 30 ] || left=30
 		sleep "$left" &
 		wait $! || true
-		# The filters follow a renamed interface and vanish with a re-created one.
-		[ "$(link_id)" = "$ifid" ] || fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created; the mirror is lost"
 	done
 	detach
 	verify_detached

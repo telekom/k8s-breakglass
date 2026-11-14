@@ -72,7 +72,8 @@ func newMirrorFixture(t *testing.T, request *breakglassv1alpha1.TrafficMirrorReq
 	ds.Status.AuthenticatedUserGroupsCaptured = true
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: true, ApprovedBy: "approver", ApprovedByIdentityProvider: "keycloak", ApprovedAt: &now}
 	require.NoError(t, controller.client.Status().Update(t.Context(), ds))
-	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-a-uid"}})
+	objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-a-uid"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: breakglassv1alpha1.NodeMaintenanceNamespace, UID: "maintenance-ns-uid"}})
 	spoke := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).
 		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			obj.SetUID(types.UID(obj.GetName() + "-uid"))
@@ -442,6 +443,22 @@ func TestTrafficMirrorCleanupRefusesReplacedClusterConfig(t *testing.T) {
 	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix), "no privileged teardown Pod in another cluster")
 	require.False(t, f.ds.Status.TrafficMirror.Released)
 	require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "was replaced")
+}
+
+func TestTrafficMirrorCleanupRefusesRedirectedCluster(t *testing.T) {
+	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	f.runCapture(t)
+	require.Equal(t, "maintenance-ns-uid", f.ds.Status.TrafficMirror.NamespaceUID, "activation records the target namespace incarnation")
+	// The same ClusterConfig now reaches another cluster, which has its own
+	// maintenance namespace and a Node of the same name.
+	require.NoError(t, f.c.patchTrafficMirrorStatus(t.Context(), f.ds, func(status *breakglassv1alpha1.TrafficMirrorStatus) {
+		status.NamespaceUID = "original-cluster-ns-uid"
+	}))
+	require.ErrorContains(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "now points at another cluster")
+	require.NotNil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "nothing is deleted in another cluster")
+	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix), "no teardown is verified in another cluster")
+	require.False(t, f.ds.Status.TrafficMirror.Released)
 }
 
 func TestTrafficMirrorCapturePayloadOptIn(t *testing.T) {

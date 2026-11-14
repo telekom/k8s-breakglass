@@ -185,6 +185,12 @@ type TrafficMirrorStatus struct {
 	// create it; cleanup refuses a replaced ClusterConfig.
 	// +optional
 	ClusterConfigUID string `json:"clusterConfigUID,omitempty"`
+	// namespaceUID is the target cluster's breakglass-node-maintenance
+	// namespace incarnation at activation. A ClusterConfig edited to point at
+	// another cluster keeps its UID but cannot match this, so cleanup refuses
+	// that cluster and keeps the finalizer.
+	// +optional
+	NamespaceUID string `json:"namespaceUID,omitempty"`
 	// sourcePodIP is the approved source Pod IP that identifies its network
 	// namespace on the Node, also for the teardown.
 	// +optional

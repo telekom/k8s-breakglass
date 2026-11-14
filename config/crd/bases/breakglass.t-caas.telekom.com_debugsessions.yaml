@@ -8797,6 +8797,13 @@ spec:
                   message:
                     description: message explains failures.
                     type: string
+                  namespaceUID:
+                    description: |-
+                      namespaceUID is the target cluster's breakglass-node-maintenance
+                      namespace incarnation at activation. A ClusterConfig edited to point at
+                      another cluster keeps its UID but cannot match this, so cleanup refuses
+                      that cluster and keeps the finalizer.
+                    type: string
                   operationID:
                     description: operationID names the mirror Pod and correlates audit
                       events.

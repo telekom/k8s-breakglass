@@ -32,6 +32,11 @@ type TrafficMirrorStatusApplyConfiguration struct {
 	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
 	// create it; cleanup refuses a replaced ClusterConfig.
 	ClusterConfigUID *string `json:"clusterConfigUID,omitempty"`
+	// namespaceUID is the target cluster's breakglass-node-maintenance
+	// namespace incarnation at activation. A ClusterConfig edited to point at
+	// another cluster keeps its UID but cannot match this, so cleanup refuses
+	// that cluster and keeps the finalizer.
+	NamespaceUID *string `json:"namespaceUID,omitempty"`
 	// sourcePodIP is the approved source Pod IP that identifies its network
 	// namespace on the Node, also for the teardown.
 	SourcePodIP *string `json:"sourcePodIP,omitempty"`
@@ -105,6 +110,14 @@ func (b *TrafficMirrorStatusApplyConfiguration) WithTeardownResult(value string)
 // If called multiple times, the ClusterConfigUID field is set to the value of the last call.
 func (b *TrafficMirrorStatusApplyConfiguration) WithClusterConfigUID(value string) *TrafficMirrorStatusApplyConfiguration {
 	b.ClusterConfigUID = &value
+	return b
+}
+
+// WithNamespaceUID sets the NamespaceUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NamespaceUID field is set to the value of the last call.
+func (b *TrafficMirrorStatusApplyConfiguration) WithNamespaceUID(value string) *TrafficMirrorStatusApplyConfiguration {
+	b.NamespaceUID = &value
 	return b
 }
 

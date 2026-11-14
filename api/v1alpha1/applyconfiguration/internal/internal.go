@@ -4983,6 +4983,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: message
       type:
         scalar: string
+    - name: namespaceUID
+      type:
+        scalar: string
     - name: operationID
       type:
         scalar: string
