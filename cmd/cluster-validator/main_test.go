@@ -116,7 +116,8 @@ func TestWriteReportPreservesExistingDestination(t *testing.T) {
 }
 
 // TestRunLogFormats proves the error output: plain "cluster-validator: …"
-// lines by default, and one JSON object per line with --log-format=json.
+// lines by default, and one JSON object per line with --log-format=json, also
+// for option errors.
 func TestRunLogFormats(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("LOG_FORMAT", "")
@@ -134,6 +135,14 @@ func TestRunLogFormats(t *testing.T) {
 	require.Equal(t, "error", entry["level"])
 	require.Equal(t, "cluster-validator", entry["logger"])
 	require.Equal(t, want, entry["msg"])
+
+	// Option errors use the requested format too.
+	stderr.Reset()
+	require.Equal(t, 2, run([]string{"--log-format=json", "--mode", "unsupported"}, &stdout, &stderr))
+	entry = nil
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Equal(t, "error", entry["level"])
+	require.Contains(t, entry["msg"], `invalid mode "unsupported"`)
 
 	stderr.Reset()
 	t.Setenv("LOG_LEVEL", "verbose")

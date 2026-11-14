@@ -52,20 +52,25 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
-		return 2
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
 	}
-	logger, err := logging.NewWriter(stderr, opts.log.Level, opts.log.Format)
-	if err != nil {
+	logger, logErr := logging.NewWriter(stderr, opts.log.Level, opts.log.Format)
+	if logErr != nil {
+		// Without a logger, report the option error (or the log option error)
+		// as a plain line.
+		if err == nil {
+			err = logErr
+		}
 		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	log := logger.Named("cluster-validator")
 	defer func() { _ = log.Sync() }()
+	if err != nil {
+		log.Error(err.Error())
+		return 2
+	}
 	// client-go (klog) and standard-library log lines use the same format.
 	defer logging.RouteLibraryLogs(log)()
 
@@ -139,31 +144,33 @@ func parseOptions(args []string) (options, error) {
 	var kubeconfig, contextName string
 	fs.StringVar(&kubeconfig, "kubeconfig", os.Getenv("VALIDATOR_KUBECONFIG"), "kubeconfig path (default: in-cluster, then ~/.kube/config)")
 	fs.StringVar(&contextName, "context", os.Getenv("VALIDATOR_CONTEXT"), "kubeconfig context")
+	// Registered before the first option error, so that every error below
+	// carries the log options (LOG_LEVEL and LOG_FORMAT until flags are parsed).
+	var logOpts logging.Options
+	logOpts.AddFlags(fs, "info", logging.FormatText)
 	includeTimestamp, err := envBool("VALIDATOR_INCLUDE_TIMESTAMP", false)
 	if err != nil {
-		return options{}, err
+		return options{log: logOpts}, err
 	}
 	skipPods, err := envBool("VALIDATOR_SKIP_PODS", false)
 	if err != nil {
-		return options{}, err
+		return options{log: logOpts}, err
 	}
 	fs.BoolVar(&includeTimestamp, "include-timestamp", includeTimestamp, "include a non-deterministic UTC generatedAt field")
 	fs.BoolVar(&skipPods, "skip-pods", skipPods, "skip the cluster-wide pod readiness check")
-	var logOpts logging.Options
-	logOpts.AddFlags(fs, "info", logging.FormatText)
 	if err := fs.Parse(args); err != nil {
-		return options{}, err
+		return options{log: logOpts}, err
 	}
 	parsedTimeout, err := time.ParseDuration(timeoutValue)
 	if err != nil {
-		return options{}, fmt.Errorf("invalid --timeout %q: %w", timeoutValue, err)
+		return options{log: logOpts}, fmt.Errorf("invalid --timeout %q: %w", timeoutValue, err)
 	}
 	timeout = parsedTimeout
 	if timeout <= 0 {
-		return options{}, errors.New("timeout must be positive")
+		return options{log: logOpts}, errors.New("timeout must be positive")
 	}
 	if mode != clustervalidator.ModeOneTime && mode != clustervalidator.ModePostUpgrade {
-		return options{}, fmt.Errorf("invalid mode %q: must be one-time or post-upgrade", mode)
+		return options{log: logOpts}, fmt.Errorf("invalid mode %q: must be one-time or post-upgrade", mode)
 	}
 	reportFlagProvided := false
 	fs.Visit(func(f *flag.Flag) {

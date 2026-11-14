@@ -364,7 +364,7 @@ All commands support these flags:
 - `--token` - Bearer token override (bypasses OIDC)
 - `--verbose` / `-v` - Log each API request with its correlation ID; same as `--log-level=debug`
 - `--log-level` - Diagnostic log level: `debug`, `info`, `warn`, `error` (default `warn`). Precedence: `--log-level`, then `--verbose`, then `LOG_LEVEL`, then `BGCTL_VERBOSE`
-- `--log-format` - Diagnostic log format: `console` (default) or `json`
+- `--log-format` - Diagnostic log format: `console` (default), `json` or `text`
 - `--page` - Page number for paginated output
 - `--page-size` - Items per page
 - `--all` - Disable pagination
@@ -373,7 +373,9 @@ All commands support these flags:
 Diagnostic logs always go to stderr. Command output (`-o table|wide|json|yaml`)
 goes to stdout. Warnings, such as disabled TLS verification, are log lines at
 `warn`. So `bgctl ... -o json --log-format=json 2>bgctl.log | jq` keeps
-the two apart. Logs never contain the bearer token. See the
+the two apart. Logs never contain the bearer token. A failed command prints
+a plain `Error: <message>` line on stderr in every log format: it is the
+command's result for the user, not a log line. See the
 [Logging Reference](logging-reference.md).
 
 ### Environment Variables
