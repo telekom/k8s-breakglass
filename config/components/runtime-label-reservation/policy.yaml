@@ -278,7 +278,7 @@ spec:
   # labels, so its grace period is capped for every Pod: at most 30 seconds
   # (the Kubernetes default terminationGracePeriodSeconds) for non-exempt users.
   - expression: >-
-      variables.exempt || object.kind != 'Eviction' || !has(object.deleteOptions) ||
+      request.operation == 'DELETE' || variables.exempt || object.kind != 'Eviction' || !has(object.deleteOptions) ||
       !has(object.deleteOptions.gracePeriodSeconds) || object.deleteOptions.gracePeriodSeconds <= 30
     messageExpression: >-
       'evictions may not set a grace period above 30 seconds while breakglass debug-session labels are reserved; '
