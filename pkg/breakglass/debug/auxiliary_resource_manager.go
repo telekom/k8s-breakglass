@@ -809,8 +809,9 @@ func (m *AuxiliaryResourceManager) renderAuxiliaryDocuments(auxRes breakglassv1a
 }
 
 // PreflightAuxiliaryKinds returns an error before any target write when an
-// enabled auxiliary resource with failurePolicy Fail renders a kind that the
-// target serves in no version. Optional resources are not checked: their
+// enabled auxiliary resource with failurePolicy Fail renders an exact
+// apiVersion/kind that the target does not serve. A kind served only in
+// another version does not satisfy it. Optional resources are not checked: their
 // create fails definitively and is ignored or warned about as configured.
 // Rendering errors are left to deployment, which reports them with context.
 func (m *AuxiliaryResourceManager) PreflightAuxiliaryKinds(
