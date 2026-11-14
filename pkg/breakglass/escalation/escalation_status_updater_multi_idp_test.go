@@ -76,7 +76,8 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 				return
 			}
 			if mode == keycloakFixtureAmbiguous {
-				writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"approver-group-dup-id","name":"approvers"}]`)
+				// A top-level group and a same-named nested subgroup (/x/approvers).
+				writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"x-id","name":"x","subGroups":[{"id":"nested-approvers-id","name":"approvers"}]}]`)
 				return
 			}
 			writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"private-group-id","name":"private"}]`)

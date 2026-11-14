@@ -103,10 +103,8 @@ func staleTwoIDPStatus() breakglassv1alpha1.BreakglassEscalationStatus {
 
 func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 	tests := []struct {
-		name string
-		idps []idpFixture
-		// wantPresent false means no aggregate entry (token-group fallback).
-		wantPresent bool
+		name        string
+		idps        []idpFixture
 		wantMembers []string
 		wantPerIDP  map[string][]string
 		wantEvent   string
@@ -116,32 +114,31 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 			// no stale members) and idp-b's result stays authoritative.
 			name:        "ambiguous in one provider, resolved in the other",
 			idps:        []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureSuccess}},
-			wantPresent: true,
 			wantMembers: []string{"approver@example.com"},
 			wantPerIDP:  map[string][]string{"idp-b": {"approver@example.com"}},
 		},
 		{
-			// Guard: the aggregate entry is dropped only when every provider
-			// is ambiguous.
-			name:      "ambiguous in both providers",
-			idps:      []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureAmbiguous}},
-			wantEvent: "Approval by exact token group applies to: approvers.",
+			// Guard: an ambiguous group keeps an empty entry, so approval
+			// cannot fall back to the "approvers" token claim that members
+			// of the nested /x/approvers also carry.
+			name:        "ambiguous in both providers",
+			idps:        []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureAmbiguous}},
+			wantMembers: []string{},
+			wantEvent:   "approval through these groups is denied",
 		},
 		{
-			// Guard: a provider that fails to load is not counted as
-			// ambiguous, so the group keeps an empty, authoritative entry.
+			// Guard: a provider that fails to load contributes no members,
+			// so the group keeps an empty entry.
 			name:        "ambiguous in one provider, the other fails to load",
 			idps:        []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-missing", ""}},
-			wantPresent: true,
 			wantMembers: []string{},
 		},
 		{
 			name:        "ambiguous in one provider, empty in the other",
 			idps:        []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureEmpty}},
-			wantPresent: true,
 			wantMembers: []string{},
 			wantPerIDP:  map[string][]string{"idp-b": {}},
-			wantEvent:   "stays authoritative for: approvers; token-group approval does not apply",
+			wantEvent:   "counting nested subgroups: approvers.",
 		},
 	}
 	for _, tt := range tests {
@@ -165,10 +162,10 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 			updated := &breakglassv1alpha1.BreakglassEscalation{}
 			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
 			members, present := updated.Status.ApproverGroupMembers["approvers"]
-			require.Equal(t, tt.wantPresent, present, "aggregate entry presence: %v", updated.Status.ApproverGroupMembers)
-			if tt.wantPresent {
-				assert.ElementsMatch(t, tt.wantMembers, members)
-			}
+			// An entry must always exist: without one, approval would fall
+			// back to token groups.
+			require.True(t, present, "aggregate entry missing: %v", updated.Status.ApproverGroupMembers)
+			assert.ElementsMatch(t, tt.wantMembers, members)
 			for idp, groups := range updated.Status.IDPGroupMemberships {
 				for group, groupMembers := range groups {
 					assert.NotContains(t, groupMembers, "stale@example.com", "%s/%s kept a stale member", idp, group)

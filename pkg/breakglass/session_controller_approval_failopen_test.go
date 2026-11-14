@@ -310,18 +310,17 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// An approver group without a status entry (ambiguous in every provider)
-// falls back to the approver's exact token groups; a group a provider
-// resolved, even as empty, stays authoritative and blocks that fallback.
-func TestAmbiguousApproverGroupTokenFallback(t *testing.T) {
+// An ambiguous approver group (for example a top-level group plus a same-named
+// nested subgroup, whose members carry the same short group claim) is stored
+// as an empty entry, so a token carrying the group claim cannot approve.
+// A group another provider resolved stays authoritative.
+func TestAmbiguousApproverGroupDoesNotApproveByTokenGroup(t *testing.T) {
 	tests := []struct {
 		name    string
 		members map[string][]string
-		allowed bool
 	}{
-		{name: "ambiguous everywhere: no entry, exact token group approves", members: map[string][]string{"other-group": {"someone@example.com"}}, allowed: true},
-		{name: "another provider resolved it empty: denied", members: map[string][]string{"cluster-approvers": {}}},
-		{name: "another provider resolved other members: denied", members: map[string][]string{"cluster-approvers": {"b-user@example.com"}}},
+		{name: "ambiguous everywhere: empty entry", members: map[string][]string{"cluster-approvers": {}}},
+		{name: "another provider resolved other members", members: map[string][]string{"cluster-approvers": {"b-user@example.com"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +335,8 @@ func TestAmbiguousApproverGroupTokenFallback(t *testing.T) {
 
 			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
 
-			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
+			require.False(t, result.Allowed)
+			require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
 		})
 	}
 }

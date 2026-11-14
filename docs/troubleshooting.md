@@ -765,16 +765,17 @@ then create/rename the AD/Keycloak group or update the escalation configuration.
 ### ApprovalGroupMembersResolved Condition: False (ambiguous approver group)
 
 **Cause:** A configured approver group matches more than one identity-provider
-group, so its members cannot be resolved authoritatively. The escalation (and,
+group (including a same-named nested subgroup such as `/x/admins` next to
+`admins`), so its members cannot be resolved authoritatively. The escalation (and,
 in multi-IDP mode, the IdentityProvider) shows a `Warning` event with reason
 `ApproverGroupAmbiguous`; the condition message lists the group as ambiguous.
 
 **Effect:** Cached members of the group are removed. If every queried provider
-reports it as ambiguous, the group has no entry in
-`status.approverGroupMembers` and approvers whose token `groups` claim contains
-the exact group name can still approve. If another provider resolved the group
-or reported it missing, that result stays authoritative and approvers from the
-ambiguous provider are denied. Pending and new sessions send no approval
+reports it as ambiguous, the group is stored as an empty list in
+`status.approverGroupMembers` and nobody can approve through it, including
+approvers whose token `groups` claim contains the group name. If another
+provider resolved the group or reported it missing, that result stays
+authoritative and approvers from the ambiguous provider are denied. Pending and new sessions send no approval
 notifications for members of the ambiguous provider's group.
 
 **Diagnosis:**
@@ -785,7 +786,8 @@ kubectl get events --field-selector involvedObject.name=<name>,reason=ApproverGr
 ```
 
 **Solution:** Rename or remove the duplicate group in the identity provider
-(for example two groups that differ only in case), or disable the transitional
+(for example two groups that differ only in case, or a same-named subgroup),
+or disable the transitional
 `kubernetes.approverGroupCaseInsensitiveFallback` setting so only the exact
 name resolves.
 

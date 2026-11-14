@@ -99,7 +99,7 @@ func TestMatchKeycloakGroupZAMNames(t *testing.T) {
 		{name: "nil entries ignored", groups: []*gocloak.Group{nil, {ID: gocloak.StringP("x")}, kcGroup("5", zamFirstLine)}, lookup: zamFirstLine, wantID: "5"},
 		{name: "no match", groups: []*gocloak.Group{kcGroup("6", zamPlatform)}, lookup: zamTenant},
 		{name: "same-named subgroup makes the name ambiguous", groups: []*gocloak.Group{kcGroup("top", zamTenant), withSubGroups(kcGroup("parent", "tenants"), kcGroup("sub", zamTenant))}, lookup: zamTenant, wantAmbiguous: true},
-		{name: "nested subgroup is a match", groups: []*gocloak.Group{withSubGroups(kcGroup("parent", "tenants"), kcGroup("sub", zamTenant))}, lookup: zamTenant, wantID: "sub"},
+		{name: "nested-only subgroup is not a match", groups: []*gocloak.Group{withSubGroups(kcGroup("parent", "tenants"), kcGroup("sub", zamTenant))}, lookup: zamTenant},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,8 +206,9 @@ func TestKeycloakResolverCaseInsensitiveFallbackOptOut(t *testing.T) {
 	}
 }
 
-// An ambiguous group drops its cached members and its status entry, so
-// approval falls back to exact token groups, and emits ApproverGroupAmbiguous.
+// An ambiguous group drops its cached members and keeps an empty status entry,
+// so approval is denied rather than falling back to token groups, and emits
+// ApproverGroupAmbiguous.
 func TestEscalationStatusUpdaterAmbiguousApproverGroupDropsCachedMembers(t *testing.T) {
 	cli := fake.NewClientBuilder().
 		WithScheme(breakglass.Scheme).
@@ -244,8 +245,9 @@ func TestEscalationStatusUpdaterAmbiguousApproverGroupDropsCachedMembers(t *test
 
 	updated := &breakglassv1alpha1.BreakglassEscalation{}
 	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
-	_, present := updated.Status.ApproverGroupMembers[zamMixedCase]
-	assert.False(t, present, "ambiguous group must have no entry, not cached or empty members")
+	members, present := updated.Status.ApproverGroupMembers[zamMixedCase]
+	assert.True(t, present, "ambiguous group must keep an entry so approval cannot fall back to token groups")
+	assert.Empty(t, members, "ambiguous group must not keep cached members")
 	assert.Equal(t, []string{"platform@example.com"}, updated.Status.ApproverGroupMembers[zamPlatform])
 	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
 	require.NotNil(t, condition)
@@ -268,7 +270,6 @@ func TestFetchGroupMembersReportAmbiguousGroupSkipsCache(t *testing.T) {
 	}}
 	report := updater.fetchGroupMembersFromMultipleIDPsReport(context.Background(), escalation, []string{"idp"}, []string{zamMixedCase}, zap.NewNop().Sugar())
 	assert.Equal(t, []string{zamMixedCase}, report.ambiguousGroups)
-	assert.Equal(t, []string{zamMixedCase}, report.ambiguousEverywhere, "a single resolver is every provider")
 	assert.Empty(t, report.missingGroups)
 	assert.Empty(t, deduplicateMembersFromHierarchy(report.hierarchy, zamMixedCase))
 }
@@ -301,16 +302,6 @@ func TestEscalationGroupIndexLookupValuesZAMNames(t *testing.T) {
 		escalationGroupIndexLookupValues([]string{zamLongest}, []string{zamOIDCPrefix}))
 	assert.Equal(t, []string{zamPrefixedMax, zamLongest},
 		escalationGroupIndexLookupValues([]string{zamPrefixedMax}, []string{zamOIDCPrefix}))
-}
-
-// Only a group that every queried provider reports as ambiguous loses its
-// aggregate entry; a provider that resolved it (even as empty) stays
-// authoritative.
-func TestGroupsAmbiguousInAllProviders(t *testing.T) {
-	counts := map[string]int{"both": 2, "only-a": 1}
-	assert.Equal(t, []string{"both"}, groupsAmbiguousInAllProviders(counts, 2))
-	assert.Equal(t, []string{"both", "only-a"}, groupsAmbiguousInAllProviders(map[string]int{"both": 1, "only-a": 1}, 1))
-	assert.Empty(t, groupsAmbiguousInAllProviders(counts, 0))
 }
 
 // Ambiguity errors are logged verbatim, so they must honor server.redactLogs

@@ -662,6 +662,7 @@ The `status` section includes **cached group memberships** for performance and a
 
 - **idpGroupMemberships**: Per-IDP resolved group members (cached for performance)
 - **approverGroupMembers**: Deduplicated approvers across all IDPs (used for notifications)
+- **Conditions**: Kubernetes-standard conditions tracking validation, references, and health
 
 **Freshness of cached memberships.** Both maps are rewritten on every group
 sync (`--escalation-status-update-interval`, default 10m); there is no separate
@@ -674,7 +675,6 @@ refresh them. A transient lookup failure keeps the last resolved members until
 the next successful sync and sets `ApprovalGroupMembersResolved=False`; remove an
 approver from a group by fixing the identity provider, and the next successful
 sync drops them.
-- **Conditions**: Kubernetes-standard conditions tracking validation, references, and health
 
 ### Conditions
 
@@ -738,9 +738,13 @@ warning event identifies the missing group.
 
 #### Ambiguous approver groups
 
-Approver groups resolve by exact, case-sensitive name. When more than one
-identity-provider group matches a configured name (two exact matches, or two
-case variants with the transitional
+Approver groups resolve by exact, case-sensitive name. Nested subgroups count
+as matches: with `full.path=false` (see
+[Keycloak configuration](keycloak-configuration.md)) a member of `/x/admins`
+also gets the `admins` token claim. When more than one identity-provider group
+matches a configured name (two exact matches, a top-level group and a
+same-named subgroup such as `admins` and `/x/admins`, or two case variants
+with the transitional
 [`approverGroupCaseInsensitiveFallback`](configuration-reference.md#approvergroupcaseinsensitivefallback-optional-transitional)
 enabled), the lookup fails closed:
 
@@ -748,22 +752,22 @@ enabled), the lookup fails closed:
   on the escalation (and on the IdentityProvider in multi-IDP mode) and the
   `ApprovalGroupMembersResolved` condition is `False` with the group listed as
   ambiguous;
-- cached members of that group are removed. When every queried identity
-  provider reports the group as ambiguous, it gets **no** entry in
-  `status.approverGroupMembers` (not an empty list). Approval therefore still
-  works for approvers whose own token `groups` claim contains the exact group
-  name, because approval falls back to token groups for groups without resolved
-  members. This is safe: token groups are exact claims signed by the identity
-  provider and are never case-folded;
+- cached members of that group are removed and, when every queried identity
+  provider reports the group as ambiguous, it is stored as an empty list in
+  `status.approverGroupMembers`. Approval through the group is denied, also
+  for approvers whose token `groups` claim contains the group name: that claim
+  cannot tell the groups apart, so falling back to it would let anyone who can
+  create a same-named subgroup grant approver rights;
 - in multi-IDP mode, when another provider resolved the group (with members or
   as empty) or reported it missing, that result stays authoritative: the entry
-  keeps that provider's members (or `[]`), so the token-group fallback does not
-  apply and approvers from the ambiguous provider are denied (fail closed) until
-  the ambiguity is fixed;
+  keeps that provider's members (or `[]`), and approvers from the ambiguous
+  provider are denied until the ambiguity is fixed;
 - pending and new sessions send no approval notifications to that group,
   because no members can be resolved for it.
 
-A not-found group is different: it is stored as an empty list, which blocks
+A group that exists only as a nested subgroup (for example `/x/admins` with no
+top-level `admins`) does not resolve: it is reported as not found, like a
+missing group. A not-found group is stored as an empty list, which blocks
 token-group approval and notifications for that group.
 
 #### Condition Reasons

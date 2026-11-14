@@ -511,12 +511,14 @@ func ApproverGroupCaseInsensitiveFallback() bool {
 // the exact name matches. With caseInsensitiveFallback (transitional opt-out)
 // a case-insensitive match is accepted when no exact match exists and it is
 // unique. More than one candidate always fails closed with a
-// breakglass.ErrGroupAmbiguous error. It returns nil when no group matches.
+// breakglass.ErrGroupAmbiguous error. It returns nil when no group matches or
+// the only match is a nested subgroup.
 func matchKeycloakGroup(groups []*gocloak.Group, name string, caseInsensitiveFallback bool) (*gocloak.Group, error) {
 	var exact, folded []*gocloak.Group
 	// Keycloak search returns matching subgroups nested under their parents.
-	// A subgroup with the configured name is a distinct group, so it counts
-	// as a candidate and makes the name ambiguous rather than being ignored.
+	// A subgroup with the configured name is a distinct group whose members
+	// carry the same short group claim, so it counts as a candidate and makes
+	// the name ambiguous rather than being ignored.
 	var visit func([]*gocloak.Group)
 	visit = func(level []*gocloak.Group) {
 		for _, g := range level {
@@ -550,6 +552,11 @@ func matchKeycloakGroup(groups []*gocloak.Group, name string, caseInsensitiveFal
 		return nil, nil
 	case len(candidates) > 1:
 		return nil, breakglass.NewGroupAmbiguousError(name, len(candidates))
+	case !slices.Contains(groups, candidates[0]):
+		// Only top-level groups resolve, as before subgroups were inspected:
+		// a lone same-named subgroup stays not found (deny), so creating a
+		// subgroup cannot grant approver rights.
+		return nil, nil
 	case candidates[0].ID == nil || strings.TrimSpace(*candidates[0].ID) == "":
 		return nil, fmt.Errorf("keycloak group %q matched without an ID", name)
 	}
@@ -756,17 +763,6 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			for _, g := range groups {
 				dedupMembers := deduplicateMembersFromHierarchy(hierarchy, g)
 				currentMembers, exists := updated.Status.ApproverGroupMembers[g]
-				if slices.Contains(syncReport.ambiguousEverywhere, g) {
-					// No provider has authoritative membership: drop the entry so
-					// approval falls back to exact token groups instead of an empty
-					// list. If any provider resolved the group (even as empty) or
-					// reported it missing, its result stays authoritative.
-					if exists {
-						delete(updated.Status.ApproverGroupMembers, g)
-						changed = true
-					}
-					continue
-				}
 				if !exists || !equalStringSlices(dedupMembers, currentMembers) {
 					updated.Status.ApproverGroupMembers[g] = dedupMembers
 					changed = true
@@ -825,10 +821,12 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 								"group", system.RedactGroupName(g),
 								"escalation", esc.Name)
 						} else if breakglass.IsGroupAmbiguous(err) {
-							// No authoritative membership: drop the entry so approval
-							// falls back to exact token groups instead of an empty list.
-							if _, exists := updated.Status.ApproverGroupMembers[g]; exists {
-								delete(updated.Status.ApproverGroupMembers, g)
+							// Fail closed: an empty entry denies approval. Without an
+							// entry, approval would fall back to token groups, which
+							// members of every same-named group carry.
+							currentMembers, exists := updated.Status.ApproverGroupMembers[g]
+							updated.Status.ApproverGroupMembers[g] = []string{}
+							if !exists || len(currentMembers) > 0 {
 								changed = true
 							}
 							ambiguousGroups = append(ambiguousGroups, g)
@@ -917,7 +915,8 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 							strings.Join(uniqueSortedGroupNames(emptyGroups), ", "))
 					} else if len(ambiguousGroups) > 0 {
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupAmbiguous, groupSyncReasonGroupAmbiguous,
-							"%s", ambiguousGroupsEventMessage(uniqueSortedGroupNames(ambiguousGroups), updated.Status.ApproverGroupMembers))
+							"Configured approver group(s) match more than one identity-provider group, counting nested subgroups: %s. Cached approvers from the ambiguous lookups were removed; approval through these groups is denied unless another identity provider resolves them uniquely.",
+							strings.Join(uniqueSortedGroupNames(ambiguousGroups), ", "))
 					} else if len(missingGroups) > 0 {
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupNotFound, groupSyncReasonGroupNotFound,
 							"Configured approver group(s) were not found: %s. Stale cached approvers were removed.",
@@ -1091,15 +1090,12 @@ func mergeIDPGroupMemberships(base, extra map[string]map[string][]string) map[st
 }
 
 type groupSyncReport struct {
-	hierarchy       map[string]map[string][]string
-	syncStatus      string
-	syncErrors      []string
-	emptyGroups     []string
-	missingGroups   []string
-	ambiguousGroups []string
-	// ambiguousEverywhere lists groups that every queried provider reported
-	// as ambiguous, so no provider holds authoritative membership.
-	ambiguousEverywhere []string
+	hierarchy           map[string]map[string][]string
+	syncStatus          string
+	syncErrors          []string
+	emptyGroups         []string
+	missingGroups       []string
+	ambiguousGroups     []string
 	missingFailureCount int
 }
 
@@ -1136,7 +1132,6 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 	var emptyGroups []string
 	var missingGroups []string
 	var ambiguousGroups []string
-	ambiguousProviderCount := map[string]int{}
 	missingFailureCount := 0
 	successCount := 0
 	failureCount := 0
@@ -1195,7 +1190,6 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 			emptyGroups:         uniqueSortedGroupNames(emptyGroups),
 			missingGroups:       uniqueSortedGroupNames(missingGroups),
 			ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
-			ambiguousEverywhere: uniqueSortedGroupNames(ambiguousGroups),
 			missingFailureCount: missingFailureCount,
 		}
 	}
@@ -1257,7 +1251,6 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 					missingFailureCount++
 				} else if breakglass.IsGroupAmbiguous(err) {
 					ambiguousGroups = append(ambiguousGroups, g)
-					ambiguousProviderCount[g]++
 				}
 
 				// Emit event on IdentityProvider resource
@@ -1359,45 +1352,8 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 		emptyGroups:         uniqueSortedGroupNames(emptyApproverGroups(hierarchy, groups)),
 		missingGroups:       uniqueSortedGroupNames(missingGroups),
 		ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
-		ambiguousEverywhere: groupsAmbiguousInAllProviders(ambiguousProviderCount, len(idpNames)),
 		missingFailureCount: missingFailureCount,
 	}
-}
-
-// ambiguousGroupsEventMessage describes ambiguous approver groups. Approval by
-// exact token group applies only to groups left without an
-// approverGroupMembers entry; a group that another provider resolved (with
-// members, empty or missing) keeps that authoritative result instead.
-func ambiguousGroupsEventMessage(ambiguous []string, members map[string][]string) string {
-	var tokenFallback, authoritative []string
-	for _, g := range ambiguous {
-		if _, ok := members[g]; ok {
-			authoritative = append(authoritative, g)
-		} else {
-			tokenFallback = append(tokenFallback, g)
-		}
-	}
-	msg := fmt.Sprintf("Configured approver group(s) match more than one identity-provider group: %s. Cached approvers from the ambiguous lookups were removed.",
-		strings.Join(ambiguous, ", "))
-	if len(tokenFallback) > 0 {
-		msg += fmt.Sprintf(" Approval by exact token group applies to: %s.", strings.Join(tokenFallback, ", "))
-	}
-	if len(authoritative) > 0 {
-		msg += fmt.Sprintf(" Another identity provider's result (members, empty or missing) stays authoritative for: %s; token-group approval does not apply to them.", strings.Join(authoritative, ", "))
-	}
-	return msg
-}
-
-// groupsAmbiguousInAllProviders returns the groups that every queried
-// provider reported as ambiguous.
-func groupsAmbiguousInAllProviders(counts map[string]int, providers int) []string {
-	var out []string
-	for g, n := range counts {
-		if providers > 0 && n == providers {
-			out = append(out, g)
-		}
-	}
-	return uniqueSortedGroupNames(out)
 }
 
 func updateNoApproverGroupsCondition(escalation *breakglassv1alpha1.BreakglassEscalation) bool {
