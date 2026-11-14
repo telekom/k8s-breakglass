@@ -54,6 +54,14 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 	if name == "" {
 		return
 	}
+	// The lookup uses the target's namespace, which is the session's
+	// namespace only when the target is the session. Events about another
+	// target (for example debug_session.attached, whose target is a spoke
+	// Pod) carry the session identity already and must not query the hub
+	// with a wrong namespace on a latency-sensitive path.
+	if event.Target.Kind != "BreakglassSession" && event.Target.Kind != "DebugSession" {
+		return
+	}
 	// A name lookup cannot prove which object the emitter originally observed.
 	// Only validate/enrich identities captured at the object-bearing source.
 	if name != "" && rc.SessionUID == "" && rc.DebugSessionUID == "" &&

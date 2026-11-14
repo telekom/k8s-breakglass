@@ -263,16 +263,44 @@ func observeEmitted(event *Event) {
 // to a sink itself; use EmitSync when the caller needs a delivery receipt.
 // Emit reports false only when the Manager is closed and nothing was accepted.
 func (m *Manager) Emit(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, true) != emitClosed
+}
+
+// TryEmit is Emit that also reports whether the event was accepted: queued,
+// or intentionally filtered or sampled. It returns false when the event was
+// dropped (full queue, enqueue timeout, shutdown) or the Manager is closed,
+// so the caller can keep the event and retry it.
+func (m *Manager) TryEmit(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, true) == emitAccepted
+}
+
+// TryEmitRetryable is TryEmit for callers that retry an event they could not
+// hand over: a full queue or enqueue timeout is not counted as a drop.
+func (m *Manager) TryEmitRetryable(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, false) == emitAccepted
+}
+
+type emitResult int
+
+const (
+	emitAccepted emitResult = iota
+	emitDropped
+	emitClosed
+)
+
+// emit enqueues event. With countDrops false a full queue or enqueue timeout
+// is not counted as a drop: the caller keeps and retries the event.
+func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitResult {
 	if m.closed.Load() {
-		return false
+		return emitClosed
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return true
+		return emitAccepted
 	}
 	// Apply sampling for high-volume event types
 	if m.shouldSample(event.Type) {
 		m.droppedEvents.Add(1)
-		return true
+		return emitAccepted
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
@@ -302,7 +330,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	// Re-check closed under the lock: Close sets closed=true then acquires
 	// closeMu.Lock, so if we see closed=true here the channel is already closed.
 	if m.closed.Load() {
-		return false
+		return emitClosed
 	}
 	if !m.config.DropOnFull {
 		writeCtx, cancel := context.WithTimeout(ctx, m.config.WriteTimeout)
@@ -310,28 +338,36 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 		select {
 		case m.asyncQueue <- event:
 			m.queuedEvents.Add(1)
+			return emitAccepted
 		case <-m.workerCtx.Done():
-			m.recordShutdownDrops(1)
+			if countDrops {
+				m.recordShutdownDrops(1)
+			}
 		case <-writeCtx.Done():
-			m.droppedEvents.Add(1)
-			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
-			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			if countDrops {
+				m.droppedEvents.Add(1)
+				metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
+				m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			}
 		}
-		return true
+		return emitDropped
 	}
 
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
+		return emitAccepted
 	default:
 		// Queue is full. Emit never writes synchronously: its callers include the
 		// authorization webhook, and a synchronous write to a stalled sink would
 		// hold the SubjectAccessReview answer. Callers that need a delivery
 		// receipt use EmitSync.
-		m.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		if countDrops {
+			m.droppedEvents.Add(1)
+			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		}
+		return emitDropped
 	}
-	return true
 }
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.

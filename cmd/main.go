@@ -867,6 +867,9 @@ func shutdownServices(cfg config.Config, server *api.Server, mailService *mail.S
 		}
 	}
 
+	// Drain webhook audit handoffs into the audit service before closing it.
+	webhookCtrl.StopAttachedAudit(shutdownCtx)
+
 	// Shutdown audit service (flushes pending events to Kafka)
 	if auditService != nil {
 		if err := auditService.Close(); err != nil {

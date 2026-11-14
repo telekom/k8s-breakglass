@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 346 | 357 | 270 | 0 | 0 | 0 |
+| controller | 468 | 346 | 365 | 270 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -1478,6 +1478,10 @@ variable part of a concatenated message.
 | warn | `BreakglassEscalation failed structural validation` | `errors`, `name` | escalation_reconciler.go |
 | warn | `DebugPodTemplate validation failed` | `errors`, `template` | debug_pod_template_reconciler.go |
 | warn | `DenyPolicy validation failed` | `error`, `policy` | deny_policy_reconciler.go |
+| warn | `Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window` | `event` | escalation_audit.go |
+| warn | `Dropping unaudited escalation event: too many events wait for the audit pipeline` | `event` | escalation_audit.go |
+| warn | `Escalation audit events not delivered before shutdown` | `inFlight`, `lost` | escalation_audit.go |
+| warn | `Escalation change observed after the audit shutdown drain is not audited` |  | escalation_audit.go |
 | warn | `Escalation validation failed` | `conditionType`, `error`, `escalation` | escalation_reconciler.go |
 | warn | `Failed to convert IdentityProvider, skipping` | `displayName`, `error`, `name`, `namespace` | identity_provider_loader.go |
 | warn | `Failed to fetch BreakglassEscalation for validation` | `error` | escalation_reconciler.go |
@@ -1508,6 +1512,7 @@ variable part of a concatenated message.
 | warn | `Health check timeout` |  | mail_provider_reconciler.go |
 | warn | `IdentityProvider failed structural validation, skipping reconciliation` | `errors`, `name` | identity_provider_reconciler.go |
 | warn | `IdentityProvider not found - controller will start with limited functionality` | `error`, `note` | identity_provider_loader.go |
+| warn | `Initial AuditConfig sync failed; the next AuditConfig event retries` | `error` | audit_config_reconciler.go |
 | warn | `MailProvider failed structural validation, skipping reconciliation` | `errors` | mail_provider_reconciler.go |
 | warn | `MailProvider has DisableTLS enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
 | warn | `MailProvider has InsecureSkipVerify enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
@@ -1803,6 +1808,8 @@ variable part of a concatenated message.
 | info | `webhook server exited normally (this should not happen during normal operation)` |  | manager.go |
 | warn | `ActivityTracker at capacity, evicting oldest entry to make room` | `evicted`, `maxEntries`, `newSession` | activity_tracker.go |
 | warn | `Cluster not registered for Breakglass` | `cluster` | authorize_helpers.go |
+| warn | `Dropping debug_session.attached audit event: handoff buffer is full` | `session` | controller.go |
+| warn | `Dropping debug_session.attached audit event: the audit pipeline is unavailable` | `session` | controller.go |
 | warn | `Effective issuer index unavailable; using compatibility lookup` | `error` | controller.go |
 | warn | `Failed to fetch pod for security evaluation` | `error`, `namespace`, `pod` | authorize_helpers.go |
 | warn | `Failed to list IdentityProviders for IDP hint` | `error` | controller.go |
@@ -1817,6 +1824,7 @@ variable part of a concatenated message.
 | warn | `Unable to load target cluster rest.Config for SAR; skipping session SAR checks` | `error` | authorize_helpers.go |
 | warn | `Unrecognised impersonation verb allowed to proceed because denyUnrecognisedVerbs is disabled on this ClusterConfig; constrained impersonation may be granted without breakglass evaluation` | `cluster`, `verb` | authorize_impersonation.go |
 | warn | `Webhook client certificate does not name the requested cluster` | `cluster`, `dnsNames`, `subjectCN`† | controller.go |
+| warn | `debug_session.attached handoff not drained before shutdown deadline` | `pending` | controller.go |
 | warn | `session SAR error` | `error`, `group`† | controller.go |
 | error | `Discarding activity entry after max retries` | `count`, `retries`, `session` | activity_tracker.go |
 | error | `Failed to count escalations for deny response` | `error` | authorize_helpers.go |
