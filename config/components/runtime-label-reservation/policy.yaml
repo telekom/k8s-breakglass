@@ -9,7 +9,8 @@
 #
 # A request is denied when it adds, changes or removes a label or annotation
 # whose key starts with `breakglass.telekom.com/debug-session` or
-# `breakglass.telekom.com/ephemeral.` on
+# `breakglass.telekom.com/ephemeral.`, or the MOTD hook annotation
+# `breakglass.t-caas.telekom.com/motd-profile`, on
 #   - a Pod (create, update, status and ephemeral-container updates, and the
 #     Binding whose annotations the API server copies onto the Pod), or
 #   - the pod template of a workload that the kube-controller-manager turns
@@ -25,7 +26,8 @@
 #
 # On a Pod or workload that carries reserved keys, the same users may also not
 # change the pod spec (image, command, containers, ephemeral containers), the
-# owner references, the labels or the selector, nor add finalizers, so nobody
+# owner references, the labels or the selector, nor add finalizers (also to
+# the pod template), so nobody
 # can change what a marked Pod runs through the API objects, or detach or
 # hold a marked workload so that it outlives the session. They may delete such a
 # workload only with propagationPolicy Background (the kubectl default) or
@@ -137,13 +139,16 @@ spec:
       (has(oldObject.spec.template) && has(oldObject.spec.template.spec) ? oldObject.spec.template.spec : null)
   # Reserved entries as "label key=value" / "annotation key=value". Keys
   # cannot contain '=', so the strings are unambiguous.
+  # The MOTD hook annotation is projected into a file that interactive
+  # shells in the debug Pod source, so it is reserved as well.
   - name: newReserved
     expression: >-
       (has(variables.newMeta.labels) ? variables.newMeta.labels.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'label ' + k + '=' + variables.newMeta.labels[k]) : []) +
       (has(variables.newMeta.annotations) ? variables.newMeta.annotations.map(k,
-        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.') ||
+        k == 'breakglass.t-caas.telekom.com/motd-profile',
         'annotation ' + k + '=' + variables.newMeta.annotations[k]) : [])
   - name: oldReserved
     expression: >-
@@ -151,12 +156,15 @@ spec:
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'label ' + k + '=' + variables.oldMeta.labels[k]) : []) +
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
-        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.') ||
+        k == 'breakglass.t-caas.telekom.com/motd-profile',
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
   # Ownership, selection and finalizers: changing them can detach a marked
   # ReplicaSet or Pod from the workload the controller cleans up, or hold the
-  # workload after its delete, so it would outlive the session. Removing
-  # finalizers stays allowed (the garbage collector does that).
+  # workload after its delete, so it would outlive the session; workload
+  # controllers copy pod template finalizers onto the Pods, so those are
+  # checked too. Removing finalizers stays allowed (the garbage collector does
+  # that).
   - name: newOwners
     expression: "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
   - name: oldOwners
@@ -185,7 +193,7 @@ spec:
       (variables.newReserved.all(e, e in variables.oldReserved) &&
        variables.oldReserved.all(e, e in variables.newReserved))
     messageExpression: >-
-      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral. are reserved for the breakglass controller; '
+      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral., and the annotation breakglass.t-caas.telekom.com/motd-profile, are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not set, change or remove them'
     reason: Forbidden
   # Otherwise anyone who may edit a debug pod or workload could swap its image,
@@ -203,7 +211,9 @@ spec:
       request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
        variables.newSelector == variables.oldSelector &&
-       variables.newFinalizers.all(f, f in variables.oldFinalizers))
+       variables.newFinalizers.all(f, f in variables.oldFinalizers) &&
+       (has(variables.newMeta.finalizers) ? variables.newMeta.finalizers : []).all(f,
+         has(variables.oldMeta.finalizers) && f in variables.oldMeta.finalizers))
     messageExpression: >-
       'the owner references, labels, selector and finalizers of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'

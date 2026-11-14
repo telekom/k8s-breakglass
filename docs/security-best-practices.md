@@ -561,6 +561,11 @@ breakglass controller. It covers:
   creates Pods from its current revision, so a forged revision would
   otherwise launder the keys through the exempt StatefulSet controller).
 
+The MOTD hook annotation `breakglass.t-caas.telekom.com/motd-profile` is
+reserved in the same places: it is projected into a file that interactive
+shells in the debug Pod source, so whoever could edit it could run code in
+the participants' shells without exec rights.
+
 Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
 created by the kube-controller-manager, not by the controller. The policy therefore also
 exempts the kube-controller-manager users that copy a template into Pods
@@ -583,7 +588,8 @@ Deployment does not adopt it again; cleanup deletes the Deployment and the
 detached ReplicaSet keeps creating marked Pods. On every Pod and workload
 whose Pod or pod template carries a reserved key, the policy therefore also
 freezes the pod spec, the owner references, the labels and the selector, and
-refuses new finalizers, for everyone except the exempt users, through the main
+refuses new finalizers (on the object and in its pod template, which the
+workload controllers copy onto the Pods), for everyone except the exempt users, through the main
 resource and its `status` subresource. Workload status itself is reserved for
 the kube-controller-manager as well: a StatefulSet's `status.currentRevision`
 selects the ControllerRevision its Pods are created from, and a partial

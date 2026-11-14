@@ -89,13 +89,16 @@ spec:
       oldObject.kind == 'ControllerRevision' ? (has(oldObject.data) && has(oldObject.data.spec) && has(oldObject.data.spec.template) &&
         has(oldObject.data.spec.template.spec) ? oldObject.data.spec.template.spec : null) :
       (has(oldObject.spec.template) && has(oldObject.spec.template.spec) ? oldObject.spec.template.spec : null)
+  # The MOTD hook annotation is projected into a file that interactive
+  # shells in the debug Pod source, so it is reserved as well.
   - name: newReserved
     expression: >-
       (has(variables.newMeta.labels) ? variables.newMeta.labels.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'label ' + k + '=' + variables.newMeta.labels[k]) : []) +
       (has(variables.newMeta.annotations) ? variables.newMeta.annotations.map(k,
-        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.') ||
+        k == 'breakglass.t-caas.telekom.com/motd-profile',
         'annotation ' + k + '=' + variables.newMeta.annotations[k]) : [])
   - name: oldReserved
     expression: >-
@@ -103,12 +106,15 @@ spec:
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'label ' + k + '=' + variables.oldMeta.labels[k]) : []) +
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
-        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.') ||
+        k == 'breakglass.t-caas.telekom.com/motd-profile',
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
   # Ownership, selection and finalizers: changing them can detach a marked
   # ReplicaSet or Pod from the workload the controller cleans up, or hold the
-  # workload after its delete, so it would outlive the session. Removing
-  # finalizers stays allowed (the garbage collector does that).
+  # workload after its delete, so it would outlive the session; workload
+  # controllers copy pod template finalizers onto the Pods, so those are
+  # checked too. Removing finalizers stays allowed (the garbage collector does
+  # that).
   - name: newOwners
     expression: "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
   - name: oldOwners
@@ -137,7 +143,7 @@ spec:
       (variables.newReserved.all(e, e in variables.oldReserved) &&
        variables.oldReserved.all(e, e in variables.newReserved))
     messageExpression: >-
-      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral. are reserved for the breakglass controller; '
+      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral., and the annotation breakglass.t-caas.telekom.com/motd-profile, are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not set, change or remove them'
     reason: Forbidden
   # Otherwise anyone who may edit a debug pod or workload could swap its image,
@@ -155,7 +161,9 @@ spec:
       request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
        variables.newSelector == variables.oldSelector &&
-       variables.newFinalizers.all(f, f in variables.oldFinalizers))
+       variables.newFinalizers.all(f, f in variables.oldFinalizers) &&
+       (has(variables.newMeta.finalizers) ? variables.newMeta.finalizers : []).all(f,
+         has(variables.oldMeta.finalizers) && f in variables.oldMeta.finalizers))
     messageExpression: >-
       'the owner references, labels, selector and finalizers of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'

