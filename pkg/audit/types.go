@@ -274,10 +274,20 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// SchemaVersion is the major version of the audit event schema
+// (api/audit/v1/audit-event.schema.json). Within a version only additive
+// changes are made; see docs/audit-event-schema.md.
+const SchemaVersion = "v1"
+
 // Event represents a single audit event
 type Event struct {
-	// ID is a unique identifier for this event
+	// ID is a unique identifier for this event. It is stable across delivery
+	// retries, so consumers deduplicate on it.
 	ID string `json:"id"`
+
+	// SchemaVersion is the envelope schema version; the Manager sets it to
+	// SchemaVersion.
+	SchemaVersion string `json:"schemaVersion,omitempty"`
 
 	// Type is the type of event
 	Type EventType `json:"type"`
