@@ -1140,12 +1140,12 @@ func TestOutdatedCRDIsReportedOnlyWhenAWrittenRecordWasPruned(t *testing.T) {
 
 func TestUnresolvedApproverKubernetesUserFailsClosed(t *testing.T) {
 	ds := failingSession(t)
-	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "alice", ApprovedByIdentities: []string{"alice", "alice@example.com"}, ApprovedByKubernetesUserUnresolved: true}
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "alice", ApprovedByIdentities: []string{"alice", "alice@example.com"}, ApprovedByIdentitiesIncomplete: true}
 	ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
 	ack.Spec.AcknowledgedBy = "oidc:alice-sub" // the approver's unrecorded mapped identity
 	record := decideCleanupAcknowledgement(ds, ack, "", false)
 	assert.False(t, record.Applied)
-	assert.Contains(t, record.Message, "approvedByKubernetesUserUnresolved")
+	assert.Contains(t, record.Message, "approvedByIdentitiesIncomplete")
 	assert.True(t, decideCleanupAcknowledgement(ds, ack, "", true).Applied, "the legacy approver opt-out compares the recorded identities only")
 }
 

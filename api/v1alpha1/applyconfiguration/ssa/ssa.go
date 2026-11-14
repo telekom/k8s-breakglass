@@ -626,8 +626,8 @@ func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.De
 	if len(a.ApprovedByIdentities) > 0 {
 		result.WithApprovedByIdentities(a.ApprovedByIdentities...)
 	}
-	if a.ApprovedByKubernetesUserUnresolved {
-		result.WithApprovedByKubernetesUserUnresolved(true)
+	if a.ApprovedByIdentitiesIncomplete {
+		result.WithApprovedByIdentitiesIncomplete(true)
 	}
 	if a.ApprovedAt != nil {
 		result.WithApprovedAt(*a.ApprovedAt)

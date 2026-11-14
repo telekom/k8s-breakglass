@@ -1579,12 +1579,12 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: approvedByIdentitiesIncomplete
+      type:
+        scalar: boolean
     - name: approvedByIdentityProvider
       type:
         scalar: string
-    - name: approvedByKubernetesUserUnresolved
-      type:
-        scalar: boolean
     - name: reason
       type:
         scalar: string

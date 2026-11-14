@@ -151,9 +151,9 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 	case !legacyApprover && approverIdentitiesMissing(ds):
 		return reject("four-eyes: the approval of this session predates recorded approver identities (status.approval.approvedByIdentities), " +
 			"so the acknowledging user cannot be compared with every identity of the approver")
-	case !legacyApprover && ds.Status.Approval != nil && ds.Status.Approval.ApprovedByKubernetesUserUnresolved:
-		return reject("four-eyes: the approver's Kubernetes user on the target cluster could not be resolved at approval time " +
-			"(status.approval.approvedByKubernetesUserUnresolved), so the acknowledging user cannot be compared with every identity of the approver")
+	case !legacyApprover && ds.Status.Approval != nil && ds.Status.Approval.ApprovedByIdentitiesIncomplete:
+		return reject("four-eyes: an approver identity (token subject or target-cluster Kubernetes user) could not be recorded at approval time " +
+			"(status.approval.approvedByIdentitiesIncomplete), so the acknowledging user cannot be compared with every identity of the approver")
 	case ack.Spec.SessionUID != string(ds.UID):
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):

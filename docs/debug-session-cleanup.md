@@ -197,12 +197,15 @@ ClusterRole from a RoleBinding in the session's namespace instead.
   membership is not compared: four-eyes concerns the acting person.
   The requester and participants are compared by username, email and
   Kubernetes user. The approver is compared by `approvedBy` and every entry
-  of `status.approval.approvedByIdentities` (username, email and the
-  target-cluster Kubernetes user), which the hub records at approval. The
+  of `status.approval.approvedByIdentities` (username, email, verified token
+  subject and the target-cluster Kubernetes user), which the hub records at
+  approval, because the hub API server may name the approver by any of them
+  (for example `oidc:<sub>` while the target cluster maps by email). The
   target cluster is resolved like at session creation (ClusterConfig name or
   tenant alias, in any namespace). A session approved before that field
-  existed, or whose approver's Kubernetes user could not be resolved
-  (`status.approval.approvedByKubernetesUserUnresolved`), cannot be fully
+  existed, or for which an approver identity could not be recorded (token
+  subject missing or Kubernetes user unresolved,
+  `status.approval.approvedByIdentitiesIncomplete`), cannot be fully
   compared, so its acknowledgements are rejected (fail closed) unless the
   controller runs with `--allow-legacy-approver-cleanup-acknowledgement`,
   which compares only the recorded identities.

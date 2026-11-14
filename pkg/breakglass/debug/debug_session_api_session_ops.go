@@ -614,7 +614,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	approval.ApprovedBy = currentUser
 	approval.ApprovedByIdentityProvider = ctx.GetString("identity_provider_name")
-	approval.ApprovedByIdentities, approval.ApprovedByKubernetesUserUnresolved = c.approverIdentities(ctx, apiCtx, session, identity)
+	approval.ApprovedByIdentities, approval.ApprovedByIdentitiesIncomplete = c.approverIdentities(ctx, apiCtx, session, identity)
 	approval.ApprovedAt = &now
 	approval.Reason = req.Reason
 
@@ -638,23 +638,30 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
-// approverIdentities lists the approver's distinct authenticated identities,
-// so cleanup acknowledgements can enforce four-eyes against each of them.
-// Approval does not depend on the target-cluster Kubernetes user; when it does
-// not resolve, unresolved is true and acknowledgements fail closed.
-func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (ids []string, unresolved bool) {
+// approverIdentities lists the approver's distinct authenticated identities
+// (username, email, verified token subject and target-cluster Kubernetes
+// user), so cleanup acknowledgements can enforce four-eyes against each of
+// them: the hub API server may name the approver by any of them, for example
+// oidc:<sub> while the target cluster maps by email. Approval does not depend
+// on them; when the subject is missing or the Kubernetes user does not
+// resolve, incomplete is true and acknowledgements fail closed.
+func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (ids []string, incomplete bool) {
 	ids = []string{identity.username}
 	if identity.email != "" {
 		ids = append(ids, identity.email)
 	}
-	unresolved = true
+	subject := ctx.GetString("user_id")
+	if subject != "" {
+		ids = append(ids, subject)
+	}
+	resolved := false
 	if clusterConfig, err := c.sessionClusterConfig(apiCtx, session); err == nil {
 		if kubernetesUser, err := c.kubernetesUser(ctx, clusterConfig); err == nil {
-			ids, unresolved = append(ids, kubernetesUser), false
+			ids, resolved = append(ids, kubernetesUser), true
 		}
 	}
 	slices.Sort(ids)
-	return slices.Compact(ids), unresolved
+	return slices.Compact(ids), subject == "" || !resolved
 }
 
 // sessionClusterConfig resolves spec.cluster as session creation does: by

@@ -486,21 +486,21 @@ type DebugSessionApproval struct {
 	// +optional
 	ApprovedByIdentityProvider string `json:"approvedByIdentityProvider,omitempty"`
 	// approvedByIdentities are the approver's authenticated identities at
-	// approval time (username, email and, when it resolved, the Kubernetes
-	// user on the target cluster). Cleanup acknowledgements
+	// approval time (username, email, verified token subject and, when it
+	// resolved, the Kubernetes user on the target cluster). Cleanup acknowledgements
 	// compare against all of them for four-eyes; an approval without them
 	// predates this field and is treated as not comparable.
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
 	// +listType=atomic
 	ApprovedByIdentities []string `json:"approvedByIdentities,omitempty"`
-	// approvedByKubernetesUserUnresolved records that the approver's
-	// Kubernetes user on the target cluster could not be resolved at
-	// approval time, so approvedByIdentities lacks it. Cleanup
-	// acknowledgements for such a session are rejected (fail closed) unless
-	// the controller allows legacy approver comparison.
+	// approvedByIdentitiesIncomplete records that an approver identity could
+	// not be recorded at approval time: the verified token subject was
+	// missing or the Kubernetes user on the target cluster could not be
+	// resolved. Cleanup acknowledgements for such a session are rejected
+	// (fail closed) unless the controller allows legacy approver comparison.
 	// +optional
-	ApprovedByKubernetesUserUnresolved bool `json:"approvedByKubernetesUserUnresolved,omitempty"`
+	ApprovedByIdentitiesIncomplete bool `json:"approvedByIdentitiesIncomplete,omitempty"`
 
 	// approvedAt is when the session was approved.
 	// +optional

@@ -845,7 +845,7 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 #### `--allow-legacy-approver-cleanup-acknowledgement`
 
-Transitional escape hatch. A DebugSessionCleanupAcknowledgement for a session approved before the hub recorded `status.approval.approvedByIdentities` is rejected by default, because four-eyes cannot compare the acknowledging user with the approver's email or Kubernetes identity. The same applies when the approver's target-cluster Kubernetes user could not be resolved at approval (`status.approval.approvedByKubernetesUserUnresolved`). This flag compares such approvals by the identities that were recorded (`approvedBy` alone for legacy approvals). See [DebugSession cleanup recovery](debug-session-cleanup.md).
+Transitional escape hatch. A DebugSessionCleanupAcknowledgement for a session approved before the hub recorded `status.approval.approvedByIdentities` is rejected by default, because four-eyes cannot compare the acknowledging user with the approver's email or Kubernetes identity. The same applies when an approver identity (token subject or target-cluster Kubernetes user) could not be recorded at approval (`status.approval.approvedByIdentitiesIncomplete`). This flag compares such approvals by the identities that were recorded (`approvedBy` alone for legacy approvals). See [DebugSession cleanup recovery](debug-session-cleanup.md).
 
 | Property | Value |
 |----------|-------|
