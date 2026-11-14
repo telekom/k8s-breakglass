@@ -153,9 +153,17 @@ func (a *escalationAuditor) pruneSeen() {
 		var oldest escalationAuditKey
 		var oldestAt time.Time
 		for key, at := range a.seen {
+			// A pending key stays: forgetting it would let a later
+			// observation record it again and reset its retry state.
+			if _, pending := a.pending[key]; pending {
+				continue
+			}
 			if oldestAt.IsZero() || at.Before(oldestAt) {
 				oldest, oldestAt = key, at
 			}
+		}
+		if oldestAt.IsZero() {
+			return // only pending keys left; bounded by escalationAuditLimit
 		}
 		delete(a.seen, oldest)
 	}
@@ -208,7 +216,7 @@ func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalat
 func (a *escalationAuditor) recordOnce(key escalationAuditKey, build func() *audit.Event) {
 	state := a.emitter.ConfigurationState()
 	a.mu.Lock()
-	if _, seen := a.seen[key]; seen {
+	if _, seen := a.seen[key]; seen || a.pending[key] != nil {
 		a.mu.Unlock()
 		return
 	}

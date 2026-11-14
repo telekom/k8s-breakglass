@@ -914,3 +914,45 @@ func TestAuditConfigInitialSyncRetriesTransientFailure(t *testing.T) {
 	defer stop()
 	r.initialSync(stopCtx)
 }
+
+// Evicting the dedup set never forgets a pending event: observing it again
+// neither resets its retry state nor records a duplicate.
+func TestEscalationAuditDedupEvictionKeepsPending(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	capture.set(audit.ConfigurationReady, true)
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	now := time.Now()
+	a.now = func() time.Time { return now }
+	pending := auditedEscalation(1)
+	pending.UID = "pending"
+	a.specChange(pending)
+	require.Equal(t, 1, a.flush(context.Background()), "rejected once: in backoff")
+	key := escalationAuditKey{uid: "pending", generation: 1}
+	entry := a.pending[key]
+	require.Equal(t, 1, entry.attempts)
+
+	// Fill the dedup set beyond its bound with delivered generations.
+	capture.set(audit.ConfigurationReady, false)
+	for i := range escalationAuditSeenLimit + 10 {
+		now = now.Add(time.Millisecond)
+		esc := auditedEscalation(int64(i + 1))
+		esc.UID = "other"
+		a.mu.Lock()
+		a.seen[escalationAuditKey{uid: esc.UID, generation: esc.Generation}] = now
+		a.pruneSeen()
+		a.mu.Unlock()
+	}
+	require.Contains(t, a.seen, key, "the pending key survives eviction")
+	require.Len(t, a.seen, escalationAuditSeenLimit)
+
+	a.specChange(pending) // observed again
+	require.Same(t, entry, a.pending[key], "the pending snapshot is not replaced")
+	require.Equal(t, 1, entry.attempts, "its retry state is kept")
+
+	// Even if the key had been forgotten, a pending snapshot is not recorded twice.
+	a.mu.Lock()
+	delete(a.seen, key)
+	a.mu.Unlock()
+	a.specChange(pending)
+	require.Same(t, entry, a.pending[key])
+}
