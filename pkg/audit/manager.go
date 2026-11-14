@@ -263,7 +263,7 @@ func observeEmitted(event *Event) {
 // to a sink itself; use EmitSync when the caller needs a delivery receipt.
 // Emit reports false only when the Manager is closed and nothing was accepted.
 func (m *Manager) Emit(ctx context.Context, event *Event) bool {
-	return m.emit(ctx, event) != emitClosed
+	return m.emit(ctx, event, true) != emitClosed
 }
 
 // TryEmit is Emit that also reports whether the event was accepted: queued,
@@ -271,7 +271,13 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 // dropped (full queue, enqueue timeout, shutdown) or the Manager is closed,
 // so the caller can keep the event and retry it.
 func (m *Manager) TryEmit(ctx context.Context, event *Event) bool {
-	return m.emit(ctx, event) == emitAccepted
+	return m.emit(ctx, event, true) == emitAccepted
+}
+
+// TryEmitRetryable is TryEmit for callers that retry an event they could not
+// hand over: a full queue or enqueue timeout is not counted as a drop.
+func (m *Manager) TryEmitRetryable(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, false) == emitAccepted
 }
 
 type emitResult int
@@ -282,7 +288,9 @@ const (
 	emitClosed
 )
 
-func (m *Manager) emit(ctx context.Context, event *Event) emitResult {
+// emit enqueues event. With countDrops false a full queue or enqueue timeout
+// is not counted as a drop: the caller keeps and retries the event.
+func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitResult {
 	if m.closed.Load() {
 		return emitClosed
 	}
@@ -334,9 +342,11 @@ func (m *Manager) emit(ctx context.Context, event *Event) emitResult {
 		case <-m.workerCtx.Done():
 			m.recordShutdownDrops(1)
 		case <-writeCtx.Done():
-			m.droppedEvents.Add(1)
-			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
-			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			if countDrops {
+				m.droppedEvents.Add(1)
+				metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
+				m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			}
 		}
 		return emitDropped
 	}
@@ -350,8 +360,10 @@ func (m *Manager) emit(ctx context.Context, event *Event) emitResult {
 		// authorization webhook, and a synchronous write to a stalled sink would
 		// hold the SubjectAccessReview answer. Callers that need a delivery
 		// receipt use EmitSync.
-		m.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		if countDrops {
+			m.droppedEvents.Add(1)
+			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		}
 		return emitDropped
 	}
 }

@@ -288,14 +288,20 @@ full or timing out) the replica retries the snapshot with exponential backoff
 (5 s up to 5 min), oldest first, keeping the time it first observed the
 change; a later edit or the delete does not replace an earlier pending
 snapshot. Retention is bounded: at most 2000 pending events, each for at most
-one hour; beyond that the oldest event is dropped with a warning log. With no
+one hour. Beyond that the oldest event is dropped, logged and counted in
+`breakglass_audit_events_dropped_total{sink="escalation-audit"}` with reason
+`cap` (too many pending events) or `ttl` (not accepted within one hour). A
+retry that finds the ingress queue full is not counted as a `queue_full` or
+`enqueue_timeout` drop, because the event is kept; only its final loss is
+counted. With no
 AuditConfig at all, auditing is disabled and nothing is recorded.
 
 So hand-off to the audit pipeline is at least once per running replica. On a
 graceful shutdown of a replica (SIGTERM, or a fatal error that ends the
 process through the normal shutdown path) it delivers all retained events,
 for up to 10 s, before its audit pipeline closes; events it cannot deliver in
-time, and changes its watch delivers after that drain, are counted in
+time, and changes its watch delivers after that drain (unless auditing was
+disabled at that point), are counted in
 `breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`.
 A replica that ends without a graceful shutdown (crash or OOM kill) loses its
 retained events without counting them; another running replica may still

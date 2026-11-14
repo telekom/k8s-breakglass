@@ -417,11 +417,23 @@ func (s *Service) TryEmit(ctx context.Context, event *Event) bool {
 // TryEmitResult is TryEmit that also tells a counted drop from an uncounted
 // one.
 func (s *Service) TryEmitResult(ctx context.Context, event *Event) EmitResult {
+	return s.tryEmit(ctx, event, true)
+}
+
+// TryEmitRetryable is TryEmit for callers that keep an event they could not
+// hand over and retry it: a full queue or enqueue timeout is not counted in
+// breakglass_audit_events_dropped_total, because the event is not lost yet.
+// Such a caller counts the event itself if it finally gives up.
+func (s *Service) TryEmitRetryable(ctx context.Context, event *Event) bool {
+	return s.tryEmit(ctx, event, false) == EmitAccepted
+}
+
+func (s *Service) tryEmit(ctx context.Context, event *Event, countDrops bool) EmitResult {
 	m := s.currentManager()
 	if m == nil {
 		return EmitNoPipeline
 	}
-	switch m.emit(ctx, event) {
+	switch m.emit(ctx, event, countDrops) {
 	case emitAccepted:
 		return EmitAccepted
 	case emitDropped:
@@ -430,7 +442,7 @@ func (s *Service) TryEmitResult(ctx context.Context, event *Event) EmitResult {
 	// A reload replaced the Manager between the read and the enqueue: hand
 	// the event to the new one once instead of losing it.
 	if next := s.currentManager(); next != nil && next != m {
-		switch next.emit(ctx, event) {
+		switch next.emit(ctx, event, countDrops) {
 		case emitAccepted:
 			return EmitAccepted
 		case emitDropped:
@@ -604,7 +616,6 @@ func (s *Service) GetQueuedSinkHealth() []QueuedSinkHealth {
 	return s.isolatedMultiSink.Health()
 }
 
-// Close shuts down the audit service.
 // BeforeClose registers fn to run at the start of Close, while the pipeline
 // still accepts events, so components that hold undelivered events (retry
 // buffers, handoffs) can drain them first. fn must bound its own runtime.
@@ -614,6 +625,7 @@ func (s *Service) BeforeClose(fn func()) {
 	s.beforeClose = append(s.beforeClose, fn)
 }
 
+// Close shuts down the audit service.
 func (s *Service) Close() error {
 	// sync.Once blocks concurrent callers until the hooks finished, so an
 	// overlapping Close cannot tear the pipeline down under a running drain.

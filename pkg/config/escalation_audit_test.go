@@ -37,7 +37,7 @@ func newEscalationAuditCapture() *escalationAuditCapture {
 	return &escalationAuditCapture{state: audit.ConfigurationReady}
 }
 
-func (c *escalationAuditCapture) TryEmit(_ context.Context, event *audit.Event) bool {
+func (c *escalationAuditCapture) TryEmitRetryable(_ context.Context, event *audit.Event) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.reject {
@@ -231,7 +231,7 @@ func TestEscalationAuditKeepsEverySnapshotDuringOutage(t *testing.T) {
 	}
 }
 
-// flush never holds the lock while enqueueing: a blocked TryEmit does not
+// flush never holds the lock while enqueueing: a blocked enqueue does not
 // block reconciliation or the delete handler.
 func TestEscalationAuditDoesNotHoldLockDuringEnqueue(t *testing.T) {
 	blocking := &blockingEmitter{release: make(chan struct{}), entered: make(chan struct{}, 1)}
@@ -326,7 +326,7 @@ type blockingEmitter struct {
 	entered chan struct{}
 }
 
-func (b *blockingEmitter) TryEmit(context.Context, *audit.Event) bool {
+func (b *blockingEmitter) TryEmitRetryable(context.Context, *audit.Event) bool {
 	select {
 	case b.entered <- struct{}{}:
 	default:
@@ -345,6 +345,10 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
 	now := time.Now()
 	a.now = func() time.Time { return now }
+	dropped := func(reason string) float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, reason))
+	}
+	capBefore, ttlBefore := dropped("cap"), dropped("ttl")
 	for i := range escalationAuditLimit + 10 {
 		esc := auditedEscalation(1)
 		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
@@ -357,9 +361,11 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 	}
 	require.Len(t, a.pending, escalationAuditLimit, "retained events are bounded")
 	require.NotContains(t, a.pending, escalationAuditKey{uid: "uid-0", generation: 1}, "the oldest event is evicted")
+	require.Equal(t, capBefore+10, dropped("cap"), "every eviction at the cap is counted")
 
 	now = now.Add(escalationAuditTTL + time.Minute)
 	require.Zero(t, a.flush(context.Background()), "expired events are dropped")
+	require.Equal(t, ttlBefore+float64(escalationAuditLimit), dropped("ttl"), "every expired event is counted")
 	require.Empty(t, a.seen, "a dropped event is forgotten, so a later reconcile records it again")
 	capture.set(audit.ConfigurationReady, false)
 	a.specChange(auditedEscalation(1))
@@ -500,8 +506,8 @@ func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
 
 type managerEmitter struct{ m *audit.Manager }
 
-func (e *managerEmitter) TryEmit(ctx context.Context, event *audit.Event) bool {
-	return e.m.TryEmit(ctx, event)
+func (e *managerEmitter) TryEmitRetryable(ctx context.Context, event *audit.Event) bool {
+	return e.m.TryEmitRetryable(ctx, event)
 }
 func (e *managerEmitter) ConfigurationState() audit.ConfigurationState {
 	return audit.ConfigurationReady
@@ -698,7 +704,7 @@ type gatedEmitter struct {
 	accept  bool
 }
 
-func (g *gatedEmitter) TryEmit(context.Context, *audit.Event) bool {
+func (g *gatedEmitter) TryEmitRetryable(context.Context, *audit.Event) bool {
 	select {
 	case g.entered <- struct{}{}:
 	default:
@@ -750,7 +756,7 @@ type countingEmitter struct {
 	first atomic.Value
 }
 
-func (c *countingEmitter) TryEmit(_ context.Context, e *audit.Event) bool {
+func (c *countingEmitter) TryEmitRetryable(_ context.Context, e *audit.Event) bool {
 	if c.calls.Add(1) == 1 {
 		c.first.Store(e.ID)
 	}
@@ -789,4 +795,21 @@ func TestEscalationAuditAbandonedPassCountsUnattempted(t *testing.T) {
 	<-passDone
 	require.Equal(t, before+4, drops(), "all four snapshots of the abandoned pass are counted")
 	require.Empty(t, a.pending)
+}
+
+// Changes after the drain are not audit losses when auditing was
+// intentionally disabled at shutdown: nothing is counted.
+func TestEscalationAuditDrainWhileDisabledCountsNothing(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	capture.set(audit.ConfigurationDisabled, false)
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	a.drain(ctx)
+	before := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown"))
+	a.specChange(auditedEscalation(1))
+	a.deletion(auditedEscalation(1))
+	require.Equal(t, before, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown")))
+	require.Empty(t, a.pending)
+	require.Empty(t, capture.take())
 }

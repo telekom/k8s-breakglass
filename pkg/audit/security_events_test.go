@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -22,6 +23,7 @@ import (
 
 	auditv1 "github.com/telekom/k8s-breakglass/api/audit/v1"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 func validateBuilt(t *testing.T, event *Event) {
@@ -191,4 +193,33 @@ func TestServiceTryEmitResult(t *testing.T) {
 	require.True(t, svc.TryEmit(context.Background(), event()))
 	require.NoError(t, svc.Close())
 	require.Equal(t, EmitNoPipeline, svc.TryEmitResult(context.Background(), event()), "closed")
+}
+
+// A saturated ingress queue: TryEmitResult reports EmitDropped and counts
+// the drop; TryEmitRetryable reports the rejection without counting it, since
+// its caller keeps and retries the event.
+func TestServiceTryEmitSaturatedQueue(t *testing.T) {
+	sink := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { close(sink.release) })
+	m := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: true}, zap.NewNop())
+	svc := NewService(nil, nil, zap.NewNop(), "ns")
+	svc.mu.Lock()
+	svc.manager, svc.enabled, svc.configurationState = m, true, ConfigurationReady
+	svc.mu.Unlock()
+	event := func() *Event {
+		return &Event{Type: EventDebugSessionAttached, Actor: Actor{User: "a"}, Target: Target{Kind: "pods", Name: "p"}}
+	}
+	require.Equal(t, EmitAccepted, svc.TryEmitResult(context.Background(), event())) // taken by the worker
+	<-sink.started
+	require.Equal(t, EmitAccepted, svc.TryEmitResult(context.Background(), event())) // fills the queue
+	queueFull := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "queue_full"))
+	}
+	before := queueFull()
+	require.Equal(t, EmitDropped, svc.TryEmitResult(context.Background(), event()))
+	require.False(t, svc.TryEmit(context.Background(), event()))
+	require.Equal(t, before+2, queueFull(), "counted for callers that do not retry")
+	require.False(t, svc.TryEmitRetryable(context.Background(), event()))
+	require.False(t, m.TryEmitRetryable(context.Background(), event()))
+	require.Equal(t, before+2, queueFull(), "not counted for retrying callers")
 }

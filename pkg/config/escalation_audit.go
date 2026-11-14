@@ -21,8 +21,10 @@ import (
 // EscalationAuditEmitter receives escalation change audit events.
 // audit.Service implements it.
 type EscalationAuditEmitter interface {
-	// TryEmit reports whether the event was accepted by the audit pipeline.
-	TryEmit(ctx context.Context, event *audit.Event) bool
+	// TryEmitRetryable reports whether the audit pipeline accepted the
+	// event. A rejected event is not counted as dropped: the auditor keeps
+	// and retries it, and counts it itself if it finally gives up.
+	TryEmitRetryable(ctx context.Context, event *audit.Event) bool
 	ConfigurationState() audit.ConfigurationState
 }
 
@@ -86,6 +88,9 @@ type escalationAuditor struct {
 	// stopped is set by the shutdown drain: the audit service closes next,
 	// so later changes are counted as lost instead of retained silently.
 	stopped bool
+	// disabledAtStop records that auditing was intentionally disabled when
+	// the drain started: later changes are then not audit losses.
+	disabledAtStop bool
 	// abandoned is set when the drain deadline passed: an attempt still in
 	// flight then counts itself as lost if the pipeline does not accept it.
 	abandoned bool
@@ -123,6 +128,7 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 		}
 	}
 	a.drop(oldest)
+	metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "cap").Inc()
 	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)
 }
 
@@ -203,8 +209,11 @@ func (a *escalationAuditor) recordOnce(key escalationAuditKey, build func() *aud
 	if a.stopped {
 		a.seen[key] = a.now().UTC()
 		a.pruneSeen()
+		disabled := a.disabledAtStop
 		a.mu.Unlock()
-		a.countShutdownLoss()
+		if !disabled {
+			a.countShutdownLoss()
+		}
 		return
 	}
 	if state == audit.ConfigurationDisabled {
@@ -257,6 +266,7 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 			a.drop(key)
 		case now.Sub(entry.since) > escalationAuditTTL:
 			a.drop(key)
+			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "ttl").Inc()
 			a.logger.Warnw("Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window", "event", entry.event.ID)
 		case entry.inflight || now.Before(entry.next):
 		case state != audit.ConfigurationReady:
@@ -278,7 +288,7 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 	attempted := 0
 	for i, d := range due {
 		attempted = i + 1
-		accepted[i] = a.emitter.TryEmit(ctx, d.entry.event)
+		accepted[i] = a.emitter.TryEmitRetryable(ctx, d.entry.event)
 		if !accepted[i] {
 			break
 		}
@@ -325,8 +335,10 @@ func (a *escalationAuditor) drain(ctx context.Context) {
 	}
 	// Stop first: observations from here on take the counted-loss path,
 	// while the snapshots retained so far drain.
+	disabled := a.emitter.ConfigurationState() == audit.ConfigurationDisabled
 	a.mu.Lock()
 	a.stopped = true
+	a.disabledAtStop = disabled
 	a.mu.Unlock()
 	for {
 		a.mu.Lock()
