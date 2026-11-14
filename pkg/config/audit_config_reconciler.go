@@ -608,9 +608,27 @@ func (r *AuditConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// initialSync aggregates all AuditConfigs once, also when there are none.
+// initialSyncRetry is the first retry delay of a failed initial sync; it
+// doubles up to one minute.
+var initialSyncRetry = time.Second
+
+// initialSync aggregates all AuditConfigs once, also when there are none. A
+// failure (for example a transient API read error) is retried with backoff
+// until it succeeds or ctx ends: without AuditConfigs no event would trigger
+// another sync, and the audit service would stay unavailable.
 func (r *AuditConfigReconciler) initialSync(ctx context.Context) {
-	if _, err := r.Reconcile(ctx, reconcile.Request{}); err != nil {
-		r.logger.Warnw("Initial AuditConfig sync failed; the next AuditConfig event retries", "error", err)
+	delay := initialSyncRetry
+	for {
+		_, err := r.Reconcile(ctx, reconcile.Request{})
+		if err == nil {
+			return
+		}
+		r.logger.Warnw("Initial AuditConfig sync failed; retrying", "error", err, "retryIn", delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, time.Minute)
 	}
 }

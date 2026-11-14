@@ -5,6 +5,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -877,4 +879,38 @@ func TestEscalationAuditInFlightIsNotEvicted(t *testing.T) {
 		require.NotContains(t, a.pending, escalationAuditKey{uid: "in-flight", generation: 1, deleted: true})
 		a.mu.Unlock()
 	}
+}
+
+// A transient read failure of the initial AuditConfig sync is retried, so
+// the audit service does not stay unavailable without any AuditConfig.
+func TestAuditConfigInitialSyncRetriesTransientFailure(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	var failures atomic.Int32
+	failures.Store(2)
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*breakglassv1alpha1.AuditConfigList); ok && failures.Add(-1) >= 0 {
+				return errors.New("transient read failure")
+			}
+			return c.List(ctx, list, opts...)
+		},
+	}).Build()
+	svc := audit.NewService(nil, nil, zap.NewNop(), "ns")
+	r := NewAuditConfigReconciler(cli, zap.NewNop().Sugar(), nil,
+		func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, unavailable bool) error {
+			return svc.ReloadMultipleWithAvailability(ctx, configs, unavailable)
+		}, nil, time.Minute)
+	previous := initialSyncRetry
+	initialSyncRetry = 10 * time.Millisecond
+	t.Cleanup(func() { initialSyncRetry = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r.initialSync(ctx)
+	require.Equal(t, audit.ConfigurationDisabled, svc.ConfigurationState(), "the retry succeeded after two failures")
+
+	// A sync that never succeeds stops with its context.
+	failures.Store(1 << 30)
+	stopCtx, stop := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stop()
+	r.initialSync(stopCtx)
 }

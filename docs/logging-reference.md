@@ -1512,7 +1512,7 @@ variable part of a concatenated message.
 | warn | `Health check timeout` |  | mail_provider_reconciler.go |
 | warn | `IdentityProvider failed structural validation, skipping reconciliation` | `errors`, `name` | identity_provider_reconciler.go |
 | warn | `IdentityProvider not found - controller will start with limited functionality` | `error`, `note` | identity_provider_loader.go |
-| warn | `Initial AuditConfig sync failed; the next AuditConfig event retries` | `error` | audit_config_reconciler.go |
+| warn | `Initial AuditConfig sync failed; retrying` | `error`, `retryIn` | audit_config_reconciler.go |
 | warn | `MailProvider failed structural validation, skipping reconciliation` | `errors` | mail_provider_reconciler.go |
 | warn | `MailProvider has DisableTLS enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
 | warn | `MailProvider has InsecureSkipVerify enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
