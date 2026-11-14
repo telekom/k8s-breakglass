@@ -235,6 +235,27 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	return m
 }
 
+// emittedHook observes every event that a Manager accepts.
+var emittedHook atomic.Pointer[func(*Event)]
+
+// ObserveEmitted registers fn to observe every event that a Manager accepts,
+// after its defaults (ID, timestamp, severity, schema version) are applied;
+// nil removes it. Contract tests (pkg/audit/audittest) use it to validate
+// emitted events against the published schema.
+func ObserveEmitted(fn func(*Event)) {
+	if fn == nil {
+		emittedHook.Store(nil)
+		return
+	}
+	emittedHook.Store(&fn)
+}
+
+func observeEmitted(event *Event) {
+	if fn := emittedHook.Load(); fn != nil {
+		(*fn)(event)
+	}
+}
+
 // Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
 // waits for capacity up to WriteTimeout or the caller's context deadline.
 // With DropOnFull=true a full queue drops the event at once, sensitive or
@@ -265,11 +286,13 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
+	observeEmitted(event)
 
 	// Non-blocking send to async queue.
 	// Hold closeMu.RLock so that Close cannot close the channel concurrently.
@@ -506,11 +529,13 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
+	observeEmitted(event)
 
 	return m.syncWriteDirect(ctx, event)
 }

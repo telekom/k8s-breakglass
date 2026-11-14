@@ -20,6 +20,7 @@ require (
 	github.com/open-policy-agent/cert-controller v0.16.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/sony/gobreaker/v2 v2.4.0
 	github.com/spf13/cobra v1.10.2
