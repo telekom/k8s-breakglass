@@ -565,7 +565,8 @@ Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
 created by the kube-controller-manager, not by the controller. The policy therefore also
 exempts the kube-controller-manager users that copy a template into Pods
 (`system:kube-controller-manager` and the `kube-system` controller
-ServiceAccounts). This is safe only because the templates themselves are
+ServiceAccounts, including the garbage collector and the namespace
+controller, which only delete). This is safe only because the templates themselves are
 reserved: nobody but the controller can put a reserved key into a template
 that the kube-controller-manager would copy. Other operators that create Pods
 from their own custom resources are not exempt, so they cannot be used to
@@ -586,16 +587,18 @@ refuses new finalizers, for everyone except the exempt users, through the main
 resource and its `status` subresource. Workload status itself is reserved for
 the kube-controller-manager as well: a StatefulSet's `status.currentRevision`
 selects the ControllerRevision its Pods are created from, and a partial
-revision without metadata would inherit the reserved labels. A foreign finalizer would otherwise hold
+revision without metadata would inherit the reserved labels. For the same
+reason nobody else may delete a marked ControllerRevision: the StatefulSet
+controller looks its current revision up by name only, so a deleted revision
+could be recreated under that name with a spec-only patch carrying another
+image. A foreign finalizer would otherwise hold
 a deleted debug workload while its Pods keep running; independently of the
 policy, cleanup switches a delete that such a finalizer holds to Foreground, so
 the garbage collector removes the Pods anyway. Orphaning deletes
 of such workloads are denied too: deletes must set `propagationPolicy`
 `Background` (the `kubectl delete` default) or `Foreground`, because Jobs and
-ReplicationControllers orphan their Pods when no policy is given; this
-matters where the kube-controller-manager runs without
-`--use-service-account-credentials`, because its garbage collector then shares
-the exempt `system:kube-controller-manager` identity. Scaling, kubelet status
+ReplicationControllers orphan their Pods when no policy is given, and the
+exempt garbage collector would carry out the orphaning. Scaling, kubelet status
 updates, annotation edits and cascading deletes stay allowed;
 `kubectl rollout restart` and `kubectl debug` against debug workloads are
 denied. The `scale` subresource carries only a replica count, so scaling a

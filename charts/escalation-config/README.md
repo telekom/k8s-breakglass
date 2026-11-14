@@ -673,7 +673,7 @@ runtimeLabelReservation:
 | `runtimeLabelReservation.enabled` | Create the policy and its `Deny` binding | `false` |
 | `runtimeLabelReservation.controllerUsers` | Users the controller writes debug pods as on this cluster (its ServiceAccount, the ClusterConfig credential user — for OIDC the mapped username with prefix — and ServiceAccounts templates impersonate) | `[system:serviceaccount:breakglass-system:breakglass-manager]` |
 | `runtimeLabelReservation.controllerGroups` | Groups whose members count as the controller, e.g. an OIDC group only the controller's client is in | `[]` |
-| `runtimeLabelReservation.workloadControllerUsers` | kube-controller-manager users that create Pods from reserved templates | `system:kube-controller-manager` and the `kube-system` workload controller ServiceAccounts |
+| `runtimeLabelReservation.workloadControllerUsers` | kube-controller-manager users that create Pods from reserved templates, plus its garbage collector and namespace controller | `system:kube-controller-manager` and the `kube-system` workload controller, garbage collector and namespace controller ServiceAccounts |
 
 ## Uninstalling
 

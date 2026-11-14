@@ -1260,7 +1260,7 @@
           "uniqueItems": true
         },
         "workloadControllerUsers": {
-          "description": "kube-controller-manager users that create Pods from reserved workload templates.",
+          "description": "kube-controller-manager users that create Pods from reserved workload templates, plus its garbage collector and namespace controller.",
           "items": {"minLength": 1, "type": "string"},
           "type": "array",
           "uniqueItems": true

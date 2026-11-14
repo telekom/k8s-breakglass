@@ -18,7 +18,8 @@
 #     stores for StatefulSet and DaemonSet history,
 # unless the requesting user is listed in `controllerUsers` (the identity the
 # breakglass controller uses on this cluster) or `workloadControllerUsers`
-# (the kube-controller-manager identities that copy a template into Pods).
+# (the kube-controller-manager identities that copy a template into Pods, and
+# its garbage collector and namespace controller, which only delete).
 # Exempting the kube-controller-manager is safe only because the templates
 # it copies are reserved as well.
 #
@@ -29,7 +30,8 @@
 # hold a marked workload so that it outlives the session. They may delete such a
 # workload only with propagationPolicy Background (the kubectl default) or
 # Foreground; deletes without a policy or with Orphan are denied, because Jobs
-# and ReplicationControllers orphan their Pods by default. Other requests are
+# and ReplicationControllers orphan their Pods by default. They may not delete
+# a marked ControllerRevision at all. Other requests are
 # allowed, so kubelet status updates, scaling and annotation edits keep
 # working.
 #
@@ -69,7 +71,7 @@ spec:
     # StatefulSets create Pods from the template stored in a ControllerRevision.
     - apiGroups: ["apps"]
       apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
       resources: ["controllerrevisions"]
     - apiGroups: ["batch"]
       apiVersions: ["v1"]
@@ -97,7 +99,9 @@ spec:
        "system:serviceaccount:kube-system:statefulset-controller",
        "system:serviceaccount:kube-system:daemon-set-controller",
        "system:serviceaccount:kube-system:job-controller",
-       "system:serviceaccount:kube-system:cronjob-controller"]
+       "system:serviceaccount:kube-system:cronjob-controller",
+       "system:serviceaccount:kube-system:generic-garbage-collector",
+       "system:serviceaccount:kube-system:namespace-controller"]
   # Metadata of the Pod, or of the pod template a workload creates Pods from.
   - name: newMeta
     expression: >-
@@ -175,7 +179,7 @@ spec:
       (has(request.userInfo.groups) && request.userInfo.groups.exists(g, g in variables.controllerGroups)) ||
       request.userInfo.username in variables.workloadControllerUsers
   validations:
-  # On DELETE there is no new object; only the last validation applies.
+  # On DELETE there is no new object; only the last two validations apply.
   - expression: >-
       request.operation == 'DELETE' || variables.exempt ||
       (variables.newReserved.all(e, e in variables.oldReserved) &&
@@ -216,11 +220,11 @@ spec:
       'the status of a breakglass debug workload is reserved for the kube-controller-manager; '
       + request.userInfo.username + ' may not change it'
     reason: Forbidden
-  # Orphaning deletes leave the marked children running after cleanup. Where
-  # the kube-controller-manager shares one identity, its garbage collector is
-  # exempt, so this must be refused at the delete itself. Jobs and
-  # ReplicationControllers orphan by default, so an explicit cascading policy
-  # is required for every kind (kubectl sends Background by default).
+  # Orphaning deletes leave the marked children running after cleanup. The
+  # garbage collector is exempt, so this must be refused at the delete
+  # itself. Jobs and ReplicationControllers orphan by default, so an explicit
+  # cascading policy is required for every kind (kubectl sends Background by
+  # default).
   - expression: >-
       request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (request.options != null &&
@@ -228,6 +232,20 @@ spec:
        !(has(request.options.orphanDependents) && request.options.orphanDependents == true))
     messageExpression: >-
       'breakglass debug workloads may only be deleted with propagationPolicy Background or Foreground; ' + request.userInfo.username + ' may not orphan their Pods'
+    reason: Forbidden
+  # A StatefulSet finds its current ControllerRevision by name
+  # (status.currentRevision) and applies the revision's data as a patch over
+  # its own template. Deleting a marked revision would free the name for a
+  # spec-only revision with another image, whose Pods the exempt StatefulSet
+  # controller would create with the genuine labels. Only the exempt users
+  # (the StatefulSet and DaemonSet controllers, the garbage collector and the
+  # namespace controller) may delete one.
+  - expression: >-
+      request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      oldObject.kind != 'ControllerRevision'
+    messageExpression: >-
+      'the ControllerRevisions of breakglass debug workloads are reserved for the kube-controller-manager; '
+      + request.userInfo.username + ' may not delete them'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

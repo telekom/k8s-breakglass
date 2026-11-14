@@ -40,7 +40,9 @@ runtimeLabelReservation:
   # only the controller's client is in. At least one user or group is needed.
   controllerGroups: []
   # kube-controller-manager identities that copy a reserved pod template into
-  # Pods. Safe to exempt because the templates are reserved too.
+  # Pods, plus its garbage collector and namespace controller, which delete
+  # debug workloads' ControllerRevisions. Safe to exempt because the templates
+  # are reserved too.
   workloadControllerUsers:
     - system:kube-controller-manager
     - system:serviceaccount:kube-system:deployment-controller
@@ -50,6 +52,8 @@ runtimeLabelReservation:
     - system:serviceaccount:kube-system:daemon-set-controller
     - system:serviceaccount:kube-system:job-controller
     - system:serviceaccount:kube-system:cronjob-controller
+    - system:serviceaccount:kube-system:generic-garbage-collector
+    - system:serviceaccount:kube-system:namespace-controller
 
 # ==========================================
 # NetworkPolicy Configuration

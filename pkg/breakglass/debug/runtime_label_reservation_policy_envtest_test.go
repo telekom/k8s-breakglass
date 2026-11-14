@@ -21,6 +21,7 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -215,6 +216,26 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reserved for the kube-controller-manager")
 		assert.NoError(t, setStatus(statefulSetController), "the StatefulSet controller still writes status")
+
+		// The StatefulSet controller looks its current revision up by name and
+		// applies its data as a patch over the StatefulSet, so a spec-only
+		// revision recreated under a freed name would run another image with
+		// the genuine labels. Nobody else may free the name.
+		current := revision("current-rev", selected)
+		require.NoError(t, statefulSetController.Create(ctx, current))
+		background := client.PropagationPolicy(metav1.DeletePropagationBackground)
+		err = forger.Delete(ctx, current.DeepCopy(), background)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ControllerRevisions of breakglass debug workloads are reserved")
+		specOnly := func(name string) *appsv1.ControllerRevision {
+			return &appsv1.ControllerRevision{ObjectMeta: meta(name), Revision: 1, Data: runtime.RawExtension{
+				Raw: []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"c","image":"attacker/image"}]}}}}`)}}
+		}
+		assert.NoError(t, forger.Create(ctx, specOnly("spec-only-rev"), client.DryRunAll), "a spec-only revision carries no reserved keys")
+		assert.True(t, apierrors.IsAlreadyExists(forger.Create(ctx, specOnly(current.Name))), "the marked revision keeps its name")
+		garbageCollector, _ := as("system:serviceaccount:kube-system:generic-garbage-collector")
+		assert.NoError(t, garbageCollector.Delete(ctx, current.DeepCopy(), background),
+			"the garbage collector still deletes the revisions of deleted workloads")
 
 		plain := &appsv1.Deployment{ObjectMeta: meta("plain"), Spec: appsv1.DeploymentSpec{Selector: selector, Replicas: ptr.To[int32](0),
 			Template: func() corev1.PodTemplateSpec {

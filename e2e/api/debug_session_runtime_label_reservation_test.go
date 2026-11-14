@@ -19,9 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	appsv1 "k8s.io/api/apps/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -102,6 +104,9 @@ func TestDebugSessionRuntimeLabelReservation(t *testing.T) {
 			require.NoError(t, unstructured.SetNestedSlice(obj.Object, variables, "spec", "variables"))
 		}
 		require.NoError(t, s.Client.Create(ctx, obj))
+		// Registered per object and unconditionally (not via s.Cleanup, which
+		// CI skips on failure): a leftover Deny policy would break later tests.
+		t.Cleanup(func() { _ = s.Client.Delete(context.Background(), obj) })
 		applied = append(applied, obj)
 	}
 	removed := false
@@ -114,7 +119,6 @@ func TestDebugSessionRuntimeLabelReservation(t *testing.T) {
 			_ = s.Client.Delete(context.Background(), obj)
 		}
 	}
-	t.Cleanup(removeComponent)
 
 	require.Eventually(t, func() bool { return isReserved(forger.Create(ctx, forgedPod(), client.DryRunAll)) }, time.Minute, time.Second,
 		"with the component a forged debug-session label must be denied")
@@ -210,6 +214,45 @@ spec:
 	// Nor may the forger strip the label from the real debug pod to hide it.
 	strip := client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"labels":{"`+debugSessionLabel+`":null}}}`))
 	require.True(t, isReserved(forger.Patch(ctx, debugPod.DeepCopy(), strip, client.DryRunAll)), "removing the label must be denied")
+
+	// Cleanup under the Deny policy, with a foreign finalizer holding the
+	// debug Deployment: the controller switches its delete to Foreground and
+	// the garbage collector must still remove the ReplicaSets and Pods.
+	rs := &appsv1.ReplicaSet{}
+	require.NoError(t, s.Client.Get(ctx, types.NamespacedName{Namespace: debugPod.Namespace, Name: metav1.GetControllerOf(debugPod).Name}, rs))
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, s.Client.Get(ctx, types.NamespacedName{Namespace: rs.Namespace, Name: metav1.GetControllerOf(rs).Name}, deployment))
+	const hold = "e2e.breakglass.telekom.com/hold"
+	release := func() error {
+		return client.IgnoreNotFound(s.Client.Patch(context.Background(), deployment.DeepCopy(), client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"finalizers":null}}`))))
+	}
+	t.Cleanup(func() { _ = release() })
+	require.NoError(t, s.Client.Patch(ctx, deployment.DeepCopy(), client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"finalizers":["`+hold+`"]}}`))))
+	sessionPods := &corev1.PodList{}
+	require.NoError(t, s.Client.List(ctx, sessionPods, client.InNamespace(ns), client.MatchingLabels{debugSessionLabel: session.Name}))
+	require.NotEmpty(t, sessionPods.Items)
+	require.NoError(t, s.TC.ClientForUser(requester).TerminateDebugSession(ctx, t, session.Name))
+	require.Eventually(t, func() bool {
+		for _, p := range sessionPods.Items {
+			live := &corev1.Pod{}
+			if err := s.Client.Get(ctx, client.ObjectKeyFromObject(&p), live); err == nil && live.UID == p.UID {
+				return false
+			}
+		}
+		live := &appsv1.ReplicaSet{}
+		err := s.Client.Get(ctx, client.ObjectKeyFromObject(rs), live)
+		return apierrors.IsNotFound(err) || (err == nil && live.UID != rs.UID)
+	}, helpers.WaitForStateTimeout, time.Second, "the held Deployment's ReplicaSets and Pods must be removed under the policy")
+	held := &appsv1.Deployment{}
+	require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(deployment), held))
+	require.Equal(t, deployment.UID, held.UID)
+	require.NotNil(t, held.DeletionTimestamp, "cleanup deleted the Deployment; the foreign finalizer holds it")
+	require.NoError(t, release())
+	require.Eventually(t, func() bool {
+		live := &appsv1.Deployment{}
+		err := s.Client.Get(ctx, client.ObjectKeyFromObject(deployment), live)
+		return apierrors.IsNotFound(err) || (err == nil && live.UID != deployment.UID)
+	}, helpers.WaitForStateTimeout, time.Second, "the Deployment must be gone once released")
 
 	removeComponent()
 	require.Eventually(t, func() bool { return forger.Create(ctx, forgedPod(), client.DryRunAll) == nil }, time.Minute, time.Second,
