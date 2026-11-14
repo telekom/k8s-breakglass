@@ -153,6 +153,28 @@ func TestEscalationAuditEnvtest(t *testing.T) {
 	require.NoError(t, apiClient.Delete(ctx, esc))
 	require.Eventually(t, func() bool { return len(emitted(uid)) >= 4 }, 30*time.Second, 50*time.Millisecond)
 	require.Equal(t, []string{"1", "2", "3", "deleted"}, emitted(uid), "in order, each once")
+
+	// Reload the pipeline (a second sink) while a new escalation's changes
+	// are pending: none is lost and none is duplicated across the reload.
+	auditConfig := &breakglassv1alpha1.AuditConfig{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Name: "audit-envtest"}, auditConfig))
+	reloaded := newEscalation("across-reload")
+	require.NoError(t, apiClient.Create(ctx, reloaded))
+	updateGroup(reloaded, "platform-admin-2")
+	patch := client.MergeFrom(auditConfig.DeepCopy())
+	auditConfig.Spec.Sinks = append(auditConfig.Spec.Sinks, breakglassv1alpha1.AuditSinkConfig{
+		Name: "log-2", Type: breakglassv1alpha1.AuditSinkTypeLog,
+	})
+	require.NoError(t, apiClient.Patch(ctx, auditConfig, patch))
+	updateGroup(reloaded, "platform-admin-3")
+	require.NoError(t, apiClient.Delete(ctx, reloaded))
+	reloadedUID := string(reloaded.UID)
+	require.Eventually(t, func() bool { return len(emitted(reloadedUID)) >= 4 }, 60*time.Second, 50*time.Millisecond)
+	require.Never(t, func() bool { return len(emitted(reloadedUID)) > 4 }, 2*time.Second, 100*time.Millisecond, "no duplicates")
+	require.ElementsMatch(t, []string{"1", "2", "3", "deleted"}, emitted(reloadedUID), "no loss across the reload")
+	require.Eventually(t, func() bool {
+		return svc.ConfigurationState() == audit.ConfigurationReady && len(svc.GetSinkHealth()) == 2
+	}, 30*time.Second, 50*time.Millisecond, "the reload took effect")
 }
 
 type slowEscalationReads struct{ client.Client }

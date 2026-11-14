@@ -131,9 +131,8 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 			oldest, oldestEntry = k, e
 		}
 	}
-	if oldestEntry == nil {
-		return // everything else is in flight; the pass settles it
-	}
+	// The entry just recorded is never in flight, so a candidate always
+	// exists; if every other entry is in flight, it is the one evicted.
 	a.drop(oldest)
 	metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "cap").Inc()
 	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)

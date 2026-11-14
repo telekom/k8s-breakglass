@@ -249,3 +249,26 @@ func TestManagerRetryableEnqueueAtShutdownIsNotCounted(t *testing.T) {
 	close(sink.release)
 	<-closed
 }
+
+// With dropOnFull false a full queue ends the enqueue at its write timeout:
+// counted as enqueue_timeout for callers that do not retry, not counted for
+// retrying callers.
+func TestManagerEnqueueTimeoutCountingSplit(t *testing.T) {
+	sink := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { close(sink.release) })
+	m := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: false, WriteTimeout: 50 * time.Millisecond}, zap.NewNop())
+	event := func() *Event {
+		return &Event{Type: EventEscalationUpdated, Actor: Actor{User: "system"}, Target: Target{Kind: "BreakglassEscalation", Name: "e"}}
+	}
+	require.True(t, m.TryEmit(context.Background(), event())) // taken by the worker
+	<-sink.started
+	require.True(t, m.TryEmit(context.Background(), event())) // fills the queue
+	timeouts := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "enqueue_timeout"))
+	}
+	before := timeouts()
+	require.False(t, m.TryEmitRetryable(context.Background(), event()))
+	require.Equal(t, before, timeouts(), "not counted for retrying callers")
+	require.False(t, m.TryEmit(context.Background(), event()))
+	require.Equal(t, before+1, timeouts(), "counted for callers that do not retry")
+}
