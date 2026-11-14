@@ -5,6 +5,7 @@ package config
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -237,8 +238,9 @@ func (a *escalationAuditor) deletion(obj client.Object) {
 	})
 }
 
-// flush tries to emit every due snapshot. It drops all snapshots while
-// auditing is disabled and expired ones always. TryEmit runs without a.mu.
+// flush tries to emit the due snapshots, oldest first, until the pipeline
+// rejects one. It drops all snapshots while auditing is disabled and expired
+// ones always. TryEmit runs without a.mu.
 // It reports the number of snapshots still retained.
 func (a *escalationAuditor) flush(ctx context.Context) int {
 	state := a.emitter.ConfigurationState()
@@ -266,10 +268,20 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 		}
 	}
 	a.mu.Unlock()
+	// Oldest first, so a backlog cannot starve the oldest changes.
+	slices.SortFunc(due, func(x, y attempt) int { return x.entry.since.Compare(y.entry.since) })
 
+	// Stop the pass at the first event the pipeline does not accept: the
+	// ingress queue is full (each attempt may wait for its write timeout), so
+	// the rest waits for the next pass instead of stalling this one.
 	accepted := make([]bool, len(due))
+	attempted := 0
 	for i, d := range due {
+		attempted = i + 1
 		accepted[i] = a.emitter.TryEmit(ctx, d.entry.event)
+		if !accepted[i] {
+			break
+		}
 	}
 
 	a.mu.Lock()
@@ -279,6 +291,9 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 		d.entry.inflight = false
 		if a.pending[d.key] != d.entry {
 			continue // evicted or dropped meanwhile
+		}
+		if i >= attempted {
+			continue // not attempted in this pass
 		}
 		if accepted[i] {
 			delete(a.pending, d.key)

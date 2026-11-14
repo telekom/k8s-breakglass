@@ -724,3 +724,39 @@ func TestEscalationAuditDrainRunsBeforeAuditClose(t *testing.T) {
 	require.NoError(t, svc.Close())
 	require.Empty(t, h.r.auditor.pending, "delivered before the pipeline closed")
 }
+
+// A pass stops at the first event the pipeline rejects, oldest first, so a
+// saturated queue cannot stall one pass for every retained event.
+func TestEscalationAuditPassStopsAtFirstRejection(t *testing.T) {
+	counting := &countingEmitter{}
+	a := newEscalationAuditor(counting, zap.NewNop().Sugar())
+	now := time.Now()
+	a.now = func() time.Time { return now }
+	for i := range 5 {
+		esc := auditedEscalation(1)
+		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
+		now = now.Add(time.Second)
+		a.specChange(esc)
+	}
+	require.Equal(t, 5, a.flush(context.Background()))
+	require.EqualValues(t, 1, counting.calls.Load(), "the pass stops after the first rejection")
+	require.Equal(t, "escalation/uid-0/1", counting.first.Load().(string), "the oldest event is attempted first")
+	entry := a.pending[escalationAuditKey{uid: "uid-1", generation: 1}]
+	require.Zero(t, entry.attempts, "unattempted events keep their retry state")
+}
+
+type countingEmitter struct {
+	calls atomic.Int32
+	first atomic.Value
+}
+
+func (c *countingEmitter) TryEmit(_ context.Context, e *audit.Event) bool {
+	if c.calls.Add(1) == 1 {
+		c.first.Store(e.ID)
+	}
+	return false
+}
+
+func (*countingEmitter) ConfigurationState() audit.ConfigurationState {
+	return audit.ConfigurationReady
+}
