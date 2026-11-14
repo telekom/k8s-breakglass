@@ -6,6 +6,7 @@ package debug
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,8 @@ ref=${1#--net=}
 shift 2
 NS=$(readlink -f "$ref") || exit 1
 [ -f "$NS" ] || { echo "nsenter: cannot open $ref" >&2; exit 1; }
-if [ -f "$NS.on-enter" ]; then sh "$NS.on-enter"; rm -f "$NS.on-enter"; fi
+# The hook stays until it succeeds once.
+if [ -f "$NS.on-enter" ] && sh "$NS.on-enter"; then rm -f "$NS.on-enter"; fi
 export NS
 exec "$@"`,
 	"ip": `#!/bin/sh
@@ -47,6 +49,7 @@ if [ "${1:-}" = -o ]; then shift; fi
 case "$1 $2" in
 "addr show") cat "$NS.addrs" 2>/dev/null; exit 0 ;;
 "link show")
+	[ -n "${3:-}" ] || { cat "$NS".link.* 2>/dev/null; exit 0; }
 	dev=$4
 	[ -e "$NS.link.$dev" ] && { cat "$NS.link.$dev"; exit 0; }
 	echo "Device \"$dev\" does not exist." >&2
@@ -62,7 +65,8 @@ exit 0`,
 	"tc": `#!/bin/sh
 echo "tc $*" >> "$STATE/calls"
 case "$1 $2" in
-"filter show") cat "$NS.filters" 2>/dev/null; exit 0 ;;
+"filter show") cat "$NS.filters.$4.$5" 2>/dev/null; exit 0 ;;
+"filter del") rm -f "$NS.filters.$4.$5"; exit 0 ;;
 "qdisc show") echo "qdisc noqueue 0: root"; exit 0 ;;
 esac
 exit 0`,
@@ -119,8 +123,13 @@ func (h *helperHost) namespace(name, addrs string, links ...string) {
 	require.NoError(h.t, os.WriteFile(path, nil, 0o644))
 	require.NoError(h.t, os.WriteFile(path+".addrs", []byte(addrs+"\n"), 0o644))
 	for _, link := range links {
-		require.NoError(h.t, os.WriteFile(path+".link."+link, []byte("3: "+link+": <BROADCAST,UP,LOWER_UP>\n"), 0o644))
+		require.NoError(h.t, os.WriteFile(path+".link."+link, []byte(helperLink(3, link)), 0o644))
 	}
+}
+
+// helperLink renders an "ip -o link show" line.
+func helperLink(index int, name string) string {
+	return fmt.Sprintf("%d: %s: <BROADCAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default \\    link/ether 02:00:00:00:00:%02x brd ff:ff:ff:ff:ff:ff\n", index, name, index)
 }
 
 // process places a fake PID with a cgroup in a namespace.
@@ -252,7 +261,8 @@ func TestTrafficMirrorHelperAttachSkipsAddrgenWithoutIPv6(t *testing.T) {
 			require.Contains(t, output, "mirror-expired", "the agent detaches at the approved expiry")
 			calls := h.calls()
 			require.Contains(t, calls, "ip link add name "+helperVeth+" type veth peer name bgmirror0 netns /proc/self/fd/4")
-			require.Contains(t, calls, "mirred egress mirror dev "+helperVeth)
+			// continue keeps foreign filters at higher preferences classifying.
+			require.Contains(t, calls, "mirred egress mirror dev "+helperVeth+" continue cookie ")
 			require.Contains(t, calls, "tc filter add dev "+helperVeth+" ingress pref 1 protocol all basic action drop")
 			if ipv6 {
 				require.Contains(t, calls, "ip link set dev "+helperVeth+" addrgenmode none arp off")
@@ -264,4 +274,34 @@ func TestTrafficMirrorHelperAttachSkipsAddrgenWithoutIPv6(t *testing.T) {
 			require.Greater(t, strings.LastIndex(calls, "ip link set bgmirror0 up"), strings.LastIndex(calls, "mirred"))
 		})
 	}
+}
+
+func TestTrafficMirrorHelperTeardownFindsRenamedInterface(t *testing.T) {
+	h := newHelperHost(t)
+	// eth0 was renamed to net1 after the attach; its mirror filters moved along.
+	h.namespace("target", "3: net1    inet "+helperTargetIP+"/24 scope global net1", "net1", helperVeth)
+	filter := "filter protocol all pref 50001 basic chain 0 handle 0x1 \n\taction order 1: mirred (Egress Mirror to device " +
+		helperVeth + ") continue\n\tcookie 0123456789abcdef0123456789abcdef\n"
+	for _, hook := range []string{"ingress", "egress"} {
+		require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.filters.net1."+hook), []byte(filter), 0o644))
+	}
+	code, output := h.run("teardown")
+	require.Equal(t, 0, code, output)
+	require.Contains(t, output, "teardown-verified")
+	for _, hook := range []string{"ingress", "egress"} {
+		require.Contains(t, h.calls(), "tc filter del dev net1 "+hook+" pref 50001 handle 0x1", "the renamed interface keeps no mirror")
+	}
+}
+
+func TestTrafficMirrorHelperAttachDetectsRecreatedInterface(t *testing.T) {
+	h := newHelperHost(t)
+	// After the attach, eth0 is deleted and created again: same name, new
+	// ifindex and MAC, and none of the mirror filters.
+	recreate := "[ -e " + filepath.Join(h.dir, "run", "attached") + " ] && printf '%s' '" + helperLink(7, "eth0") + "' >" +
+		filepath.Join(h.dir, "ns", "target.link.eth0")
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(recreate+"\n"), 0o644))
+	code, output := h.run("attach")
+	require.Equal(t, 1, code, output)
+	require.Contains(t, output, "interface-changed")
+	require.NotContains(t, output, "mirror-expired")
 }

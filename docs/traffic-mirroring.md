@@ -161,9 +161,10 @@ or plain-text credentials.
 
 On expiry, termination, failure or deletion the controller deletes the
 agent and capture Pods (the agent detaches), then runs a teardown Pod on the Node that
-removes only `tc` filters carrying the session's action cookie, the mirror
-device (the `clsact` qdisc stays), and succeeds only after verifying that none
-remain; an inspection error is a failure, never proof of absence. The
+removes only `tc` filters carrying the session's action cookie, from every
+link of the source network namespace, and the mirror device (the `clsact`
+qdisc stays), and succeeds only after verifying that none remain;
+an inspection error is a failure, never proof of absence. The
 session keeps its finalizer and the `CleanupFailed` condition until that
 verification succeeds, which also covers a controller restart and a crashed
 agent. A Node that was deleted and registered again is torn down like the
@@ -192,6 +193,13 @@ synchronous durable audit sink.
 
 - Only traffic that passes the kernel datapath of the interface is visible:
   DPDK-bound SR-IOV VFs and hardware-offloaded flows are not mirrored.
+- Packets are mirrored at the tc clsact hooks of the source network
+  namespace: ingress before netfilter there (MultiNetworkPolicy, host
+  firewall), egress before host-side Cilium or Calico policy. The capture can
+  therefore contain packets that policy drops afterwards.
+- A renamed or re-created source interface fails the session: the mirror
+  agent checks the interface index and hardware address while it runs, and
+  teardown removes the operation's filters from every link of the namespace.
 - Captures are the decoded `tcpdump` output in the capture container log.
   Uploading pcaps to the [diagnostic artifact store](diagnostic-artifacts.md)
   is planned as a separate recipe.

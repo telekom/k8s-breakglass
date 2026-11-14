@@ -156,19 +156,33 @@ link_absent() {
 	fail inspect-failed "cannot inspect $1: $out"
 }
 
-# show_filters prints the filters of one hook; a missing interface has none.
+# links prints the name of every link in the target network namespace.
+links() {
+	out=$(in_target ip -o link show 2>&1) || fail inspect-failed "cannot list links: $out"
+	printf '%s\n' "$out" | awk -F': ' '{ sub(/@.*/, "", $2); print $2 }'
+}
+
+# link_id prints the ifindex and hardware address of the mirrored interface,
+# or nothing when it is gone.
+link_id() {
+	in_target ip -o link show dev "$MIRROR_INTERFACE" 2>/dev/null |
+		awk '{ id = $1; for (i = 2; i < NF; i++) if ($i ~ /^link\//) id = id " " $(i + 1); print id }'
+}
+
+# show_filters DEV HOOK prints the filters of one hook; a missing device has none.
 show_filters() {
-	if out=$(in_target tc filter show dev "$MIRROR_INTERFACE" "$1" 2>&1); then
+	if out=$(in_target tc filter show dev "$1" "$2" 2>&1); then
 		printf '%s\n' "$out"
 		return 0
 	fi
-	link_absent "$MIRROR_INTERFACE" || fail inspect-failed "cannot list $1 filters: $out"
+	link_absent "$1" || fail inspect-failed "cannot list $2 filters of $1: $out"
 }
 
-# owned_handles prints the filter handles at this operation's preference whose
-# action carries the operation cookie. Other filters are never selected.
+# owned_handles DEV HOOK prints the filter handles at this operation's
+# preference whose action carries the operation cookie. Other filters are
+# never selected.
 owned_handles() {
-	filters=$(show_filters "$1") || exit 1
+	filters=$(show_filters "$1" "$2") || exit 1
 	printf '%s\n' "$filters" | awk -v cookie="cookie $MIRROR_COOKIE" -v pref="pref $MIRROR_PREF " '
 		/^filter / {
 			handle = ""
@@ -177,23 +191,28 @@ owned_handles() {
 		index($0, cookie) && handle != "" { print handle }'
 }
 
-# keys_at_pref counts the filters left at this operation's preference.
+# keys_at_pref DEV HOOK counts the filters left at this operation's preference.
 keys_at_pref() {
-	filters=$(show_filters "$1") || exit 1
+	filters=$(show_filters "$1" "$2") || exit 1
 	printf '%s\n' "$filters" | grep "pref $MIRROR_PREF " | grep -c 'handle 0x' || true
 }
 
+# detach scans every link, not only MIRROR_INTERFACE, so the filters of a
+# renamed interface are removed as well.
 detach() {
-	for hook in ingress egress; do
-		handles=$(owned_handles "$hook") || exit 1
-		for handle in $handles; do
-			in_target tc filter del dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" handle "$handle" protocol all basic ||
-				fail teardown-failed "cannot delete filter $handle on $hook"
+	devs=$(links) || exit 1
+	for dev in $devs; do
+		for hook in ingress egress; do
+			handles=$(owned_handles "$dev" "$hook") || exit 1
+			for handle in $handles; do
+				in_target tc filter del dev "$dev" "$hook" pref "$MIRROR_PREF" handle "$handle" protocol all basic ||
+					fail teardown-failed "cannot delete filter $handle on $dev $hook"
+			done
+			# Drop an empty classifier left at our preference, never foreign filters.
+			if [ -n "$handles" ] && [ "$(keys_at_pref "$dev" "$hook")" = 0 ]; then
+				in_target tc filter del dev "$dev" "$hook" pref "$MIRROR_PREF" protocol all basic 2>/dev/null || true
+			fi
 		done
-		# Drop an empty classifier left at our preference, never foreign filters.
-		if [ -n "$handles" ] && [ "$(keys_at_pref "$hook")" = 0 ]; then
-			in_target tc filter del dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic 2>/dev/null || true
-		fi
 	done
 	if ! link_absent "$MIRROR_VETH"; then
 		in_target ip link del "$MIRROR_VETH" || fail teardown-failed "cannot delete $MIRROR_VETH"
@@ -203,9 +222,12 @@ detach() {
 }
 
 verify_detached() {
-	for hook in ingress egress; do
-		handles=$(owned_handles "$hook") || exit 1
-		[ -z "$handles" ] || fail teardown-failed "tc filters with the operation cookie remain on $hook"
+	devs=$(links) || exit 1
+	for dev in $devs; do
+		for hook in ingress egress; do
+			handles=$(owned_handles "$dev" "$hook") || exit 1
+			[ -z "$handles" ] || fail teardown-unverifiable "tc filters with the operation cookie remain on $dev $hook"
+		done
 	done
 	link_absent "$MIRROR_VETH" || fail teardown-failed "mirror device remains"
 }
@@ -236,6 +258,7 @@ attach() {
 	[ "$(ns_id /proc/self/fd/4)" != "$(ns_id /proc/self/fd/3)" ] || fail capture-missing "the capture Pod shares the target network namespace"
 	in_capture ip -o addr show | grep -F -q " $MIRROR_CAPTURE_POD_IP/" || fail capture-missing "the capture network namespace does not own the capture Pod IP"
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
+	ifid=$(link_id)
 	detach
 	for hook in ingress egress; do
 		if [ -n "$(in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF")" ]; then
@@ -264,8 +287,10 @@ attach() {
 	for hook in $(hooks); do
 		# basic without an ematch matches every packet. Unlike matchall it is
 		# built on every kernel with tc, and unlike u32 its filters are per hook.
+		# continue lets classification reach the filters at higher preferences;
+		# mirred's default pipe would end it here and bypass them.
 		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic \
-			action mirred egress mirror dev "$MIRROR_VETH" cookie "$MIRROR_COOKIE"
+			action mirred egress mirror dev "$MIRROR_VETH" continue cookie "$MIRROR_COOKIE"
 	done
 	# Bringing the capture side up last tells the capture Pod that the
 	# attach is complete.
@@ -277,6 +302,8 @@ attach() {
 		[ "$left" -le 30 ] || left=30
 		sleep "$left" &
 		wait $! || true
+		# The filters follow a renamed interface and vanish with a re-created one.
+		[ "$(link_id)" = "$ifid" ] || fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created; the mirror is lost"
 	done
 	detach
 	verify_detached
@@ -318,7 +345,7 @@ teardown() {
 	verify_pinned_target
 	detach
 	verify_detached
-	verified "no filter with the operation cookie and no mirror device remain on $MIRROR_INTERFACE"
+	verified "no filter with the operation cookie and no mirror device remain in the target network namespace"
 }
 
 # verified reports a successful teardown, also as termination message for
