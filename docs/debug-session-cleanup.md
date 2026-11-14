@@ -100,11 +100,14 @@ without Kyverno. The controller handles this as follows:
   namespace creation), every enabled auxiliary resource with
   `failurePolicy: Fail` is rendered and its exact API version is resolved
   through the target's RESTMapper (discovery). No request is sent for a
-  served kind and no `list` permission is needed; a kind missing from the
-  cached discovery reloads it first. Only a definitive `NoMatch` (or a
+  served version and no `list` permission is needed; a version missing from
+  the cached discovery reloads it first. Only a definitive `NoMatch` (or a
   discovery `NotFound` for the group version) fails the preflight; transient
-  discovery errors do not. If the kind is not served, the session fails at once
-  with a message such as `auxiliary resource "policy-exception" requires
+  discovery errors do not. The check is per rendered version: if the target
+  does not serve that exact `apiVersion`, the session fails at once even when
+  it serves the kind in another version (render the version the target
+  serves). The failure message names the version, such as
+  `auxiliary resource "policy-exception" requires
   policies.kyverno.io/v1 PolicyException, which target cluster "mgmt" does not
   serve; install the API on the target or remove the resource from the
   template`. Nothing is applied. Optional (`Ignore`/`Warn`) resources are not
