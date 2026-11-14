@@ -175,25 +175,42 @@ func (a *escalationAuditor) notify() {
 // is independent of status.observedGeneration, which other status writers
 // also advance. Disabled auditing is a cheap no-op.
 func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalation) {
-	if a == nil || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
+	if a == nil {
 		return
 	}
-	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation}
+	a.recordOnce(escalationAuditKey{uid: esc.UID, generation: esc.Generation}, func() *audit.Event {
+		eventType := audit.EventEscalationUpdated
+		if esc.Generation <= 1 {
+			eventType = audit.EventEscalationCreated
+		}
+		return audit.EscalationChangeEvent(eventType, esc, a.previousGeneration(esc.UID, esc.Generation))
+	})
+}
+
+// recordOnce records the snapshot built by build for key, once. The order of
+// checks matters at shutdown: a key already recorded is never counted again,
+// and the drain's stop is checked before the audit state, which turns to
+// disabled when the audit service closes, so a real change observed during
+// shutdown is counted as lost rather than ignored.
+func (a *escalationAuditor) recordOnce(key escalationAuditKey, build func() *audit.Event) {
+	state := a.emitter.ConfigurationState()
 	a.mu.Lock()
-	if a.stopped {
-		a.mu.Unlock()
-		a.countShutdownLoss()
-		return
-	}
 	if _, seen := a.seen[key]; seen {
 		a.mu.Unlock()
 		return
 	}
-	eventType := audit.EventEscalationUpdated
-	if esc.Generation <= 1 {
-		eventType = audit.EventEscalationCreated
+	if a.stopped {
+		a.seen[key] = a.now().UTC()
+		a.pruneSeen()
+		a.mu.Unlock()
+		a.countShutdownLoss()
+		return
 	}
-	event := audit.EscalationChangeEvent(eventType, esc, a.previousGeneration(esc.UID, esc.Generation))
+	if state == audit.ConfigurationDisabled {
+		a.mu.Unlock()
+		return
+	}
+	event := build()
 	event.Timestamp = a.now().UTC()
 	a.record(key, event)
 	a.mu.Unlock()
@@ -212,23 +229,12 @@ func (a *escalationAuditor) observe(obj client.Object) {
 // snapshots of the escalation stay pending.
 func (a *escalationAuditor) deletion(obj client.Object) {
 	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
-	if a == nil || !ok || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
+	if a == nil || !ok {
 		return
 	}
-	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
-	event.Timestamp = a.now().UTC()
-	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}
-	a.mu.Lock()
-	if a.stopped {
-		a.mu.Unlock()
-		a.countShutdownLoss()
-		return
-	}
-	if _, seen := a.seen[key]; !seen {
-		a.record(key, event)
-	}
-	a.mu.Unlock()
-	a.notify()
+	a.recordOnce(escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}, func() *audit.Event {
+		return audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
+	})
 }
 
 // flush tries to emit every due snapshot. It drops all snapshots while

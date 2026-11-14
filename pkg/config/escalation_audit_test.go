@@ -669,6 +669,26 @@ func TestEscalationAuditDrainOnShutdown(t *testing.T) {
 		require.Equal(t, want, shutdownDrops(), "accepted=%v", accept)
 	}
 
+	// During shutdown a key already recorded is not counted again, a new
+	// change is counted once however often it is observed, and it is still
+	// counted after the audit service closed (state disabled).
+	e := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	capture.set(audit.ConfigurationReady, false)
+	e.specChange(auditedEscalation(20))
+	require.Zero(t, e.flush(context.Background()))
+	capture.take()
+	ctx5, cancel5 := context.WithTimeout(context.Background(), time.Second)
+	e.drain(ctx5)
+	cancel5()
+	before = shutdownDrops()
+	e.specChange(auditedEscalation(20)) // already recorded and delivered
+	require.Equal(t, before, shutdownDrops(), "an already recorded generation is not counted again")
+	capture.set(audit.ConfigurationDisabled, false) // the audit service closed
+	e.specChange(auditedEscalation(21))
+	e.specChange(auditedEscalation(21))
+	e.observe(auditedEscalation(21))
+	require.Equal(t, before+1, shutdownDrops(), "a new change during shutdown is counted once, also after the service closed")
+
 	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
 }
 
