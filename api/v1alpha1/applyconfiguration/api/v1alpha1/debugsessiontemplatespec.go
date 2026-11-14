@@ -25,6 +25,9 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	AdmissionRecipe *DebugSessionAdmissionRecipeApplyConfiguration `json:"admissionRecipe,omitempty"`
 	// hotfix enables the typed platform hotfix executor instead of a rendered Pod template.
 	Hotfix *DebugSessionHotfixApplyConfiguration `json:"hotfix,omitempty"`
+	// trafficMirror enables a controller-executed, session-scoped traffic
+	// mirror into a capture container instead of a rendered Pod template.
+	TrafficMirror *DebugSessionTrafficMirrorApplyConfiguration `json:"trafficMirror,omitempty"`
 	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
 	ArtifactCollection *DebugSessionArtifactCollectionApplyConfiguration `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
@@ -189,6 +192,14 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithAdmissionRecipe(value *
 // If called multiple times, the Hotfix field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithHotfix(value *DebugSessionHotfixApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.Hotfix = value
+	return b
+}
+
+// WithTrafficMirror sets the TrafficMirror field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrafficMirror field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithTrafficMirror(value *DebugSessionTrafficMirrorApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.TrafficMirror = value
 	return b
 }
 

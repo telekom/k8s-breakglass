@@ -2273,6 +2273,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: templateRef
       type:
         scalar: string
+    - name: trafficMirror
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorRequest
     - name: userGroups
       type:
         list:
@@ -2411,6 +2414,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: terminalSharing
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingStatus
+    - name: trafficMirror
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorStatus
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplate
   map:
     fields:
@@ -2602,6 +2608,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: toolbox
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionToolbox
+    - name: trafficMirror
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTrafficMirror
     - name: workloadType
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
@@ -2653,6 +2662,36 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: /opt/breakglass/toolbox
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTrafficMirror
+  map:
+    fields:
+    - name: allowedSources
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorSource
+          elementRelationship: atomic
+    - name: capturePayload
+      type:
+        scalar: boolean
+    - name: direction
+      type:
+        scalar: string
+    - name: filter
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: maxBandwidthMbps
+      type:
+        scalar: numeric
+    - name: maxPackets
+      type:
+        scalar: numeric
+    - name: snapLength
+      type:
+        scalar: numeric
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicy
@@ -4874,6 +4913,103 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: subjectTokenType
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorNodeSource
+  map:
+    fields:
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorPodSource
+  map:
+    fields:
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorRequest
+  map:
+    fields:
+    - name: interface
+      type:
+        scalar: string
+    - name: nodeName
+      type:
+        scalar: string
+    - name: nodeUID
+      type:
+        scalar: string
+    - name: podName
+      type:
+        scalar: string
+    - name: podNamespace
+      type:
+        scalar: string
+    - name: podUID
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorSource
+  map:
+    fields:
+    - name: interfaces
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
+    - name: node
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorNodeSource
+    - name: pod
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorPodSource
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorStatus
+  map:
+    fields:
+    - name: capturePodUID
+      type:
+        scalar: string
+    - name: clusterConfigUID
+      type:
+        scalar: string
+    - name: createAttempted
+      type:
+        scalar: boolean
+    - name: message
+      type:
+        scalar: string
+    - name: namespaceUID
+      type:
+        scalar: string
+    - name: operationID
+      type:
+        scalar: string
+    - name: podUID
+      type:
+        scalar: string
+    - name: released
+      type:
+        scalar: boolean
+    - name: sourcePodIP
+      type:
+        scalar: string
+    - name: state
+      type:
+        scalar: string
+    - name: stopAudited
+      type:
+        scalar: boolean
+    - name: teardownResult
+      type:
+        scalar: string
+    - name: teardownVerified
+      type:
+        scalar: boolean
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.UserIdentifierClaimType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.VariableValidation

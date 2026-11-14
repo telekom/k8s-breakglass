@@ -206,6 +206,7 @@ func run() error {
 	}
 
 	system.SetLogRedaction(cfg.Server.RedactLogs)
+	debug.SetTrafficMirrorDisabled(cliConfig.DisableTrafficMirror)
 	if cfg.Server.RedactLogs {
 		log.Infow("Log redaction enabled via config")
 	}

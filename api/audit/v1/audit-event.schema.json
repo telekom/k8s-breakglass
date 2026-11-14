@@ -125,6 +125,9 @@
         "debug_session.hotfix.node_intent",
         "debug_session.hotfix.node_result",
         "debug_session.hotfix.result",
+        "debug_session.traffic_mirror.started",
+        "debug_session.traffic_mirror.stopped",
+        "debug_session.traffic_mirror.failed",
         "debug_session.attached",
         "debug_session.detached",
         "debug_session.command",
@@ -432,6 +435,32 @@
         "properties": {
           "details": {
             "$ref": "#/$defs/debugSessionHotfix"
+          }
+        },
+        "required": [
+          "details"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.traffic_mirror.started",
+              "debug_session.traffic_mirror.stopped",
+              "debug_session.traffic_mirror.failed"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionTrafficMirror"
           }
         },
         "required": [
@@ -1504,6 +1533,69 @@
       "required": [
         "sessionUID",
         "stage"
+      ]
+    },
+    "debugSessionTrafficMirror": {
+      "title": "Traffic mirror",
+      "description": "Synchronously delivered receipts of a session traffic mirror. The event id is <operationID>-start, <operationID>-failed or <operationID>-stopped.",
+      "type": "object",
+      "properties": {
+        "sessionUID": {
+          "type": "string",
+          "description": "DebugSession UID."
+        },
+        "operationID": {
+          "type": "string",
+          "description": "Operation identifier derived from the session UID; stable across retries."
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Independent approver.",
+          "x-pii": true
+        },
+        "approvedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Approval time. RFC 3339 timestamp, or null when unset."
+        },
+        "node": {
+          "type": "string",
+          "description": "Source Node name."
+        },
+        "nodeUID": {
+          "type": "string",
+          "description": "Source Node UID."
+        },
+        "podUID": {
+          "type": "string",
+          "description": "Source Pod UID; empty for a Node source."
+        },
+        "interface": {
+          "type": "string",
+          "description": "Mirrored interface in the source network namespace."
+        },
+        "direction": {
+          "type": "string",
+          "description": "Mirrored direction: ingress, egress or both."
+        },
+        "filter": {
+          "type": "string",
+          "description": "Template capture filter expression."
+        },
+        "image": {
+          "type": "string",
+          "description": "Mirror and capture image."
+        },
+        "message": {
+          "type": "string",
+          "description": "Stage detail: the start note, the failure cause or the verified teardown result."
+        }
+      },
+      "required": [
+        "sessionUID",
+        "operationID"
       ]
     },
     "terminalRecording": {

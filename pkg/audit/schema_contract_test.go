@@ -349,7 +349,7 @@ func TestAuditSchemaRejectsMalformedEvents(t *testing.T) {
 		require.Error(t, auditv1.ValidateStrict(doc), name)
 	}
 	for _, eventType := range []EventType{EventDebugSessionMaintenanceIntent, EventDebugSessionAdmissionRecipeApplied,
-		EventDebugSessionHotfixResult, EventDebugSessionTerminalRecordingAccessed} {
+		EventDebugSessionHotfixResult, EventDebugSessionTrafficMirrorStarted, EventDebugSessionTerminalRecordingAccessed} {
 		require.Error(t, auditv1.Validate(mutate(func(d map[string]any) { d["type"] = string(eventType); delete(d, "details") })),
 			"%s must not omit its mandatory details", eventType)
 	}

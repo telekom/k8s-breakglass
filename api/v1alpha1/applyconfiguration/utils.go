@@ -182,6 +182,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionTemplateStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionToolbox"):
 		return &apiv1alpha1.DebugSessionToolboxApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionTrafficMirror"):
+		return &apiv1alpha1.DebugSessionTrafficMirrorApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicy"):
 		return &apiv1alpha1.DenyPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicyScope"):
@@ -374,6 +376,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.TerminalSharingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TokenExchangeConfig"):
 		return &apiv1alpha1.TokenExchangeConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrafficMirrorNodeSource"):
+		return &apiv1alpha1.TrafficMirrorNodeSourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrafficMirrorPodSource"):
+		return &apiv1alpha1.TrafficMirrorPodSourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrafficMirrorRequest"):
+		return &apiv1alpha1.TrafficMirrorRequestApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrafficMirrorSource"):
+		return &apiv1alpha1.TrafficMirrorSourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TrafficMirrorStatus"):
+		return &apiv1alpha1.TrafficMirrorStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("VariableValidation"):
 		return &apiv1alpha1.VariableValidationApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("WebhookSinkSpec"):

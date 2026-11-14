@@ -287,6 +287,28 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
+		// A deleted session that is still active (for example one that expired
+		// while the controller was down) becomes terminal first: an expired
+		// active session accepts only terminal status updates, and the
+		// teardown records its progress in the status.
+		if ds.Status.TrafficMirror != nil && !debugSessionTerminal(ds) {
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if isDebugSessionExpired(ds, time.Now().UTC()) {
+				state = breakglassv1alpha1.DebugSessionStateExpired
+			}
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = state
+				status.Message = "Session deleted; removing traffic mirror"
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		if err := c.cleanupTrafficMirror(ctx, ds); err != nil {
+			if errors.Is(err, errTrafficMirrorTeardownPending) {
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
+			return ctrl.Result{}, err
+		}
 		if err := c.cleanupHotfix(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -467,6 +489,15 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if err := c.validateMaintenancePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		return c.failSession(ctx, ds, fmt.Sprintf("invalid node-maintenance request: %v", err))
 	}
+	if result, deferred := c.deferTrafficMirrorProvenance(ds, effectiveTemplate); deferred {
+		return result, nil
+	}
+	if err := c.validateTrafficMirrorPending(ctx, ds, effectiveTemplate, binding); err != nil {
+		if errors.Is(err, errMaintenanceTargetUnavailable) {
+			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+		}
+		return c.failSession(ctx, ds, fmt.Sprintf("invalid traffic mirror request: %v", err))
+	}
 	if err := c.validateAdmissionRecipePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		if errors.Is(err, errMaintenanceTargetUnavailable) {
 			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
@@ -617,6 +648,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.AdmissionRecipe != nil {
 		return c.handleAdmissionRecipeActive(ctx, ds)
+	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.TrafficMirror != nil {
+		return c.handleTrafficMirrorActive(ctx, ds)
 	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.Hotfix != nil {
 		return c.handleHotfixActive(ctx, ds)
@@ -832,6 +866,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
+		return true
+	}
+	if ds.Status.TrafficMirror != nil && !ds.Status.TrafficMirror.Released {
 		return true
 	}
 	if (ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted) ||
@@ -1078,7 +1115,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil {
+	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil || template.Spec.TrafficMirror != nil {
 		// Install the cleanup finalizer before acquiring any hub lease: a
 		// deletion in between would otherwise drop the session without running
 		// the finalizer branch that revokes the lease.
@@ -1152,6 +1189,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 				return c.failSession(ctx, ds, err.Error())
 			}
 			deployErr = c.deployMaintenance(ctx, ds)
+		} else if template.Spec.TrafficMirror != nil {
+			if err := maintenanceApprovers(template, binding); err != nil {
+				return c.failSession(ctx, ds, err.Error())
+			}
+			deployErr = c.deployTrafficMirror(ctx, ds)
 		} else if template.Spec.AdmissionRecipe != nil {
 			if err := admissionRecipeApprovers(template, binding); err != nil {
 				return c.failSession(ctx, ds, err.Error())
@@ -1200,6 +1242,12 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 	if template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil {
 		ds.Status.AllowedPodOperations = maintenancePodOperations()
+	}
+	if template.Spec.TrafficMirror != nil {
+		// Participants may read the capture container logs, nothing else.
+		ds.Status.AllowedPodOperations = trafficMirrorPodOperations(template.Spec.AllowedPodOperations, bindingOps)
+		ds.Status.AllowedPods = trafficMirrorAllowedPods(ds)
+		ds.Status.Message = "Traffic mirror capture Pod " + ds.Status.TrafficMirror.OperationID + trafficMirrorCaptureSuffix + " created"
 	}
 	if template.Spec.AdmissionRecipe != nil {
 		ds.Status.Message = "Admission recipe applied: " + admissionRecipeTargetsDescription(ds.Spec.AdmissionRecipe.Targets)
@@ -1879,7 +1927,8 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil) {
+	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil ||
+		template.Spec.TrafficMirror != nil) {
 		return true
 	}
 	// Binding approvers replace template approvers when the field is present,

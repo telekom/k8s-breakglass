@@ -104,6 +104,9 @@ type ClientProvider struct {
 	// object used to build a privileged target client. The target mutation fence
 	// compares these inputs as well as the ClusterConfig itself.
 	privilegedInputVersions map[*breakglassv1alpha1.ClusterConfig]map[string]string
+	// cleanupOperations marks snapshots taken by GetRESTConfigForCleanupOperation;
+	// their fences accept a ClusterConfig whose deletion has started.
+	cleanupOperations map[*breakglassv1alpha1.ClusterConfig]bool
 }
 
 // WithLiveReader configures an uncached reader for final authorization fences.
@@ -133,6 +136,7 @@ func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLo
 		circuitBreakers:         NewCircuitBreakerRegistry(cbCfg, log),
 		clientsets:              map[string]*cachedClientset{},
 		privilegedInputVersions: map[*breakglassv1alpha1.ClusterConfig]map[string]string{},
+		cleanupOperations:       map[*breakglassv1alpha1.ClusterConfig]bool{},
 	}
 	var err error
 	p.remoteClients, err = remoteclient.New(remoteclient.Options{
@@ -241,6 +245,10 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 // fence so a deleted or replaced ClusterConfig cannot leave a cached spoke
 // configuration authorizing a session.
 func (p *ClientProvider) GetInNamespaceLive(ctx context.Context, namespace, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	return p.getInNamespaceLive(ctx, namespace, name, false)
+}
+
+func (p *ClientProvider) getInNamespaceLive(ctx context.Context, namespace, name string, allowDeleting bool) (*breakglassv1alpha1.ClusterConfig, error) {
 	if p == nil || (p.k8s == nil && p.liveReader == nil) {
 		return nil, fmt.Errorf("cluster config live reader is not configured")
 	}
@@ -252,7 +260,7 @@ func (p *ClientProvider) GetInNamespaceLive(ctx context.Context, namespace, name
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &found); err != nil {
 		return nil, fmt.Errorf("get live clusterconfig %s/%s: %w", namespace, name, err)
 	}
-	if !found.DeletionTimestamp.IsZero() {
+	if !allowDeleting && !found.DeletionTimestamp.IsZero() {
 		return nil, fmt.Errorf("ClusterConfig %s/%s is being deleted", namespace, name)
 	}
 	return &found, nil
@@ -262,11 +270,11 @@ func (p *ClientProvider) GetInNamespaceLive(ctx context.Context, namespace, name
 // uncached reader and verifies the exact object used to create a target client.
 // It returns the live object so client resolution can retain the exact UID and
 // spec that were current after the client-producing configuration was checked.
-func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) (*breakglassv1alpha1.ClusterConfig, error) {
+func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig, allowDeleting bool) (*breakglassv1alpha1.ClusterConfig, error) {
 	if configured == nil || configured.Namespace == "" || configured.Name == "" || configured.UID == "" {
 		return nil, fmt.Errorf("privileged operation cluster config identity is incomplete")
 	}
-	live, err := p.GetInNamespaceLive(ctx, configured.Namespace, configured.Name)
+	live, err := p.getInNamespaceLive(ctx, configured.Namespace, configured.Name, allowDeleting)
 	if err != nil {
 		return nil, err
 	}
@@ -288,12 +296,13 @@ func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Contex
 // versions are the security boundary; status-only writes do not change the
 // target client or its authorization inputs.
 func (p *ClientProvider) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
-	if _, err := p.livePrivilegedOperationClusterConfig(ctx, configured); err != nil {
-		return err
-	}
 	p.mu.RLock()
 	expected := p.privilegedInputVersions[configured]
+	cleanup := p.cleanupOperations[configured]
 	p.mu.RUnlock()
+	if _, err := p.livePrivilegedOperationClusterConfig(ctx, configured, cleanup); err != nil {
+		return err
+	}
 	if err := p.validatePrivilegedInputVersions(ctx, configured, expected); err != nil {
 		return err
 	}
@@ -308,6 +317,7 @@ func (p *ClientProvider) ReleasePrivilegedOperationClusterConfig(configured *bre
 	}
 	p.mu.Lock()
 	delete(p.privilegedInputVersions, configured)
+	delete(p.cleanupOperations, configured)
 	p.mu.Unlock()
 }
 
@@ -583,6 +593,20 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 // with the exact live ClusterConfig that produced it. It rejects a stale cached
 // config before the caller can use the target client.
 func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context, name string) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
+	return p.getRESTConfigForOperation(ctx, name, false)
+}
+
+// GetRESTConfigForCleanupOperation is GetRESTConfigForPrivilegedOperation for
+// removing state an earlier privileged operation created. It also accepts a
+// ClusterConfig whose deletion has started, because that deletion waits for
+// the cleanup; the UID, spec and credential-input fences are unchanged, and
+// ValidatePrivilegedOperationClusterConfig applies the same rule to the
+// returned snapshot. Never use it to create or widen target state.
+func (p *ClientProvider) GetRESTConfigForCleanupOperation(ctx context.Context, name string) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
+	return p.getRESTConfigForOperation(ctx, name, true)
+}
+
+func (p *ClientProvider) getRESTConfigForOperation(ctx context.Context, name string, cleanup bool) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
 	// Privileged callers must never receive a cached client built from an older
 	// credential or trust input. Evict the candidate before resolving it.
 	if namespace, cluster, ok := splitNamespacedName(name); ok {
@@ -604,7 +628,7 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	if err != nil {
 		return nil, nil, err
 	}
-	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured)
+	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured, cleanup)
 	if err != nil {
 		return nil, nil, fmt.Errorf("validate privileged operation cluster config: %w", err)
 	}
@@ -626,7 +650,7 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	if err != nil {
 		return nil, nil, err
 	}
-	liveAfter, err := p.livePrivilegedOperationClusterConfig(ctx, rebuilt)
+	liveAfter, err := p.livePrivilegedOperationClusterConfig(ctx, rebuilt, cleanup)
 	if err != nil {
 		return nil, nil, fmt.Errorf("validate rebuilt privileged operation cluster config: %w", err)
 	}
@@ -640,6 +664,9 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	live = liveAfter
 	p.mu.Lock()
 	p.privilegedInputVersions[live] = after
+	if cleanup {
+		p.cleanupOperations[live] = true
+	}
 	p.mu.Unlock()
 	return cfg, live, nil
 }

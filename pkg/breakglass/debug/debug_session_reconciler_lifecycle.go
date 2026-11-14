@@ -513,6 +513,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			return err
 		}
 	}
+	if ds.Status.TrafficMirror != nil && !ds.Status.TrafficMirror.Released {
+		if err := c.cleanupTrafficMirror(ctx, ds); err != nil {
+			setCleanupCondition(ds)
+			if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
+				return errors.Join(err, patchErr)
+			}
+			return err
+		}
+	}
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -705,6 +714,15 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 			}
 		}
 	}
+	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released {
+		if mirror.CreateAttempted {
+			add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID, mirror.PodUID)
+		}
+		// The capture Pod exists before the agent's create marker.
+		if mirror.CapturePodUID != "" {
+			add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID+trafficMirrorCaptureSuffix, mirror.CapturePodUID)
+		}
+	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			add(status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.UID)
@@ -743,6 +761,9 @@ func boundedCleanupConditionMessage(ds *breakglassv1alpha1.DebugSession) string 
 		return "Cleanup failed; residual resources remain in the durable inventory."
 	}
 	message := prefix + strings.Join(identities, ", ")
+	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released && !mirror.TeardownVerified && mirror.TeardownResult != "" {
+		message += "; traffic mirror " + mirror.TeardownResult
+	}
 	if len(message) <= maxCleanupConditionMessage {
 		return message
 	}
@@ -835,6 +856,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
 	if status.NodeMaintenance != nil && !status.NodeMaintenance.Released {
+		return true
+	}
+	if status.TrafficMirror != nil && !status.TrafficMirror.Released {
 		return true
 	}
 	if (status.AdmissionRecipe != nil && !status.AdmissionRecipe.Reverted) ||

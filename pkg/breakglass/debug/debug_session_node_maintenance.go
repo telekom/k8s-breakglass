@@ -90,12 +90,15 @@ func maintenanceIdentity(value string) string {
 }
 
 func maintenanceApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) error {
-	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil {
+	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil && template.Spec.TrafficMirror == nil {
 		return nil
 	}
 	kind := "nodeMaintenance"
 	if template.Spec.Hotfix != nil {
 		kind = "hotfix"
+	}
+	if template.Spec.TrafficMirror != nil {
+		kind = "trafficMirror"
 	}
 	approvers := template.Spec.Approvers
 	if binding != nil && binding.Spec.Approvers != nil {
@@ -129,12 +132,22 @@ func maintenanceApproved(ds *breakglassv1alpha1.DebugSession) bool {
 
 // maintenanceClient uses the same privileged ClusterConfig provenance as workload deployment.
 func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrlclient.Client, func() error, func(), error) {
+	target, fence, release, _, err := c.fencedTargetClient(ctx, ds, false)
+	return target, fence, release, err
+}
+
+// fencedTargetClient also returns the UID of the exact ClusterConfig used.
+func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cleanup bool) (ctrlclient.Client, func() error, func(), string, error) {
 	if c.ccProvider == nil {
-		return nil, nil, nil, fmt.Errorf("nodeMaintenance requires a target cluster provider")
+		return nil, nil, nil, "", fmt.Errorf("nodeMaintenance requires a target cluster provider")
 	}
-	cfg, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+	resolve := c.ccProvider.GetRESTConfigForPrivilegedOperation
+	if cleanup {
+		resolve = c.ccProvider.GetRESTConfigForCleanupOperation
+	}
+	cfg, configured, err := resolve(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	release := func() { c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured) }
 	var target ctrlclient.Client
@@ -145,12 +158,12 @@ func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *brea
 	}
 	if err != nil {
 		release()
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	fence := func() error {
 		return c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
 	}
-	return target, fence, release, nil
+	return target, fence, release, string(configured.UID), nil
 }
 
 // kexecExecutes reports whether a profile reboots its Node rather than only
