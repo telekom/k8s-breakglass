@@ -1306,3 +1306,16 @@ func TestFourEyesMatchesEveryHubUsernamePrefix(t *testing.T) {
 		assert.False(t, sessionPartyMatches(ds, by), "independent %q wrongly matched", by)
 	}
 }
+
+// Residuals outside the resource inventory (here a kubectl-debug copied Pod)
+// are reported by CleanupFailed but cannot be acknowledged.
+func TestAcknowledgementCannotRetireResidualsOutsideTheInventory(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{{CopyName: "copy", CopyNamespace: "breakglass-debug", UID: "copy-uid"}}}
+	copied := CleanupAcknowledgedIdentity{APIVersion: "v1", Kind: "Pod", Namespace: "breakglass-debug", Name: "copy", UID: "copy-uid"}
+	require.Contains(t, cleanupResidualIdentities(ds), "breakglass-debug/v1/Pod/copy (uid=copy-uid)", "CleanupFailed reports the copied Pod")
+	record := decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", copied), "", false)
+	assert.False(t, record.Applied)
+	assert.Contains(t, record.Message, "Only entries of status.deployedResources")
+	assert.Equal(t, "copy", ds.Status.KubectlDebugStatus.CopiedPods[0].CopyName, "nothing was retired")
+}

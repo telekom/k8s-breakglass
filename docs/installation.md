@@ -602,9 +602,12 @@ sessions=$(kubectl get debugsessions -A -o name)
 # If the wait times out, list the sessions that are not done yet:
 kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
 # For a session with CLEANUP_FAILED=True, verify its residual resources are
-# gone, retire them with a DebugSessionCleanupAcknowledgement
-# (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone)
-# and wait again. Resources a template keeps on purpose (deleteAfter: false)
+# gone and retire its resource inventory entries with a
+# DebugSessionCleanupAcknowledgement
+# (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone).
+# kubectl-debug copied Pods, admission-recipe targets and node-maintenance or
+# hotfix state cannot be acknowledged: restore access to the target cluster
+# so cleanup can retry, or delete them on the target. Then wait again. Resources a template keeps on purpose (deleteAfter: false)
 # are not removed by any step.
 
 # 3. Delete the session objects and wait until they are gone.

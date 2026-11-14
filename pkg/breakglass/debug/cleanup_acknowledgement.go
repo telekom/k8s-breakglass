@@ -168,7 +168,8 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 		}
 	}
 	if len(unmatched) > 0 {
-		return reject("identities are not outstanding cleanup residuals: %s; nothing was retired", strings.Join(unmatched, ", "))
+		return reject("identities are not outstanding cleanup residuals: %s; nothing was retired. Only entries of status.deployedResources, "+
+			"status.podTemplateResourceStatuses and status.auxiliaryResourceStatuses (with their additionalResources) can be acknowledged", strings.Join(unmatched, ", "))
 	}
 	slices.SortFunc(retired, compareIdentities)
 	retired = slices.Compact(retired)

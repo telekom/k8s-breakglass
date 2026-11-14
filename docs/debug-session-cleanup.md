@@ -127,7 +127,20 @@ without Kyverno. The controller handles this as follows:
 Uninstalling a CRD deletes its objects, but cleanup then gets `NoMatch`
 forever. When an operator has verified that residual resources are gone, they
 create a `DebugSessionCleanupAcknowledgement` in the session's namespace that
-lists the exact identities, copied from the session status:
+lists the exact identities, copied from the session status.
+
+Only resource inventory entries can be acknowledged: `status.deployedResources`,
+`status.podTemplateResourceStatuses` and `status.auxiliaryResourceStatuses`
+(including their `additionalResources`), which are what an uninstalled or
+deregistered kind leaves behind in any session mode. The `CleanupFailed`
+condition can also list kubectl-debug copied Pods and prepared
+`KubectlDebugOperation`s and admission-recipe targets, and it also stays
+`True` while node-maintenance or hotfix state is not released. Acknowledgements
+cannot retire these: an acknowledgement listing one is rejected and retires
+nothing. Their kinds are always served, so they clear as soon as a retry
+reaches the target cluster (restore the ClusterConfig or connectivity), or
+after you delete the object on the target yourself, because cleanup treats
+`NotFound` as done.
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
