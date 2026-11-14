@@ -127,7 +127,7 @@ func NewEscalationReconciler(
 
 // Reconcile implements controller-runtime's Reconciler interface.
 // Called whenever a BreakglassEscalation CR changes.
-func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (result reconcile.Result, err error) {
+func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	r.logger.Debugw("Reconciling BreakglassEscalation",
 		"name", req.Name,
 		"namespace", req.Namespace)
@@ -146,13 +146,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
-	if after := r.auditor.specChange(ctx, escalation); after > 0 {
-		defer func() {
-			if err == nil && (result.RequeueAfter == 0 || result.RequeueAfter > after) {
-				result.RequeueAfter = after
-			}
-		}()
-	}
+	r.auditor.specChange(ctx, escalation)
 
 	// Validate escalation configuration and references
 	now := metav1.Now()
@@ -421,7 +415,7 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	dependencyPredicate := dependencyChangePredicate()
 
 	if r.auditor != nil {
-		// Retries retained escalation.deleted events; stops with the manager.
+		// Retries unaccepted escalation audit events; stops with the manager.
 		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 			r.auditor.run(ctx)
 			return nil

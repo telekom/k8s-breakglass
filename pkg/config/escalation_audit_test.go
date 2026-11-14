@@ -148,9 +148,9 @@ func TestEscalationReconcilerAuditsSpecChanges(t *testing.T) {
 }
 
 // An event that the pipeline did not accept (not configured yet, or a full
-// queue) is retried with backoff and keeps its first observation time;
-// disabled auditing emits nothing and does not requeue.
-func TestEscalationReconcilerRetriesUnacceptedEvents(t *testing.T) {
+// queue) is retained and retried with backoff, keeps its first observation
+// time, and never requeues the reconciler; disabled auditing records nothing.
+func TestEscalationAuditRetriesUnacceptedEvents(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		state audit.ConfigurationState
@@ -159,21 +159,24 @@ func TestEscalationReconcilerRetriesUnacceptedEvents(t *testing.T) {
 			capture := newEscalationAuditCapture()
 			capture.set(tc.state, true)
 			h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
-			observedAt := time.Now()
-			require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter)
-			require.Equal(t, 2*escalationAuditRetry, h.reconcile().RequeueAfter, "backoff doubles")
+			now := time.Now()
+			h.r.auditor.now = func() time.Time { return now }
+			observedAt := now
+			require.Equal(t, reconcile.Result{}, h.reconcile(), "auditing never requeues the reconciler")
+			require.Equal(t, 1, h.r.auditor.flush(context.Background()), "not due yet")
+			now = now.Add(escalationAuditRetry)
+			require.Equal(t, 1, h.r.auditor.flush(context.Background()))
+			entry := h.r.auditor.pending[escalationAuditKey{uid: "esc-uid", generation: 1}]
+			require.Equal(t, now.Add(h.r.auditor.backoff(entry.attempts)), entry.next, "exponential backoff")
 			require.Empty(t, capture.take())
 
-			time.Sleep(20 * time.Millisecond)
-			readyAt := time.Now()
 			capture.set(audit.ConfigurationReady, false)
-			require.Equal(t, reconcile.Result{}, h.reconcile())
+			now = now.Add(escalationAuditMaxRetry)
+			require.Zero(t, h.r.auditor.flush(context.Background()))
 			events := capture.take()
 			require.Len(t, events, 1)
 			require.Equal(t, audit.EventEscalationCreated, events[0].Type)
-			require.WithinDuration(t, observedAt, events[0].Timestamp, time.Second)
-			require.True(t, events[0].Timestamp.Before(readyAt), "the event keeps its first observation time")
-			require.Empty(t, h.r.auditor.pending)
+			require.Equal(t, observedAt.UTC(), events[0].Timestamp, "the event keeps its first observation time")
 		})
 	}
 
@@ -183,6 +186,78 @@ func TestEscalationReconcilerRetriesUnacceptedEvents(t *testing.T) {
 	require.Equal(t, reconcile.Result{}, h.reconcile())
 	require.Empty(t, disabled.take())
 	require.Empty(t, h.r.auditor.pending)
+}
+
+// Every observed generation and the deletion are separate snapshots: an
+// update or a delete during an outage does not discard an earlier change.
+func TestEscalationAuditKeepsEverySnapshotDuringOutage(t *testing.T) {
+	for _, tc := range []string{"update", "delete"} {
+		t.Run(tc, func(t *testing.T) {
+			capture := newEscalationAuditCapture()
+			capture.set(audit.ConfigurationUnavailable, true)
+			h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
+			h.reconcile()
+			h.bumpGeneration(2)
+			h.reconcile()
+			if tc == "delete" {
+				esc := auditedEscalation(2)
+				h.r.auditor.deletion(esc)
+			}
+			capture.set(audit.ConfigurationReady, false)
+			h.r.auditor.now = func() time.Time { return time.Now().Add(escalationAuditMaxRetry) }
+			require.Zero(t, h.r.auditor.flush(context.Background()))
+			ids := map[string]bool{}
+			for _, e := range capture.take() {
+				ids[e.ID] = true
+			}
+			want := map[string]bool{"escalation/esc-uid/1": true, "escalation/esc-uid/2": true}
+			if tc == "delete" {
+				want["escalation/esc-uid/deleted"] = true
+			}
+			require.Equal(t, want, ids)
+		})
+	}
+}
+
+// flush never holds the lock while enqueueing: a blocked TryEmit does not
+// block reconciliation or the delete handler.
+func TestEscalationAuditDoesNotHoldLockDuringEnqueue(t *testing.T) {
+	blocking := &blockingEmitter{release: make(chan struct{}), entered: make(chan struct{}, 1)}
+	a := newEscalationAuditor(blocking, zap.NewNop().Sugar())
+	a.deletion(auditedEscalation(1))
+	go a.flush(context.Background())
+	<-blocking.entered
+	done := make(chan struct{})
+	go func() {
+		other := auditedEscalation(1)
+		other.UID = "other"
+		a.deletion(other)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deletion blocked behind an in-flight enqueue")
+	}
+	close(blocking.release)
+}
+
+type blockingEmitter struct {
+	release chan struct{}
+	entered chan struct{}
+}
+
+func (b *blockingEmitter) TryEmit(context.Context, *audit.Event) bool {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return true
+}
+
+func (*blockingEmitter) ConfigurationState() audit.ConfigurationState {
+	return audit.ConfigurationReady
 }
 
 func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
@@ -195,22 +270,17 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 		esc := auditedEscalation(1)
 		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
 		now = now.Add(time.Millisecond)
-		require.Positive(t, a.specChange(context.Background(), esc))
-		deleted := auditedEscalation(1)
-		deleted.UID = types.UID(fmt.Sprintf("deleted-%d", i))
-		a.deletion(deleted)
+		if i%2 == 0 {
+			a.specChange(context.Background(), esc)
+		} else {
+			a.deletion(esc)
+		}
 	}
-	require.Len(t, a.pending, escalationAuditLimit, "pending spec changes are bounded")
-	require.Len(t, a.deletes, escalationAuditLimit, "pending deletions are bounded")
-	require.NotContains(t, a.deletes, types.UID("deleted-0"), "the oldest entry is evicted")
-	require.NotContains(t, a.pending, types.UID("uid-0"), "the oldest entry is evicted")
+	require.Len(t, a.pending, escalationAuditLimit, "retained events are bounded")
+	require.NotContains(t, a.pending, escalationAuditKey{uid: "uid-0", generation: 1}, "the oldest event is evicted")
 
 	now = now.Add(escalationAuditTTL + time.Minute)
-	require.Zero(t, a.flush(context.Background()), "expired deletions are dropped")
-	esc := auditedEscalation(1)
-	esc.UID = "uid-20"
-	require.Zero(t, a.specChange(context.Background(), esc), "an expired spec change stops retrying")
-	require.NotContains(t, a.pending, esc.UID)
+	require.Zero(t, a.flush(context.Background()), "expired events are dropped")
 }
 
 func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
@@ -255,15 +325,16 @@ func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	// Without an emitter nothing happens.
 	var none *escalationAuditor
 	none.deletion(auditedEscalation(1))
-	require.Zero(t, none.specChange(context.Background(), auditedEscalation(1)))
+	none.specChange(context.Background(), auditedEscalation(1))
 }
 
 // With the real audit.Service: no AuditConfig means disabled after the
-// initial sync, so escalations do not requeue and nothing is retained.
+// initial sync, so nothing is retained and nothing retries.
 func TestEscalationAuditWithRealServiceAndNoAuditConfig(t *testing.T) {
 	svc := audit.NewService(nil, nil, zap.NewNop(), "ns")
 	h := newEscalationAuditHarness(t, auditedEscalation(1), svc)
-	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter, "before the initial AuditConfig sync the pipeline is unavailable")
+	require.Equal(t, reconcile.Result{}, h.reconcile())
+	require.Len(t, h.r.auditor.pending, 1, "before the initial AuditConfig sync the pipeline is unavailable")
 
 	syncer, _ := newTestAuditConfigReconciler(t)
 	syncer.onReloadMultiple = func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, unavailable bool) error {
@@ -272,16 +343,17 @@ func TestEscalationAuditWithRealServiceAndNoAuditConfig(t *testing.T) {
 	syncer.initialSync(context.Background())
 	require.Equal(t, audit.ConfigurationDisabled, svc.ConfigurationState())
 
+	require.Zero(t, h.r.auditor.flush(context.Background()), "disabled auditing drops retained events")
+	h.bumpGeneration(2)
 	for range 3 {
 		require.Equal(t, reconcile.Result{}, h.reconcile(), "no requeue loop while auditing is disabled")
 	}
+	h.r.auditor.deletion(auditedEscalation(2))
 	require.Empty(t, h.r.auditor.pending)
-	h.r.auditor.deletion(auditedEscalation(1))
-	require.Zero(t, h.r.auditor.flush(context.Background()))
 }
 
-// With the real audit.Service and a full queue (dropOnFull), the event is not
-// marked audited and is delivered once the queue drains.
+// With the real audit.Manager and a full queue (dropOnFull), the event stays
+// pending and is delivered once the queue drains.
 func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
 	block := make(chan struct{})
 	var mu sync.Mutex
@@ -300,11 +372,12 @@ func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
 	require.True(t, manager.TryEmit(context.Background(), &audit.Event{Type: audit.EventConfigChanged, Actor: audit.Actor{User: "x"}}))
 
 	h := newEscalationAuditHarness(t, auditedEscalation(1), emitter)
-	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter, "a dropped event is retried")
-	require.Contains(t, h.r.auditor.pending, types.UID("esc-uid"))
+	h.reconcile()
+	require.Contains(t, h.r.auditor.pending, escalationAuditKey{uid: "esc-uid", generation: 1}, "a dropped event stays pending")
 
 	close(block)
-	require.Eventually(t, func() bool { return h.reconcile() == reconcile.Result{} }, 5*time.Second, 10*time.Millisecond)
+	h.r.auditor.now = func() time.Time { return time.Now().Add(escalationAuditMaxRetry) }
+	require.Eventually(t, func() bool { return h.r.auditor.flush(context.Background()) == 0 }, 5*time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()

@@ -25,29 +25,41 @@ type EscalationAuditEmitter interface {
 }
 
 const (
-	// escalationAuditRetry is the first retry delay of an event that the
-	// audit pipeline did not accept; it doubles up to escalationAuditMaxRetry.
+	// escalationAuditRetry is the retry tick and the first retry delay of an
+	// event that the audit pipeline did not accept; the delay doubles up to
+	// escalationAuditMaxRetry.
 	escalationAuditRetry    = 5 * time.Second
 	escalationAuditMaxRetry = 5 * time.Minute
 	// escalationAuditTTL bounds how long an unaccepted event is retained.
 	escalationAuditTTL = time.Hour
-	// escalationAuditLimit bounds the retained events per kind.
-	escalationAuditLimit = 1000
+	// escalationAuditLimit bounds the number of retained events.
+	escalationAuditLimit = 2000
 )
 
-type pendingEscalationAudit struct {
+// escalationAuditKey identifies one event: a generation of an escalation, or
+// its deletion.
+type escalationAuditKey struct {
+	uid        types.UID
 	generation int64
-	since      time.Time
-	next       time.Time // deletions: earliest next attempt
-	attempts   int
-	event      *audit.Event // deletions only: the object is gone
+	deleted    bool
 }
 
-// escalationAuditor emits escalation.created/updated/deleted events. An event
-// counts as audited only once the audit pipeline accepted it; until then it is
-// retained (bounded by escalationAuditLimit and escalationAuditTTL) and retried
-// with backoff. The retained events are in memory: a controller crash loses
-// them, and the next leader re-emits the current generation of every
+// pendingEscalationAudit is an immutable event snapshot plus retry state.
+type pendingEscalationAudit struct {
+	event    *audit.Event
+	since    time.Time
+	next     time.Time
+	attempts int
+	inflight bool
+}
+
+// escalationAuditor emits escalation.created/updated/deleted events. Each
+// observed generation and each deletion becomes an immutable event snapshot
+// that is retried independently until the audit pipeline accepts it, bounded
+// by escalationAuditLimit and escalationAuditTTL. Enqueueing never happens
+// under the lock, so a full audit queue cannot block reconciliation or the
+// informer's delete handler. The snapshots are in memory: a controller crash
+// loses them, and the next leader re-emits the current generation of every
 // escalation with the same event ID.
 type escalationAuditor struct {
 	emitter EscalationAuditEmitter
@@ -55,10 +67,10 @@ type escalationAuditor struct {
 	retry   time.Duration
 	now     func() time.Time
 
-	mu      sync.Mutex
-	audited map[types.UID]int64
-	pending map[types.UID]*pendingEscalationAudit
-	deletes map[types.UID]*pendingEscalationAudit
+	mu sync.Mutex
+	// recorded is the newest generation per escalation that has a snapshot.
+	recorded map[types.UID]int64
+	pending  map[escalationAuditKey]*pendingEscalationAudit
 }
 
 func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLogger) *escalationAuditor {
@@ -66,7 +78,7 @@ func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLog
 		return nil
 	}
 	return &escalationAuditor{emitter: emitter, logger: logger, retry: escalationAuditRetry, now: time.Now,
-		audited: map[types.UID]int64{}, pending: map[types.UID]*pendingEscalationAudit{}, deletes: map[types.UID]*pendingEscalationAudit{}}
+		recorded: map[types.UID]int64{}, pending: map[escalationAuditKey]*pendingEscalationAudit{}}
 }
 
 func (a *escalationAuditor) backoff(attempts int) time.Duration {
@@ -77,114 +89,120 @@ func (a *escalationAuditor) backoff(attempts int) time.Duration {
 	return min(delay, escalationAuditMaxRetry)
 }
 
-// retain adds an entry, evicting the oldest one beyond the limit.
-func (a *escalationAuditor) retain(entries map[types.UID]*pendingEscalationAudit, uid types.UID, entry *pendingEscalationAudit) {
-	entries[uid] = entry
-	if len(entries) <= escalationAuditLimit {
+// record adds a snapshot under a.mu, evicting the oldest beyond the limit.
+func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
+	a.pending[key] = &pendingEscalationAudit{event: event, since: event.Timestamp}
+	if len(a.pending) <= escalationAuditLimit {
 		return
 	}
-	var oldest types.UID
-	for id, e := range entries {
-		if oldest == "" || e.since.Before(entries[oldest].since) {
-			oldest = id
+	var oldest escalationAuditKey
+	var oldestEntry *pendingEscalationAudit
+	for k, e := range a.pending {
+		if oldestEntry == nil || e.since.Before(oldestEntry.since) {
+			oldest, oldestEntry = k, e
 		}
 	}
-	delete(entries, oldest)
-	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "uid", oldest)
+	delete(a.pending, oldest)
+	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)
 }
 
-// specChange emits escalation.created (generation 1) or escalation.updated
-// for a generation that has not been audited yet. It is independent of
-// status.observedGeneration, which other status writers also advance. It
-// returns the delay after which the caller should reconcile again because the
-// event was not accepted yet, or 0. Disabled auditing is a cheap no-op.
-func (a *escalationAuditor) specChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) time.Duration {
-	if a == nil {
-		return 0
+// specChange records escalation.created (generation 1) or escalation.updated
+// for a generation that has no snapshot yet and tries to emit it. It is
+// independent of status.observedGeneration, which other status writers also
+// advance. Disabled auditing is a cheap no-op. Unaccepted events are retried
+// by run.
+func (a *escalationAuditor) specChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) {
+	if a == nil || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
+		return
 	}
-	state := a.emitter.ConfigurationState()
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if state == audit.ConfigurationDisabled {
-		delete(a.pending, esc.UID)
-		return 0
+	previous, seen := a.recorded[esc.UID]
+	if seen && previous >= esc.Generation {
+		a.mu.Unlock()
+		return
 	}
-	previous, seen := a.audited[esc.UID]
-	if seen && previous == esc.Generation {
-		return 0
+	eventType := audit.EventEscalationUpdated
+	if esc.Generation <= 1 {
+		eventType = audit.EventEscalationCreated
 	}
-	entry := a.pending[esc.UID]
-	if entry == nil || entry.generation != esc.Generation {
-		entry = &pendingEscalationAudit{generation: esc.Generation, since: a.now().UTC()}
-		a.retain(a.pending, esc.UID, entry)
-	}
-	if a.now().Sub(entry.since) > escalationAuditTTL {
-		delete(a.pending, esc.UID)
-		a.audited[esc.UID] = esc.Generation
-		a.logger.Warnw("Dropping unaudited escalation change: the audit pipeline did not accept it within the retention window",
-			"escalation", esc.Name, "uid", esc.UID, "generation", esc.Generation)
-		return 0
-	}
-	if state == audit.ConfigurationReady {
-		eventType := audit.EventEscalationUpdated
-		if esc.Generation <= 1 {
-			eventType = audit.EventEscalationCreated
-		}
-		event := audit.EscalationChangeEvent(eventType, esc, previous)
-		// The event time is the first observation, also when delivered late.
-		event.Timestamp = entry.since
-		if a.emitter.TryEmit(ctx, event) {
-			delete(a.pending, esc.UID)
-			a.audited[esc.UID] = esc.Generation
-			return 0
-		}
-	}
-	entry.attempts++
-	return a.backoff(entry.attempts)
+	event := audit.EscalationChangeEvent(eventType, esc, previous)
+	event.Timestamp = a.now().UTC()
+	a.recorded[esc.UID] = esc.Generation
+	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation}, event)
+	a.mu.Unlock()
+	a.flush(ctx)
 }
 
-// deletion retains escalation.deleted for an observed delete; run emits it.
-// It never blocks: it is called from the informer's event handler.
+// deletion records escalation.deleted for an observed delete. It does not
+// emit: it runs in the informer's event handler and must not block, so run
+// delivers it. Earlier snapshots of the escalation stay pending.
 func (a *escalationAuditor) deletion(obj client.Object) {
 	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
-	if a == nil || !ok {
+	if a == nil || !ok || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
 		return
 	}
 	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
 	event.Timestamp = a.now().UTC()
 	a.mu.Lock()
-	delete(a.audited, esc.UID)
-	delete(a.pending, esc.UID)
-	a.retain(a.deletes, esc.UID, &pendingEscalationAudit{generation: esc.Generation, since: event.Timestamp, event: event})
+	delete(a.recorded, esc.UID)
+	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}, event)
 	a.mu.Unlock()
 }
 
-// flush emits retained deletions that are due, drops expired ones and drops
-// all of them when auditing is disabled. It reports the number still retained.
+// flush tries to emit every due snapshot. It drops all snapshots while
+// auditing is disabled and expired ones always. TryEmit runs without a.mu.
+// It reports the number of snapshots still retained.
 func (a *escalationAuditor) flush(ctx context.Context) int {
 	state := a.emitter.ConfigurationState()
+	type attempt struct {
+		key   escalationAuditKey
+		entry *pendingEscalationAudit
+	}
+	var due []attempt
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	now := a.now()
-	for uid, entry := range a.deletes {
+	for key, entry := range a.pending {
 		switch {
-		case state != audit.ConfigurationDisabled && now.Before(entry.next):
 		case state == audit.ConfigurationDisabled:
-			delete(a.deletes, uid)
+			delete(a.pending, key)
 		case now.Sub(entry.since) > escalationAuditTTL:
-			delete(a.deletes, uid)
-			a.logger.Warnw("Dropping unaudited escalation deletion: the audit pipeline did not accept it within the retention window", "uid", uid)
-		case state == audit.ConfigurationReady && a.emitter.TryEmit(ctx, entry.event):
-			delete(a.deletes, uid)
-		default:
+			delete(a.pending, key)
+			a.logger.Warnw("Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window", "event", entry.event.ID)
+		case entry.inflight || now.Before(entry.next):
+		case state != audit.ConfigurationReady:
 			entry.attempts++
 			entry.next = now.Add(a.backoff(entry.attempts))
+		default:
+			entry.inflight = true
+			due = append(due, attempt{key, entry})
 		}
 	}
-	return len(a.deletes)
+	a.mu.Unlock()
+
+	accepted := make([]bool, len(due))
+	for i, d := range due {
+		accepted[i] = a.emitter.TryEmit(ctx, d.entry.event)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now = a.now()
+	for i, d := range due {
+		d.entry.inflight = false
+		if a.pending[d.key] != d.entry {
+			continue // evicted or dropped meanwhile
+		}
+		if accepted[i] {
+			delete(a.pending, d.key)
+			continue
+		}
+		d.entry.attempts++
+		d.entry.next = now.Add(a.backoff(d.entry.attempts))
+	}
+	return len(a.pending)
 }
 
-// run retries retained deletions until ctx ends.
+// run retries retained snapshots until ctx ends.
 func (a *escalationAuditor) run(ctx context.Context) {
 	if a == nil {
 		return
