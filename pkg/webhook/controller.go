@@ -318,8 +318,14 @@ type WebhookController struct {
 	namespaceLabelsFetchFn  NamespaceLabelsFetchFunction                                          // optional override for testing
 	approverResolverFetchFn func(context.Context, string) (breakglass.GroupMemberResolver, error) // optional override for tests
 	auditService            *audit.Service                                                        // optional audit service for access decision events
-	rateLimiter             *ratelimit.IPRateLimiter                                              // per-IP rate limiter for SAR requests
-	activityTracker         *ActivityTracker                                                      // optional buffered session activity tracker (#314)
+	// attachedAudit hands debug_session.attached to a background worker so
+	// a saturated audit queue cannot delay the SubjectAccessReview response.
+	attachedAuditOnce sync.Once
+	attachedAudit     chan attachedAuditItem
+	// attachedEmit delivers a handed-off event (audit.Service.Emit; tests).
+	attachedEmit    func(context.Context, *audit.Event)
+	rateLimiter     *ratelimit.IPRateLimiter // per-IP rate limiter for SAR requests
+	activityTracker *ActivityTracker         // optional buffered session activity tracker (#314)
 }
 
 const (
@@ -1154,10 +1160,43 @@ func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, 
 	if wc.auditService == nil || sar == nil {
 		return
 	}
-	if event := audit.DebugSessionAttachedEvent(username, groups, cluster, sar.Spec.ResourceAttributes, target,
-		sessionNamespace, sessionName, sessionUID); event != nil {
-		wc.auditService.Emit(ctx, event)
+	event := audit.DebugSessionAttachedEvent(username, groups, cluster, sar.Spec.ResourceAttributes, target,
+		sessionNamespace, sessionName, sessionUID)
+	if event == nil {
+		return
 	}
+	wc.attachedAuditOnce.Do(func() {
+		emit := wc.attachedEmit
+		if emit == nil {
+			emit = wc.auditService.Emit
+		}
+		wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
+		// ponytail: one process-lifetime worker; it only waits on the audit
+		// queue, which bounds every Emit by its WriteTimeout.
+		go func() {
+			for item := range wc.attachedAudit {
+				emit(item.ctx, item.event)
+			}
+		}()
+	})
+	select {
+	case wc.attachedAudit <- attachedAuditItem{ctx: context.WithoutCancel(ctx), event: event}:
+	default:
+		// The audit pipeline is saturated far beyond its own queue; count the
+		// loss like a full audit queue instead of delaying authorization.
+		metrics.AuditEventsDropped.WithLabelValues("webhook-attached-handoff", "queue_full").Inc()
+		if wc.log != nil {
+			wc.log.Warnw("Dropping debug_session.attached audit event: handoff buffer is full", "session", sessionName)
+		}
+	}
+}
+
+// attachedAuditBuffer bounds the debug_session.attached handoff.
+const attachedAuditBuffer = 1024
+
+type attachedAuditItem struct {
+	ctx   context.Context
+	event *audit.Event
 }
 
 // emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.

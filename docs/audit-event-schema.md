@@ -273,14 +273,17 @@ escalation is emitted again with the same ID (without `previousGeneration`);
 deduplicate on `id`.
 
 Delivery guarantee: every observed generation and every observed delete
-becomes its own event snapshot, which counts as audited only when the audit
-pipeline accepted it. Until then (no AuditConfig loaded yet, or the ingress
+becomes its own event snapshot, which the controller keeps until the audit
+manager's ingress queue accepted it. Acceptance is not delivery to a sink:
+after it, the event follows the sink delivery rules in
+[Audit delivery](audit-delivery.md), including its counted losses. Until then (no AuditConfig loaded yet, or the ingress
 queue full or timing out) the controller retains the snapshot in memory and
 retries it with exponential backoff (5 s up to 5 min), keeping the time it
 first observed the change; a later edit or the delete does not replace an
 earlier pending snapshot. Retention is bounded: at most 2000 pending events,
 each for at most one hour; beyond that the oldest event is dropped with a
-warning log. So delivery is at least once while the controller runs. Events
+warning log. So hand-off to the audit pipeline is at least once while the controller
+runs; delivery to Kafka then has the guarantees of the Kafka sink above. Events
 are lost when the controller crashes before they were accepted (a new leader
 re-emits the current generation of each existing escalation, but not
 intermediate generations or a delete it did not observe) or when the pipeline

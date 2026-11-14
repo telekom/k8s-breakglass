@@ -6,6 +6,8 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -92,6 +94,7 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			wc := &WebhookController{
 				log: log, escalManager: &escalation.EscalationManager{Client: cli},
 				sesManager: breakglass.NewSessionManagerWithClient(cli), auditService: svc,
+				attachedEmit: func(ctx context.Context, event *audit.Event) { svc.Emit(ctx, event) },
 				podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 				},
@@ -112,15 +115,21 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			var result SubjectAccessReviewResponse
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 
-			mu.Lock()
-			defer mu.Unlock()
 			if tc.allowSource == "rbac" {
 				require.True(t, result.Status.Allowed, "the request is allowed, but not by a debug session")
 			}
+			count := func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(attached)
+			}
 			if !tc.want {
-				require.Empty(t, attached)
+				require.Never(t, func() bool { return count() > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 				return
 			}
+			require.Eventually(t, func() bool { return count() == 1 }, 5*time.Second, 10*time.Millisecond, "delivered by the handoff worker")
+			mu.Lock()
+			defer mu.Unlock()
 			require.True(t, result.Status.Allowed, result.Status.Reason)
 			require.Len(t, attached, 1)
 			event := attached[0]
@@ -132,4 +141,37 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			require.NoError(t, audittest.Check(event))
 		})
 	}
+}
+
+// A saturated audit pipeline must not delay the SubjectAccessReview
+// response: the handoff returns at once and the client gets the full answer.
+func TestDebugSessionAttachedDoesNotDelaySARResponse(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	svc := audit.NewService(cli, nil, zap.NewNop(), "controller")
+	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: svc,
+		attachedEmit: func(context.Context, *audit.Event) { <-release }}
+	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+		User:               "requester",
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "debug", Name: "own-pod"},
+	}}
+	engine := gin.New()
+	engine.POST("/authorize", func(c *gin.Context) {
+		for range attachedAuditBuffer + 5 { // fill the worker and the buffer, then overflow
+			wc.emitDebugSessionAttachedAudit(c.Request.Context(), "requester", nil, "cluster", sar, audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+		}
+		c.JSON(http.StatusOK, gin.H{"allowed": true})
+	})
+	server := httptest.NewServer(engine)
+	t.Cleanup(server.Close)
+	client := &http.Client{Timeout: 2 * time.Second}
+	start := time.Now()
+	resp, err := client.Post(server.URL+"/authorize", "application/json", nil)
+	require.NoError(t, err, "the response must complete while audit delivery is blocked")
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"allowed":true}`, string(body))
+	require.Less(t, time.Since(start), time.Second)
 }
