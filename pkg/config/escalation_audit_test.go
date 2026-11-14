@@ -813,3 +813,68 @@ func TestEscalationAuditDrainWhileDisabledCountsNothing(t *testing.T) {
 	require.Empty(t, a.pending)
 	require.Empty(t, capture.take())
 }
+
+// Cap and TTL never evict a snapshot whose enqueue is still running: it may
+// still be accepted. Expiry is settled after the attempt.
+func TestEscalationAuditInFlightIsNotEvicted(t *testing.T) {
+	dropped := func(reason string) float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, reason))
+	}
+	for _, accept := range []bool{true, false} {
+		gate := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		emitter := &gatedEmitter{gate: gate, entered: entered, accept: accept}
+		a := newEscalationAuditor(emitter, zap.NewNop().Sugar())
+		now := time.Now()
+		var clock sync.Mutex
+		a.now = func() time.Time {
+			clock.Lock()
+			defer clock.Unlock()
+			return now
+		}
+		inFlight := auditedEscalation(1)
+		inFlight.UID = "in-flight"
+		a.deletion(inFlight)
+		passDone := make(chan struct{})
+		go func() { a.flush(context.Background()); close(passDone) }()
+		<-entered
+
+		capBefore, ttlBefore := dropped("cap"), dropped("ttl")
+		// Reach the cap while the oldest snapshot is in flight.
+		for i := range escalationAuditLimit + 5 {
+			esc := auditedEscalation(1)
+			esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
+			clock.Lock()
+			now = now.Add(time.Millisecond)
+			clock.Unlock()
+			a.deletion(esc)
+		}
+		a.mu.Lock()
+		_, kept := a.pending[escalationAuditKey{uid: "in-flight", generation: 1, deleted: true}]
+		a.mu.Unlock()
+		require.True(t, kept, "the cap does not evict an in-flight snapshot")
+		require.Equal(t, capBefore+6, dropped("cap"), "the cap evicts the oldest idle snapshots instead (2006 snapshots, limit 2000)")
+
+		// Expire everything while the attempt still runs.
+		clock.Lock()
+		now = now.Add(escalationAuditTTL + time.Minute)
+		clock.Unlock()
+		a.flush(context.Background()) // a concurrent pass, as the shutdown drain runs
+		a.mu.Lock()
+		_, kept = a.pending[escalationAuditKey{uid: "in-flight", generation: 1, deleted: true}]
+		a.mu.Unlock()
+		require.True(t, kept, "TTL does not evict an in-flight snapshot")
+		ttlIdle := dropped("ttl") - ttlBefore
+
+		close(gate)
+		<-passDone
+		want := ttlIdle
+		if !accept {
+			want++ // expired and its attempt failed: now it is a loss
+		}
+		require.Equal(t, ttlBefore+want, dropped("ttl"), "accepted=%v", accept)
+		a.mu.Lock()
+		require.NotContains(t, a.pending, escalationAuditKey{uid: "in-flight", generation: 1, deleted: true})
+		a.mu.Unlock()
+	}
+}

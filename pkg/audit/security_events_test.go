@@ -223,3 +223,29 @@ func TestServiceTryEmitSaturatedQueue(t *testing.T) {
 	require.False(t, m.TryEmitRetryable(context.Background(), event()))
 	require.Equal(t, before+2, queueFull(), "not counted for retrying callers")
 }
+
+// A retryable enqueue that ends because the Manager shuts down is not counted
+// as a shutdown drop: its caller keeps the event.
+func TestManagerRetryableEnqueueAtShutdownIsNotCounted(t *testing.T) {
+	sink := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	m := NewManager(sink, ManagerConfig{QueueSize: 1, WorkerCount: 1, WriteTimeout: time.Minute}, zap.NewNop())
+	event := func() *Event {
+		return &Event{Type: EventEscalationDeleted, Actor: Actor{User: "system"}, Target: Target{Kind: "BreakglassEscalation", Name: "e"}}
+	}
+	require.True(t, m.TryEmit(context.Background(), event())) // taken by the worker
+	<-sink.started
+	require.True(t, m.TryEmit(context.Background(), event())) // fills the queue
+	shutdown := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "shutdown"))
+	}
+	before := shutdown()
+	result := make(chan bool, 1)
+	go func() { result <- m.TryEmitRetryable(context.Background(), event()) }()
+	time.Sleep(50 * time.Millisecond) // the enqueue now waits for space
+	closed := make(chan struct{})
+	go func() { _ = m.Close(); close(closed) }()
+	require.False(t, <-result, "the shutdown ends the retryable enqueue")
+	require.Equal(t, before, shutdown(), "not counted: the caller retries it")
+	close(sink.release)
+	<-closed
+}

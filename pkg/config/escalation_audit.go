@@ -123,9 +123,16 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 	var oldest escalationAuditKey
 	var oldestEntry *pendingEscalationAudit
 	for k, e := range a.pending {
+		// An entry owned by a running pass may still be accepted.
+		if e.inflight {
+			continue
+		}
 		if oldestEntry == nil || e.since.Before(oldestEntry.since) {
 			oldest, oldestEntry = k, e
 		}
+	}
+	if oldestEntry == nil {
+		return // everything else is in flight; the pass settles it
 	}
 	a.drop(oldest)
 	metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "cap").Inc()
@@ -262,13 +269,15 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 	now := a.now()
 	for key, entry := range a.pending {
 		switch {
+		case entry.inflight:
+			// Owned by a running pass; settled when its attempt finishes.
 		case state == audit.ConfigurationDisabled:
 			a.drop(key)
 		case now.Sub(entry.since) > escalationAuditTTL:
 			a.drop(key)
 			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "ttl").Inc()
 			a.logger.Warnw("Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window", "event", entry.event.ID)
-		case entry.inflight || now.Before(entry.next):
+		case now.Before(entry.next):
 		case state != audit.ConfigurationReady:
 			entry.attempts++
 			entry.next = now.Add(a.backoff(entry.attempts))
@@ -315,6 +324,12 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 		}
 		if i >= attempted {
 			continue // not attempted in this pass
+		}
+		if now.Sub(d.entry.since) > escalationAuditTTL {
+			// Expired while its attempt ran, and that attempt failed.
+			a.drop(d.key)
+			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "ttl").Inc()
+			continue
 		}
 		d.entry.attempts++
 		d.entry.next = now.Add(a.backoff(d.entry.attempts))

@@ -340,7 +340,9 @@ func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitR
 			m.queuedEvents.Add(1)
 			return emitAccepted
 		case <-m.workerCtx.Done():
-			m.recordShutdownDrops(1)
+			if countDrops {
+				m.recordShutdownDrops(1)
+			}
 		case <-writeCtx.Done():
 			if countDrops {
 				m.droppedEvents.Add(1)
