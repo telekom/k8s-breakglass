@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 346 | 357 | 270 | 0 | 0 | 0 |
+| controller | 468 | 347 | 362 | 271 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -1002,6 +1002,7 @@ variable part of a concatenated message.
 | info | `PodDisruptionBudget applied` | `name` | debug_session_reconciler_workload.go |
 | info | `Recorded binding is not active; denying debug session approval authorization` | `binding`, `session` | debug_session_api_resolution.go |
 | info | `ResourceQuota applied` | `name` | debug_session_reconciler_workload.go |
+| info | `Retired cleanup residuals acknowledged absent by an operator` | `acknowledgedBy`, `acknowledgement`, `identities` | debug_session_reconciler_lifecycle.go |
 | info | `Session created with warnings` | `warnings` | debug_session_api.go |
 | info | `Terminal sharing configured` | `debugSession`, `provider`, `sessionName` | debug_session_reconciler_lifecycle.go |
 | info | `User joined debug session` | `role`, `session`, `user`† | debug_session_api_session_ops.go |
@@ -1040,7 +1041,10 @@ variable part of a concatenated message.
 | warn | `Debug session request reason is invalid` | `bindingRef`, `error`, `templateRef` | debug_session_api.go |
 | warn | `Debug session status update conflict` | `action`, `error`, `session` | debug_session_api_status_patch.go |
 | warn | `DebugSession failed structural validation, skipping reconciliation` | `errors` | debug_session_reconciler.go |
+| warn | `DebugSessionCleanupAcknowledgement CRD is not installed; cleanup acknowledgements are unavailable until it is applied` |  | cleanup_acknowledgement.go |
+| warn | `DebugSessionCleanupAcknowledgement CRD is not served; cleanup acknowledgements are unavailable until it is applied and the controller restarts` |  | debug_session_reconciler.go |
 | warn | `Deleted orphaned debug pod after status update failure` | `pod`, `podNamespace`, `statusError`† | debug_session_kubectl.go |
+| warn | `Deletion cleanup failed; retrying` | `error`, `retryAfter` | debug_session_reconciler.go |
 | warn | `ExtraDeployValues validation failed` | `errors`, `templateRef`, `userGroupCount` | debug_session_api.go |
 | warn | `Failed to cleanup auxiliary resources` | `error` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to cleanup pod template resources` | `error` | debug_session_reconciler_lifecycle.go |
@@ -1068,6 +1072,7 @@ variable part of a concatenated message.
 | warn | `Optional discovery aliases unavailable; retaining identity authorization` | `error` | debug_session_api_templates.go |
 | warn | `Preserved orphaned debug pod because its immutable identity changed` | `pod`, `podNamespace`, `statusError`† | debug_session_kubectl.go |
 | warn | `Preserved pod after ambiguous create failure because ownership could not be verified` | `createError`, `pod`, `podNamespace` | debug_session_kubectl.go |
+| warn | `Rejected cleanup acknowledgement` | `acknowledgedBy`, `acknowledgement`, `reason` | debug_session_reconciler_lifecycle.go |
 | warn | `Rejected ephemeral container injection` | `error` | debug_session_api_email_ops.go |
 | warn | `Rejected ephemeral container request` | `error` | debug_session_api_email_ops.go |
 | warn | `Rejected node debug pod request` | `error` | debug_session_api_email_ops.go |
@@ -1078,7 +1083,7 @@ variable part of a concatenated message.
 | warn | `Renewal committed; will retry extending debug workload deadline` | `error`, `name` | debug_session_api_session_ops.go |
 | warn | `Requested cluster not found in ClusterConfig map` | `availableClusters`, `cluster` | debug_session_api_email_ops.go |
 | warn | `Requested debug session duration is invalid` | `bindingRef`, `error`, `requestedDuration`, `templateRef` | debug_session_api.go |
-| warn | `Retrying cleanup of spoke resources for a failed debug session` | `error` | debug_session_reconciler.go |
+| warn | `Retrying cleanup of spoke resources for a failed debug session` | `error`, `retryAfter` | debug_session_reconciler.go |
 | warn | `Scheduling option validation failed` | `error`, `selectedSchedulingOption`, `templateRef` | debug_session_api.go |
 | warn | `Skipping approval email - no valid email address` | `recipient`†, `session` | debug_session_api_email_ops.go |
 | warn | `Skipping debug notification because excluded group membership could not be resolved` | `error` | debug_session_api_resolution.go |
@@ -1093,6 +1098,7 @@ variable part of a concatenated message.
 | warn | `Unknown debug session state` | `state` | debug_session_reconciler.go |
 | warn | `User is not allowed to request debug session` | `bindingRef`, `groupCount`, `selectedBindingRef`, `templateRef`, `user`† | debug_session_api.go |
 | warn | `deprecated notify-only expiration still enforces hard expiry` |  | debug_session_reconciler.go |
+| warn | `e2e fault injection: holding cleanup acknowledgement claim` | `acknowledgement`, `pod` | cleanup_acknowledgement_hold_e2e.go |
 | warn | `findBindingsForTemplate: failed to parse templateSelector` | `binding`, `error` | debug_session_api_templates.go |
 | warn | `findBindingsForTemplate: skipping binding with invalid variable constraints` | `binding`, `error` | debug_session_api_templates.go |
 | warn | `resolveClustersFromBinding: failed to parse clusterSelector` | `binding`, `error` | debug_session_api_templates.go |
@@ -1101,10 +1107,11 @@ variable part of a concatenated message.
 | error | `Debug session approval timed out` | `debugSession`, `namespace`, `reason` | debug_session_reconciler.go |
 | error | `Debug session failed` | `previousState`, `reason`, `requestedBy`†, `template` | debug_session_reconciler.go |
 | error | `Debug session failed closed because its active lease is missing` | `cluster`, `debugSession`, `namespace` | debug_session_reconciler.go |
+| error | `DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller` |  | debug_session_reconciler_lifecycle.go |
 | error | `Failed to admit debug session quota` | `error`, `name`, `namespace` | debug_session_api.go |
 | error | `Failed to apply template security context` | `error` | debug_session_api_email_ops.go |
 | error | `Failed to clean up debug session after provenance persistence failure` | `error` | debug_session_api.go |
-| error | `Failed to cleanup debug session resources` | `error` | debug_session_reconciler.go |
+| error | `Failed to cleanup debug session resources` | `error`, `retryAfter` | debug_session_reconciler.go |
 | error | `Failed to cleanup kubectl-debug resources` | `error` | debug_session_reconciler_lifecycle.go |
 | error | `Failed to create debug session` | `error` | debug_session_api.go |
 | error | `Failed to create node debug pod` | `error` | debug_session_api_email_ops.go |
@@ -1328,7 +1335,7 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `CLI Configuration` | `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_email`†, `disable_session_rate_limit`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
+| info | `CLI Configuration` | `allow_legacy_identity_cleanup_acknowledgement`†, `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_debug_session_cleanup_backoff`, `disable_debug_session_unserved_kind_handling`, `disable_email`†, `disable_session_rate_limit`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
 | warn | (dynamic) |  | cli.go |
 
 #### `pkg/cluster`

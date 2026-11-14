@@ -124,6 +124,15 @@ func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	}
 }
 
+// DebugSessionOptions carries transitional DebugSession controller opt-outs.
+type DebugSessionOptions struct {
+	DisableUnservedKindHandling bool
+	DisableCleanupBackoff       bool
+	// AllowLegacyIdentityAcknowledgement compares sessions with incompletely
+	// recorded party identities by the identities that were recorded.
+	AllowLegacyIdentityAcknowledgement bool
+}
+
 // Setup starts the controller-runtime manager with field indices and IdentityProvider reconciler.
 // This function handles:
 // - Metrics server configuration with secure serving
@@ -145,6 +154,7 @@ func Setup(
 	frontendConfig config.Frontend,
 	quotaNamespace string,
 	disableEmail bool,
+	debugSessionOptions DebugSessionOptions,
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
 	log *zap.SugaredLogger,
@@ -321,7 +331,10 @@ func Setup(
 			WithLiveReader(mgr.GetAPIReader()).
 			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
-			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
+			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail).
+			WithUnservedKindHandling(!debugSessionOptions.DisableUnservedKindHandling).
+			WithCleanupBackoff(!debugSessionOptions.DisableCleanupBackoff).
+			WithLegacyIdentityFourEyes(debugSessionOptions.AllowLegacyIdentityAcknowledgement)
 		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
 			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace), debug.ClusterConfigCredentialSource(ccProvider)))
 		}

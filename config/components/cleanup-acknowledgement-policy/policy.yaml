@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Optional component: when deployed alongside the
+# DebugSessionCleanupAcknowledgement CRD, the API server itself requires
+# spec.acknowledgedBy to equal the creating user. This does not depend on the
+# breakglass webhook being deployed or reachable (for example while CRDs are
+# applied before the controller during an upgrade). Without it, the webhook
+# enforces the same rule.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-cleanup-acknowledgement-actor
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["breakglass.t-caas.telekom.com"]
+      apiVersions: ["*"]
+      operations: ["CREATE"]
+      resources: ["debugsessioncleanupacknowledgements"]
+  validations:
+  - expression: "object.spec.acknowledgedBy == request.userInfo.username"
+    messageExpression: "'spec.acknowledgedBy must equal the requesting user ' + request.userInfo.username"
+    reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-cleanup-acknowledgement-actor
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+spec:
+  policyName: breakglass-cleanup-acknowledgement-actor
+  validationActions: [Deny]

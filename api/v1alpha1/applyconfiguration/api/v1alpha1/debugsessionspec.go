@@ -33,6 +33,13 @@ type DebugSessionSpecApplyConfiguration struct {
 	// target cluster userIdentifierClaim policy for Kubernetes authorization.
 	// API ownership continues to use requestedBy and its provider identity.
 	RequestedByKubernetesUser *string `json:"requestedByKubernetesUser,omitempty"`
+	// requestedByIdentities are the requester's authenticated identities at
+	// request time (username, email, verified token subject and mapped hub
+	// username). Cleanup acknowledgements compare against all of them for
+	// four-eyes, because the hub API server may name the requester by any of
+	// them. Empty when the token subject was not verified; acknowledgements
+	// then fail closed.
+	RequestedByIdentities []string `json:"requestedByIdentities,omitempty"`
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
 	RequestedByEmail *string `json:"requestedByEmail,omitempty"`
@@ -147,6 +154,16 @@ func (b *DebugSessionSpecApplyConfiguration) WithRequestedBy(value string) *Debu
 // If called multiple times, the RequestedByKubernetesUser field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithRequestedByKubernetesUser(value string) *DebugSessionSpecApplyConfiguration {
 	b.RequestedByKubernetesUser = &value
+	return b
+}
+
+// WithRequestedByIdentities adds the given value to the RequestedByIdentities field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the RequestedByIdentities field.
+func (b *DebugSessionSpecApplyConfiguration) WithRequestedByIdentities(values ...string) *DebugSessionSpecApplyConfiguration {
+	for i := range values {
+		b.RequestedByIdentities = append(b.RequestedByIdentities, values[i])
+	}
 	return b
 }
 

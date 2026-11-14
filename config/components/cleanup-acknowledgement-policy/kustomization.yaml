@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: API-server enforcement of the
+# DebugSessionCleanupAcknowledgement actor (spec.acknowledgedBy must equal the
+# creating user), independent of the breakglass webhook.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA). Recommended on
+# every hub that supports it; on older hubs the breakglass webhook enforces the
+# same rule and the controller refuses acknowledgements while it is inactive.
+#
+# Usage, in an overlay's kustomization.yaml:
+#
+#   components:
+#     - ../../components/cleanup-acknowledgement-policy
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - policy.yaml

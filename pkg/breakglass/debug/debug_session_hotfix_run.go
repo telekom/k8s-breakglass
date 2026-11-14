@@ -203,6 +203,13 @@ func (c *DebugSessionController) handleHotfixActive(ctx context.Context, ds *bre
 		}
 		return c.stopHotfix(ctx, ds, target, fence, breakglassv1alpha1.HotfixPhaseSucceeded, "")
 	}
+	// Fail before the cluster Lease and any target write when a required
+	// auxiliary kind is not served (#1663).
+	if status.ClusterLeaseUID == "" && !status.AuxiliaryDeployed && c.auxiliaryMgr != nil {
+		if err := c.auxiliaryMgr.PreflightAuxiliaryKinds(ctx, ds, ds.Status.ResolvedTemplate, nil, target, breakglassv1alpha1.NodeMaintenanceNamespace); err != nil {
+			return c.stopHotfix(ctx, ds, target, fence, breakglassv1alpha1.HotfixPhaseFailed, err.Error())
+		}
+	}
 	if hotfixMutates(ds) && status.ClusterLeaseUID == "" {
 		lease, err := acquireHotfixLease(ctx, target, hotfixClusterLease, status.OperationID, "", "")
 		if errors.Is(err, errNodeMaintenanceBusy) {

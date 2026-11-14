@@ -47,6 +47,8 @@ type AuxiliaryResourceManager struct {
 	auditManager     *audit.Manager
 	auditProvider    func() *audit.Manager
 	readinessChecker *utils.ReadinessChecker
+	// disableUnservedKindHandling skips the activation preflight (#1663).
+	disableUnservedKindHandling bool
 }
 
 // NewAuxiliaryResourceManager creates a new auxiliary resource manager.
@@ -594,51 +596,14 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 		Category: auxRes.Category,
 	}
 
-	// Determine which template source to use
-	var renderedDocuments [][]byte
-	var err error
-
-	if auxRes.TemplateString != "" {
-		// Use templateString with multi-document support
-		renderer := NewTemplateRenderer()
-		renderedDocuments, err = renderer.RenderMultiDocumentTemplate(auxRes.TemplateString, renderCtx)
-		if err != nil {
-			status.Error = fmt.Sprintf("template rendering failed: %v", err)
-			return status, fmt.Errorf("failed to render templateString for %s: %w", auxRes.Name, err)
+	nonEmptyDocs, err := m.renderAuxiliaryDocuments(auxRes, renderCtx)
+	if err != nil {
+		status.Error = err.Error()
+		source := "template"
+		if auxRes.TemplateString != "" {
+			source = "templateString"
 		}
-	} else if len(auxRes.Template.Raw) > 0 {
-		// Use legacy template field with Raw bytes (single document)
-		renderedYAML, err := m.renderTemplate(auxRes.Template.Raw, renderCtx)
-		if err != nil {
-			status.Error = fmt.Sprintf("template rendering failed: %v", err)
-			return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
-		}
-		renderedDocuments = [][]byte{renderedYAML}
-	} else if auxRes.Template.Object != nil {
-		// Use legacy template field with Object (serialize to YAML first)
-		templateBytes, err := json.Marshal(auxRes.Template.Object)
-		if err != nil {
-			status.Error = fmt.Sprintf("failed to marshal template object: %v", err)
-			return status, fmt.Errorf("failed to marshal template object for %s: %w", auxRes.Name, err)
-		}
-		renderedYAML, err := m.renderTemplate(templateBytes, renderCtx)
-		if err != nil {
-			status.Error = fmt.Sprintf("template rendering failed: %v", err)
-			return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
-		}
-		renderedDocuments = [][]byte{renderedYAML}
-	} else {
-		status.Error = "no template defined (neither templateString nor template)"
-		return status, fmt.Errorf("auxiliary resource %s has no template defined", auxRes.Name)
-	}
-
-	// Filter out empty documents (from conditional rendering)
-	var nonEmptyDocs [][]byte
-	for _, doc := range renderedDocuments {
-		trimmed := strings.TrimSpace(string(doc))
-		if trimmed != "" {
-			nonEmptyDocs = append(nonEmptyDocs, doc)
-		}
+		return status, fmt.Errorf("failed to render %s for %s: %w", source, auxRes.Name, err)
 	}
 
 	// If all documents are empty (conditional rendering excluded everything), return success
@@ -804,6 +769,92 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 	return status, nil
 }
 
+// renderAuxiliaryDocuments renders auxRes and drops documents that
+// conditional rendering left empty.
+func (m *AuxiliaryResourceManager) renderAuxiliaryDocuments(auxRes breakglassv1alpha1.AuxiliaryResource, renderCtx breakglassv1alpha1.AuxiliaryResourceContext) ([][]byte, error) {
+	var renderedDocuments [][]byte
+	switch {
+	case auxRes.TemplateString != "":
+		// templateString supports multiple documents.
+		docs, err := NewTemplateRenderer().RenderMultiDocumentTemplate(auxRes.TemplateString, renderCtx)
+		if err != nil {
+			return nil, fmt.Errorf("template rendering failed: %w", err)
+		}
+		renderedDocuments = docs
+	case len(auxRes.Template.Raw) > 0 || auxRes.Template.Object != nil:
+		// Legacy template field (single document).
+		templateBytes := auxRes.Template.Raw
+		if len(templateBytes) == 0 {
+			var err error
+			if templateBytes, err = json.Marshal(auxRes.Template.Object); err != nil {
+				return nil, fmt.Errorf("failed to marshal template object: %w", err)
+			}
+		}
+		renderedYAML, err := m.renderTemplate(templateBytes, renderCtx)
+		if err != nil {
+			return nil, fmt.Errorf("template rendering failed: %w", err)
+		}
+		renderedDocuments = [][]byte{renderedYAML}
+	default:
+		return nil, errors.New("no template defined (neither templateString nor template)")
+	}
+
+	var nonEmptyDocs [][]byte
+	for _, doc := range renderedDocuments {
+		if strings.TrimSpace(string(doc)) != "" {
+			nonEmptyDocs = append(nonEmptyDocs, doc)
+		}
+	}
+	return nonEmptyDocs, nil
+}
+
+// PreflightAuxiliaryKinds returns an error before any target write when an
+// enabled auxiliary resource with failurePolicy Fail renders a kind that the
+// target serves in no version. Optional resources are not checked: their
+// create fails definitively and is ignored or warned about as configured.
+// Rendering errors are left to deployment, which reports them with context.
+func (m *AuxiliaryResourceManager) PreflightAuxiliaryKinds(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+) error {
+	if m.disableUnservedKindHandling || template == nil || len(template.AuxiliaryResources) == 0 {
+		return nil
+	}
+	enabledResources := m.filterEnabledResources(template, binding, session.Spec.SelectedAuxiliaryResources)
+	renderCtx := m.buildRenderContext(session, template, binding, targetNamespace, enabledResources)
+	for _, auxRes := range enabledResources {
+		if effectiveAuxiliaryResourceFailurePolicy(auxRes) != breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail {
+			continue
+		}
+		docs, err := m.renderAuxiliaryDocuments(auxRes, renderCtx)
+		if err != nil {
+			continue
+		}
+		for _, doc := range docs {
+			obj := &unstructured.Unstructured{}
+			if err := yaml.Unmarshal(doc, &obj.Object); err != nil || obj.GetKind() == "" {
+				continue
+			}
+			// Resolve the exact rendered version through the target
+			// RESTMapper. A served kind sends no request (a cache miss only
+			// reloads discovery); an unserved one yields NoMatch.
+			gvk := obj.GroupVersionKind()
+			if _, mapErr := targetClient.RESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version); isKindNotServedError(mapErr) {
+				return fmt.Errorf("%w: auxiliary resource %q requires %s %s, which target cluster %q does not serve; install the API on the target or remove the resource from the template",
+					errAuxiliaryKindNotServed, auxRes.Name, obj.GetAPIVersion(), obj.GetKind(), session.Spec.Cluster)
+			}
+		}
+	}
+	return nil
+}
+
+// errAuxiliaryKindNotServed marks a failed activation preflight.
+var errAuxiliaryKindNotServed = errors.New("auxiliary resource kind not served by target cluster")
+
 // auxiliaryCreateRejectedError means the API explicitly rejected this Create.
 // Transport failures and recovery errors never carry this retirement evidence.
 type auxiliaryCreateRejectedError struct{ err error }
@@ -832,7 +883,9 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 		if err := targetClient.Create(ctx, obj); err == nil {
 			return nil
 		} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
-			if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+			// A client-side NoMatch never reaches the API server, so it is as
+			// definitive as an API rejection: nothing was created.
+			if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || isKindNotServedError(err) {
 				return &auxiliaryCreateRejectedError{err: err}
 			}
 			return fmt.Errorf("create auxiliary resource: %w", err)

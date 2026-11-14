@@ -55,6 +55,12 @@ type Config struct {
 	// not been synced yet instead of falling back to token groups.
 	RequireSyncedApproverGroups bool
 
+	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
+	DisableDebugSessionUnservedKindHandling bool
+	DisableDebugSessionCleanupBackoff       bool
+	// Transitional opt-out: compare legacy approvals by approvedBy alone.
+	AllowLegacyIdentityCleanupAcknowledgement bool
+
 	// Interval flags
 	ClusterConfigCheckInterval string
 	EscalationStatusUpdateInt  string
@@ -199,6 +205,15 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.DisableDebugSessionUnservedKindHandling, "disable-debug-session-unserved-kind-handling",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", false),
+		"Transitional escape hatch: skip the DebugSession activation preflight that fails a session early when a required auxiliary resource kind is not served by the target cluster")
+	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
+		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")
+	flag.BoolVar(&config.AllowLegacyIdentityCleanupAcknowledgement, "allow-legacy-identity-cleanup-acknowledgement",
+		getEnvBool("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", false),
+		"Transitional escape hatch: accept DebugSessionCleanupAcknowledgements for sessions whose requester, participant or approver identities were recorded incompletely (for example before an upgrade), comparing only the recorded identities")
 	flag.BoolVar(&config.RequireSyncedApproverGroups, "require-synced-approver-groups", getEnvBool("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", false),
 		"Deny approval by an approver group until its members have been synced, instead of falling back to token groups")
 
@@ -285,6 +300,9 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
+		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
+		"allow_legacy_identity_cleanup_acknowledgement", c.AllowLegacyIdentityCleanupAcknowledgement,
 		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,

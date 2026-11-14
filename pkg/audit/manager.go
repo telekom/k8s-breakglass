@@ -1101,6 +1101,47 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 	})
 }
 
+// DebugSessionCleanupAcknowledged records an operator acknowledgement of
+// cleanup residuals as absent. Applied is false when the controller rejected
+// it; message then says why. The acknowledging user is the actor only when
+// actorVerified: the admission webhook verified it. Otherwise the actor is
+// the controller and the unverified name is kept as claimedAcknowledgedBy.
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, acknowledgement, user string, actorVerified bool, reason string, applied bool, identities []string, message string) {
+	details := map[string]interface{}{
+		"cluster":         cluster,
+		"source":          "DebugSessionCleanupAcknowledgement",
+		"acknowledgement": acknowledgement,
+		"applied":         applied,
+		"actorVerified":   actorVerified,
+	}
+	actor := Actor{User: user}
+	if !actorVerified {
+		actor = Actor{User: "system"}
+		details["claimedAcknowledgedBy"] = user
+	}
+	if len(identities) > 0 {
+		details["retired"] = append([]string(nil), identities...)
+	}
+	if reason != "" {
+		details["reason"] = reason
+	}
+	if message != "" {
+		details["message"] = message
+	}
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupAcknowledged,
+		Severity: SeverityWarning,
+		Actor:    actor,
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details:        details,
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
 // DebugSessionCleanupRecovered emits an audit event after all tracked
 // resources have been observed gone and a prior cleanup failure is cleared.
 func (m *Manager) DebugSessionCleanupRecovered(ctx context.Context, sessionName, namespace, cluster string) {

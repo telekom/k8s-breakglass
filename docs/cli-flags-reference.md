@@ -816,6 +816,43 @@ When **enabled** (default):
 - Requests over the limit receive `429 Too Many Requests`
 - Keyed on authenticated user's email identity
 
+
+---
+
+#### `--disable-debug-session-unserved-kind-handling`
+
+Transitional escape hatch. Skips the DebugSession activation preflight that fails a session before any target write when a required auxiliary resource kind is not served by the target cluster; the session then fails at the first create instead. See [DebugSession cleanup recovery](debug-session-cleanup.md#kinds-the-target-cluster-does-not-serve).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` |
+
+---
+
+#### `--disable-debug-session-cleanup-backoff`
+
+Transitional escape hatch. Restores fixed 5-second retries of failed DebugSession cleanup and one `debug_session.cleanup_failed` audit event per failed attempt. By default, retries back off exponentially up to 5 minutes and the event is emitted once per distinct residual set.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` |
+
+---
+
+#### `--allow-legacy-identity-cleanup-acknowledgement`
+
+Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's identities (`spec.requestedByIdentities`, `status.participants[].identities`, empty without a verified token subject), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT` |
+
 ---
 
 #### `--require-synced-approver-groups`

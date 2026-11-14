@@ -116,6 +116,7 @@
         "debug_session.approval_timeout",
         "debug_session.cleanup_failed",
         "debug_session.cleanup_recovered",
+        "debug_session.cleanup_acknowledged",
         "debug_session.node_maintenance.execution_intent",
         "debug_session.node_maintenance.result",
         "debug_session.admission_recipe.applied",
@@ -333,6 +334,27 @@
         "properties": {
           "details": {
             "$ref": "#/$defs/debugSessionLifecycle"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.cleanup_acknowledged"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionCleanupAcknowledgement"
           }
         }
       }
@@ -1083,6 +1105,60 @@
           "description": "Unresolvable DebugSessionClusterBinding namespace."
         }
       }
+    },
+    "debugSessionCleanupAcknowledgement": {
+      "title": "Debug session cleanup acknowledgement",
+      "description": "Outcome of a DebugSessionCleanupAcknowledgement. The envelope actor is the acknowledging operator when the admission webhook verified it (actorVerified), otherwise the controller; the target is the DebugSession.",
+      "type": "object",
+      "properties": {
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "source": {
+          "const": "DebugSessionCleanupAcknowledgement",
+          "description": "Kind of the object that carried the decision."
+        },
+        "acknowledgement": {
+          "type": "string",
+          "description": "DebugSessionCleanupAcknowledgement name, in the target namespace."
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "True if the acknowledgement retired residuals; false if it was rejected."
+        },
+        "actorVerified": {
+          "type": "boolean",
+          "description": "True if the admission webhook verified spec.acknowledgedBy, which is then the envelope actor. If false, the actor is the controller (system) and the unverified name is in claimedAcknowledgedBy."
+        },
+        "claimedAcknowledgedBy": {
+          "type": "string",
+          "description": "Unverified spec.acknowledgedBy of an acknowledgement rejected because its actor could not be verified.",
+          "x-pii": true
+        },
+        "retired": {
+          "type": "array",
+          "description": "Residual identities retired by an applied acknowledgement (apiVersion/kind/namespace/name and uid). Absent for rejections.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "description": "Free-text reason supplied by the operator."
+        },
+        "message": {
+          "type": "string",
+          "description": "Why the acknowledgement was rejected."
+        }
+      },
+      "required": [
+        "cluster",
+        "source",
+        "acknowledgement",
+        "applied",
+        "actorVerified"
+      ]
     },
     "debugSessionWorkload": {
       "title": "Debug session workload",

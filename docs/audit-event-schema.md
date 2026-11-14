@@ -129,6 +129,7 @@ structured details definition.
 | `sessionLifecycle` | `session.requested`, `session.approved`, `session.denied`, `session.activated`, `session.expired`, `session.revoked`, `session.withdrawn`, `session.dropped`, `session.termination_intent` | `session.rejected`, `session.extended`, `session.validated`, `session.invalidated` |
 | `sessionApprovalUnverifiedGroups` | `session.approval_unverified_groups` | none |
 | `debugSessionLifecycle` | `debug_session.created`, `debug_session.started`, `debug_session.approved`, `debug_session.rejected`, `debug_session.renewed`, `debug_session.validation_failed`, `debug_session.terminated`, `debug_session.failed`, `debug_session.expired`, `debug_session.approval_timeout`, `debug_session.cleanup_failed`, `debug_session.cleanup_recovered`, `debug_session.binding_unresolved` | `debug_session.validated` |
+| `debugSessionCleanupAcknowledgement` | `debug_session.cleanup_acknowledged` | none |
 | `debugSessionWorkload` | `debug_session.pod_failed`, `debug_session.pod_restarted`, `debug_session.resource_deployed`, `debug_session.resource_cleanup` | none |
 | `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `debug_session.node_maintenance.result` | none |
 | `debugSessionAdmissionRecipe` | `debug_session.admission_recipe.applied`, `debug_session.admission_recipe.drift`, `debug_session.admission_recipe.reverted` | none |
@@ -196,6 +197,31 @@ failed. Fields: `message`, `cluster`, `grantedGroup`, `matchedGroup`,
 
 ```json
 {"id":"1f0e2d3c-4b5a-4968-8776-655443322110","schemaVersion":"v1","type":"debug_session.started","severity":"info","timestamp":"2026-11-13T09:20:00Z","actor":{"user":"alice@example.com"},"target":{"uid":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","kind":"DebugSession","name":"dbg-node-a","namespace":"breakglass","cluster":"prod-eu-1"},"details":{"cluster":"prod-eu-1","templateName":"node-shell"},"requestContext":{"sessionName":"dbg-node-a","sessionUID":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","debugSessionName":"dbg-node-a","debugSessionUID":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"}}
+```
+
+### Debug session cleanup acknowledgements (`debugSessionCleanupAcknowledgement`)
+
+`debug_session.cleanup_acknowledged`: the outcome of a
+DebugSessionCleanupAcknowledgement (see
+[DebugSession cleanup recovery](debug-session-cleanup.md)). The actor is the
+acknowledging operator when the admission webhook verified it
+(`actorVerified`); otherwise it is the controller (`system`) and the
+unverified name is in `claimedAcknowledgedBy`. The target is the DebugSession.
+
+| Field | Type | PII | Description |
+|---|---|---|---|
+| `cluster` | string | | Target cluster. |
+| `source` | string | | Always `DebugSessionCleanupAcknowledgement`. |
+| `acknowledgement` | string | | Acknowledgement name, in the target namespace. |
+| `applied` | boolean | | `true` if residuals were retired, `false` if the acknowledgement was rejected. |
+| `actorVerified` | boolean | | `true` if the admission webhook verified `acknowledgedBy`. |
+| `claimedAcknowledgedBy` | string | **yes** | Unverified `acknowledgedBy` of an acknowledgement rejected because its actor could not be verified. |
+| `retired` | string[] | | Retired residual identities; absent for rejections. |
+| `reason` | string | | Operator-supplied reason. |
+| `message` | string | | Rejection reason. |
+
+```json
+{"id":"7c6b5a49-3827-4615-a4b3-c2d1e0f9a8b7","schemaVersion":"v1","type":"debug_session.cleanup_acknowledged","severity":"warning","timestamp":"2026-11-13T09:40:00Z","actor":{"user":"operator@example.com"},"target":{"kind":"DebugSession","name":"dbg-node-a","namespace":"breakglass"},"details":{"cluster":"prod-eu-1","source":"DebugSessionCleanupAcknowledgement","acknowledgement":"dbg-node-a-ack-1","applied":true,"actorVerified":true,"retired":["policies.kyverno.io/v1/PolicyException/breakglass-debug/dbg-node-a (uid=0f1e2d3c-4b5a-4968-8776-655443322110)"],"reason":"CHG-1234: Kyverno CRDs removed"},"requestContext":{"debugSessionName":"dbg-node-a"}}
 ```
 
 ### Debug session workloads (`debugSessionWorkload`)

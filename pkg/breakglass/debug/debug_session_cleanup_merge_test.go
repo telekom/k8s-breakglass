@@ -218,7 +218,9 @@ func TestCleanupRetainedAuxiliaryResourceSkipsTargetConfig(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "unknown", Kind: "ConfigMap", Namespace: "ns", ResourceName: "unknown", CreateOperationID: "unknown-operation"})
 	require.NoError(t, hub.Status().Update(context.Background(), session))
-	require.ErrorContains(t, controller.cleanupResources(context.Background(), session), "cleanup intent remains unresolved")
+	// An unresolved intent now consults the target, which may prove its kind
+	// unserved (#1663); the missing ClusterConfig keeps it a residual.
+	require.ErrorContains(t, controller.cleanupResources(context.Background(), session), "cleanup inventory remains unresolved")
 	condition = session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	require.Equal(t, metav1.ConditionTrue, condition.Status)
 	require.Contains(t, condition.Message, "ns/ConfigMap/unknown")
@@ -364,12 +366,13 @@ func TestCleanupTransitionUsesSuccessfullyPersistedLiveCondition(t *testing.T) {
 	stale.Status.Conditions = nil
 	setCleanupCondition(stale)
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
-	transitioned := false
-	require.NoError(t, controller.patchDebugSessionCleanupStatusWithTransition(context.Background(), stale, live.Status.DeepCopy(), &transitioned))
-	require.True(t, transitioned)
+	var previous metav1.Condition
+	require.NoError(t, controller.patchDebugSessionCleanupStatusWithTransition(context.Background(), stale, live.Status.DeepCopy(), &previous))
+	require.Equal(t, metav1.ConditionTrue, previous.Status)
+	require.Equal(t, "previous failure", previous.Message)
 	require.False(t, cleanupConditionFailed(stale))
-	require.NoError(t, controller.patchDebugSessionCleanupStatusWithTransition(context.Background(), stale, stale.Status.DeepCopy(), &transitioned))
-	require.False(t, transitioned)
+	require.NoError(t, controller.patchDebugSessionCleanupStatusWithTransition(context.Background(), stale, stale.Status.DeepCopy(), &previous))
+	require.NotEqual(t, metav1.ConditionTrue, previous.Status)
 }
 
 func TestCleanupLegacyChildUsesExplicitOriginalUID(t *testing.T) {

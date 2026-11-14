@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Allows creating DebugSessionCleanupAcknowledgements, which retire
+# DebugSession cleanup residuals the controller cannot prove gone. Bound to
+# nobody by default: bind it only to operators who are independent of the
+# sessions they acknowledge (see docs/debug-session-cleanup.md). Session
+# requesters need no access to this resource.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: debugsession-cleanup-acknowledger
+rules:
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessioncleanupacknowledgements
+  verbs:
+  - create
+  - get
+  - list
+  - watch

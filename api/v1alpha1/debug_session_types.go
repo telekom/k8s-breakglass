@@ -80,6 +80,10 @@ const (
 	DebugSessionConditionResourcesDeployed DebugSessionConditionType = "ResourcesDeployed"
 	// DebugSessionConditionCleanupFailed indicates cleanup is blocked by residual resources.
 	DebugSessionConditionCleanupFailed DebugSessionConditionType = "CleanupFailed"
+	// DebugSessionConditionCleanupComplete is set to True once a terminal
+	// session has no tracked spoke resources left and cleanup is not failing;
+	// only then can the session object be deleted without orphaning resources.
+	DebugSessionConditionCleanupComplete DebugSessionConditionType = "CleanupComplete"
 )
 
 // DebugSessionSpec defines the desired state of DebugSession.
@@ -111,6 +115,17 @@ type DebugSessionSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	RequestedByKubernetesUser string `json:"requestedByKubernetesUser,omitempty"`
+
+	// requestedByIdentities are the requester's authenticated identities at
+	// request time (username, email, verified token subject and mapped hub
+	// username). Cleanup acknowledgements compare against all of them for
+	// four-eyes, because the hub API server may name the requester by any of
+	// them. Empty when the token subject was not verified; acknowledgements
+	// then fail closed.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=atomic
+	RequestedByIdentities []string `json:"requestedByIdentities,omitempty"`
 
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
@@ -229,6 +244,17 @@ type DebugSessionStatus struct {
 	// It contains no Secret name or credential material.
 	// +optional
 	ConnectionLease *DebugSessionConnectionLease `json:"connectionLease,omitempty"`
+	// cleanupAcknowledgements records the applied
+	// DebugSessionCleanupAcknowledgements that retired residuals of this
+	// session. Rejections are recorded on the acknowledgement object only.
+	// A record is omitted when it would push the serialized session beyond
+	// the controller's size budget; the retained acknowledgement object then
+	// keeps its provenance.
+	// +optional
+	// +listType=map
+	// +listMapKey=uid
+	// +kubebuilder:validation:MaxItems=64
+	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatus `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -470,6 +496,23 @@ type DebugSessionApproval struct {
 	// approvedByIdentityProvider identifies the provider that authenticated the approver.
 	// +optional
 	ApprovedByIdentityProvider string `json:"approvedByIdentityProvider,omitempty"`
+	// approvedByIdentities are the approver's authenticated identities at
+	// approval time (username, email, verified token subject, mapped hub
+	// username and, when it resolved, the Kubernetes user on the target
+	// cluster). Cleanup acknowledgements
+	// compare against all of them for four-eyes; an approval without them
+	// predates this field and is treated as not comparable.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=atomic
+	ApprovedByIdentities []string `json:"approvedByIdentities,omitempty"`
+	// approvedByIdentitiesIncomplete records that an approver identity could
+	// not be recorded at approval time: the verified token subject was
+	// missing or the Kubernetes user on the target cluster could not be
+	// resolved. Cleanup acknowledgements for such a session are rejected
+	// (fail closed) unless the controller allows legacy identity comparison.
+	// +optional
+	ApprovedByIdentitiesIncomplete bool `json:"approvedByIdentitiesIncomplete,omitempty"`
 
 	// approvedAt is when the session was approved.
 	// +optional
@@ -502,6 +545,15 @@ type DebugSessionParticipant struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	KubernetesUser string `json:"kubernetesUser,omitempty"`
+
+	// identities are the participant's authenticated identities at join time
+	// (username, email, verified token subject and mapped hub username),
+	// compared by cleanup acknowledgement four-eyes checks. Empty when the
+	// token subject was not verified; acknowledgements then fail closed.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=atomic
+	Identities []string `json:"identities,omitempty"`
 
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.

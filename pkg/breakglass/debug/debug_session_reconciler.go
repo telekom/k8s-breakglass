@@ -46,11 +46,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -118,6 +122,50 @@ type DebugSessionController struct {
 	beforeDebugTargetWrite func(string)
 	recordingArtifacts     *backend.Service
 	recordingConnections   TerminalRecordingConnectionProvider
+	// Transitional opt-out for #1663; see WithCleanupBackoff.
+	disableCleanupBackoff bool
+	// Transitional opt-out; see WithLegacyIdentityFourEyes.
+	legacyIdentityFourEyes bool
+	// cleanupNotBefore maps a session's namespaced name to its
+	// cleanupDeadline, the earliest next cleanup attempt,
+	// so watch events cannot bypass the requeue backoff.
+	// ponytail: in-memory; a restart allows one early attempt, then the
+	// persisted CleanupFailed transition restores the backoff.
+	cleanupNotBefore sync.Map
+	// acknowledgementWebhookActive reports whether the DebugSession validating
+	// webhook authorizes acknowledgements; tests replace it.
+	acknowledgementWebhookActive func(context.Context) (bool, time.Time, error)
+	crdOutdatedOnce              sync.Once
+	ackCRDMissingOnce            sync.Once
+}
+
+// WithUnservedKindHandling controls the activation preflight that fails a
+// session before any target write when a required auxiliary kind is not
+// served. Enabled by default; disabling is a transitional escape hatch.
+func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSessionController {
+	if c.auxiliaryMgr != nil {
+		c.auxiliaryMgr.disableUnservedKindHandling = !enabled
+	}
+	return c
+}
+
+// WithCleanupBackoff controls exponential cleanup retry backoff and
+// cleanup_failed audit deduplication. Enabled by default; disabling restores a
+// fixed retry interval with one audit event per failed attempt and is a
+// transitional escape hatch.
+func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionController {
+	c.disableCleanupBackoff = !enabled
+	return c
+}
+
+// WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose
+// party identities were recorded incompletely (sessions created, joined or
+// approved before every identity was recorded) compare the identities that
+// were recorded. Disabled by default: such acknowledgements are rejected
+// because the acknowledging user cannot be compared with every identity.
+func (c *DebugSessionController) WithLegacyIdentityFourEyes(enabled bool) *DebugSessionController {
+	c.legacyIdentityFourEyes = enabled
+	return c
 }
 
 // WithTerminalRecordingArtifacts configures the shared artifact backend used by
@@ -149,7 +197,7 @@ func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugS
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
 	connectionLeases := NewConnectionLeaseService(client)
-	return &DebugSessionController{
+	c := &DebugSessionController{
 		log:                  log,
 		client:               client,
 		reader:               client,
@@ -158,6 +206,8 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
 		auxiliaryMgr:         NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+	c.acknowledgementWebhookActive = c.cleanupAcknowledgementWebhookActive
+	return c
 }
 
 // WithLiveReader configures the uncached reader used for approval resolution
@@ -217,12 +267,48 @@ func (c *DebugSessionController) currentAuditManager() *audit.Manager {
 
 // SetupWithManager sets up the controller with the Manager
 func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&breakglassv1alpha1.DebugSession{}).
-		Complete(c)
+	builder := ctrl.NewControllerManagedBy(mgr).For(&breakglassv1alpha1.DebugSession{})
+	// A new acknowledgement reconciles its session at once. Watch it only when
+	// its CRD is served, so the controller still starts on a hub where the
+	// optional CRD is not installed; acknowledgements are then unavailable.
+	served, err := acknowledgementCRDServed(mgr.GetRESTMapper())
+	if err != nil {
+		return err
+	}
+	if served {
+		builder = builder.Watches(&breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj ctrlclient.Object) []reconcile.Request {
+			ack, ok := obj.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
+			if !ok {
+				return nil
+			}
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: ack.Namespace, Name: ack.Spec.SessionName}}}
+		}))
+	} else if c.log != nil {
+		c.log.Warnw("DebugSessionCleanupAcknowledgement CRD is not served; cleanup acknowledgements are unavailable until it is applied and the controller restarts")
+	}
+	return builder.Complete(c)
+}
+
+// acknowledgementCRDServed reports whether the optional
+// DebugSessionCleanupAcknowledgement CRD is served. Only proof of absence
+// (NoMatch) disables the watch; other errors, such as a temporary discovery
+// failure, are returned so setup fails and is retried instead of silently
+// running without acknowledgements.
+func acknowledgementCRDServed(mapper meta.RESTMapper) (bool, error) {
+	_, err := mapper.RESTMapping(breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind(), breakglassv1alpha1.GroupVersion.Version)
+	switch {
+	case err == nil:
+		return true, nil
+	case isKindNotServedError(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("discover DebugSessionCleanupAcknowledgement: %w", err)
+	}
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates,verbs=get;list;watch
@@ -242,6 +328,10 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	if err := c.client.Get(ctx, req.NamespacedName, ds); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
+			c.cleanupNotBefore.Delete(req.NamespacedName)
+			if err := c.releaseAcknowledgementsOfDeletedSession(ctx, req.NamespacedName); err != nil {
+				return ctrl.Result{}, err
+			}
 
 			releaseSessionMetricSeries(req.Name)
 
@@ -284,11 +374,44 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if !ds.DeletionTimestamp.IsZero() && hasMaintenanceFinalizer(ds) {
-		if err := c.cleanupMaintenance(ctx, ds); err != nil {
+		// A deleted session that is still active becomes terminal first: an
+		// expired active session accepts only terminal status updates, and
+		// cleanup and acknowledgements record their outcome in the status.
+		if !debugSessionTerminal(ds) {
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if isDebugSessionExpired(ds, time.Now().UTC()) {
+				state = breakglassv1alpha1.DebugSessionStateExpired
+			}
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = state
+				status.Message = "Session deleted; releasing node maintenance"
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := c.cleanupHotfix(ctx, ds); err != nil {
-			return ctrl.Result{}, err
+		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+		// Record deletion cleanup like any other cleanup: CleanupFailed with
+		// its audit on failure, backoff, and cleanup_recovered once it clears.
+		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupHotfix} {
+			baseline := ds.Status.DeepCopy()
+			if err := cleanup(ctx, ds); err != nil {
+				if recordErr := c.recordCleanupOutcome(ctx, ds, baseline); recordErr != nil {
+					return ctrl.Result{}, errors.Join(err, recordErr)
+				}
+				retryAfter := c.recordCleanupFailure(ds)
+				log.Warnw("Deletion cleanup failed; retrying", "error", err, "retryAfter", retryAfter)
+				return ctrl.Result{RequeueAfter: retryAfter}, nil
+			}
+		}
+		if cleanupConditionFailed(ds) {
+			if err := c.recordCleanupOutcome(ctx, ds, ds.Status.DeepCopy()); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 		// activateSession acquires the hub connection lease before the
 		// maintenance executor is deployed, so deletion must release it as the
@@ -302,6 +425,11 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			if err := c.connectionLeases.RevokeUnrecordedSessionLeases(ctx, ds); err != nil {
 				return ctrl.Result{}, err
 			}
+		}
+		// Keep the finalizer until claimed acknowledgements are finished, so
+		// their outcome and audit are not lost with the session.
+		if wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds); err != nil || wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, err
 		}
 		return ctrl.Result{}, c.removeMaintenanceFinalizer(ctx, ds)
 	}
@@ -782,6 +910,11 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) && !cleanupConditionFailed(ds) {
+		// Record (and audit) an acknowledgement set on a session with nothing
+		// left to clean up; it is rejected because cleanup is not failing.
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		if c.connectionLeases != nil {
 			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
 				return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -791,18 +924,36 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{}, err
 		}
 		releaseSessionMetricSeries(ds.Name)
-		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
+		if err := c.markCleanupComplete(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Come back for an acknowledgement another replica has claimed, so an
+		// interrupted claim is finished even without further events.
+		wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: wait}, nil // Nothing left on the spoke: genuinely terminal.
 	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	if hasTrackedSpokeResources(ds) || cleanupConditionFailed(ds) {
+		// Acknowledgements touch only hub status, so they are processed even
+		// while the target attempt backs off. Only an applied one retries now.
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
+			retryAfter := c.recordCleanupFailure(ds)
 			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
-				"error", err)
+				"error", err, "retryAfter", retryAfter)
 			// Requeue rather than returning the error: the reason for the failure is
 			// already recorded in status and a hard error would only add log noise on a
 			// path that is expected to retry.
-			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+			return ctrl.Result{RequeueAfter: retryAfter}, nil
 		}
 	}
 
@@ -811,7 +962,7 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	// session is not yet safe to abandon.
 	if hasTrackedSpokeResources(ds) {
 		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		return ctrl.Result{RequeueAfter: c.cleanupRetryAfter(ds)}, nil
 	}
 	if c.connectionLeases != nil {
 		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
@@ -825,7 +976,57 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 		return ctrl.Result{}, err
 	}
 	releaseSessionMetricSeries(ds.Name)
+	if err := c.markCleanupComplete(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
+}
+
+// MaxCleanupRetryBackoff bounds the delay between failed cleanup attempts.
+const MaxCleanupRetryBackoff = 5 * time.Minute
+
+// cleanupRetryAfter returns the delay before the next failed-cleanup attempt.
+// The delay equals the time cleanup has been failing (CleanupFailed=True
+// since LastTransitionTime), clamped to [ExpiredSessionRequeue,
+// MaxCleanupRetryBackoff], so each retry roughly doubles the gap.
+// ponytail: derived from the persisted condition instead of an attempt
+// counter; a controller restart keeps the backoff, a recovery resets it.
+func (c *DebugSessionController) cleanupRetryAfter(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	if c.disableCleanupBackoff || condition == nil || condition.Status != metav1.ConditionTrue || condition.LastTransitionTime.IsZero() {
+		return ExpiredSessionRequeue
+	}
+	return min(max(time.Since(condition.LastTransitionTime.Time), ExpiredSessionRequeue), MaxCleanupRetryBackoff)
+}
+
+// cleanupBackoffRemaining returns how long a failing session must still wait
+// before the next cleanup attempt; zero means attempt now.
+func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	if c.disableCleanupBackoff || !cleanupConditionFailed(ds) {
+		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+		return 0
+	}
+	if v, ok := c.cleanupNotBefore.Load(ctrlclient.ObjectKeyFromObject(ds)); ok {
+		// A recreated session with the same name must not inherit a deadline.
+		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID {
+			return time.Until(deadline.notBefore)
+		}
+	}
+	return 0
+}
+
+type cleanupDeadline struct {
+	uid       types.UID
+	notBefore time.Time
+}
+
+// recordCleanupFailure stores the next allowed attempt and returns its delay.
+func (c *DebugSessionController) recordCleanupFailure(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	retryAfter := c.cleanupRetryAfter(ds)
+	if !c.disableCleanupBackoff {
+		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter)})
+	}
+	return retryAfter
 }
 
 // hasTrackedSpokeResources reports whether the session status still references
@@ -895,10 +1096,16 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
+	if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
+	if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+		return ctrl.Result{RequeueAfter: wait}, nil
+	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
-		log.Errorw("Failed to cleanup debug session resources", "error", err)
-		// Requeue to retry cleanup
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		retryAfter := c.recordCleanupFailure(ds)
+		log.Errorw("Failed to cleanup debug session resources", "error", err, "retryAfter", retryAfter)
+		return ctrl.Result{RequeueAfter: retryAfter}, nil
 	}
 	if c.connectionLeases != nil {
 		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
@@ -927,8 +1134,17 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 	// watch event, restart, or a session that is never deleted at all).
 	releaseSessionMetricSeries(ds.Name)
 
+	if err := c.markCleanupComplete(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	log.Info("Debug session cleanup complete")
-	return ctrl.Result{}, nil
+	// Come back for an acknowledgement another replica has claimed, so an
+	// interrupted claim is finished even without further events.
+	wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: wait}, nil
 }
 
 func (c *DebugSessionController) revokeTerminalRecordingLease(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
@@ -1209,6 +1425,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
 		User:                   ds.Spec.RequestedBy,
 		KubernetesUser:         ds.Spec.RequestedByKubernetesUser,
+		Identities:             ds.Spec.RequestedByIdentities,
 		Email:                  ds.Spec.RequestedByEmail,
 		DisplayName:            ds.Spec.RequestedByDisplayName,
 		IdentityProviderName:   ds.Spec.IdentityProviderName,

@@ -111,21 +111,24 @@ const (
 	EventPodSecurityOverride  EventType = "pod_security.override"
 
 	// === Debug session events ===
-	EventDebugSessionCreated           EventType = "debug_session.created"
-	EventDebugSessionStarted           EventType = "debug_session.started"
-	EventDebugSessionApproved          EventType = "debug_session.approved"
-	EventDebugSessionRejected          EventType = "debug_session.rejected"
-	EventDebugSessionRenewed           EventType = "debug_session.renewed"
-	EventDebugSessionValidated         EventType = "debug_session.validated"
-	EventDebugSessionValidationFailed  EventType = "debug_session.validation_failed"
-	EventDebugSessionTerminated        EventType = "debug_session.terminated"
-	EventDebugSessionFailed            EventType = "debug_session.failed"
-	EventDebugSessionExpired           EventType = "debug_session.expired"
-	EventDebugSessionApprovalTimeout   EventType = "debug_session.approval_timeout"
-	EventDebugSessionCleanupFailed     EventType = "debug_session.cleanup_failed"
-	EventDebugSessionCleanupRecovered  EventType = "debug_session.cleanup_recovered"
-	EventDebugSessionMaintenanceIntent EventType = "debug_session.node_maintenance.execution_intent"
-	EventDebugSessionMaintenanceResult EventType = "debug_session.node_maintenance.result"
+	EventDebugSessionCreated          EventType = "debug_session.created"
+	EventDebugSessionStarted          EventType = "debug_session.started"
+	EventDebugSessionApproved         EventType = "debug_session.approved"
+	EventDebugSessionRejected         EventType = "debug_session.rejected"
+	EventDebugSessionRenewed          EventType = "debug_session.renewed"
+	EventDebugSessionValidated        EventType = "debug_session.validated"
+	EventDebugSessionValidationFailed EventType = "debug_session.validation_failed"
+	EventDebugSessionTerminated       EventType = "debug_session.terminated"
+	EventDebugSessionFailed           EventType = "debug_session.failed"
+	EventDebugSessionExpired          EventType = "debug_session.expired"
+	EventDebugSessionApprovalTimeout  EventType = "debug_session.approval_timeout"
+	EventDebugSessionCleanupFailed    EventType = "debug_session.cleanup_failed"
+	EventDebugSessionCleanupRecovered EventType = "debug_session.cleanup_recovered"
+	// EventDebugSessionCleanupAcknowledged records residuals retired by an
+	// operator acknowledgement rather than observed gone.
+	EventDebugSessionCleanupAcknowledged EventType = "debug_session.cleanup_acknowledged"
+	EventDebugSessionMaintenanceIntent   EventType = "debug_session.node_maintenance.execution_intent"
+	EventDebugSessionMaintenanceResult   EventType = "debug_session.node_maintenance.result"
 	// Admission recipe receipts (applied before the first target write,
 	// drift when another writer changed a target, reverted after the last revert).
 	EventDebugSessionAdmissionRecipeApplied  EventType = "debug_session.admission_recipe.applied"
@@ -394,7 +397,7 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
 		EventDebugSessionValidationFailed,
-		EventDebugSessionCleanupFailed, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
+		EventDebugSessionCleanupFailed, EventDebugSessionCleanupAcknowledged, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
 		EventDebugSessionBindingUnresolved:
 		return SeverityWarning
 
@@ -540,7 +543,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionValidated, EventDebugSessionValidationFailed,
 		EventDebugSessionTerminated, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
-		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
+		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered, EventDebugSessionCleanupAcknowledged,
 		EventDebugSessionMaintenanceIntent, EventDebugSessionMaintenanceResult,
 		EventDebugSessionAdmissionRecipeApplied, EventDebugSessionAdmissionRecipeDrift,
 		EventDebugSessionAdmissionRecipeReverted,

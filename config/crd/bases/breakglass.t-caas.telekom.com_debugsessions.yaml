@@ -645,6 +645,19 @@ spec:
                   requestedByEmail is the email address of the requester (from OIDC "email" claim).
                   Used for sending email notifications.
                 type: string
+              requestedByIdentities:
+                description: |-
+                  requestedByIdentities are the requester's authenticated identities at
+                  request time (username, email, verified token subject and mapped hub
+                  username). Cleanup acknowledgements compare against all of them for
+                  four-eyes, because the hub API server may name the requester by any of
+                  them. Empty when the token subject was not verified; acknowledgements
+                  then fail closed.
+                items:
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: atomic
               requestedByKubernetesUser:
                 description: |-
                   requestedByKubernetesUser is the exact authenticated identity selected by the
@@ -1648,6 +1661,27 @@ spec:
                   approvedBy:
                     description: approvedBy is the email/identifier of the approver.
                     type: string
+                  approvedByIdentities:
+                    description: |-
+                      approvedByIdentities are the approver's authenticated identities at
+                      approval time (username, email, verified token subject, mapped hub
+                      username and, when it resolved, the Kubernetes user on the target
+                      cluster). Cleanup acknowledgements
+                      compare against all of them for four-eyes; an approval without them
+                      predates this field and is treated as not comparable.
+                    items:
+                      type: string
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  approvedByIdentitiesIncomplete:
+                    description: |-
+                      approvedByIdentitiesIncomplete records that an approver identity could
+                      not be recorded at approval time: the verified token subject was
+                      missing or the Kubernetes user on the target cluster could not be
+                      resolved. Cleanup acknowledgements for such a session are rejected
+                      (fail closed) unless the controller allows legacy identity comparison.
+                    type: boolean
                   approvedByIdentityProvider:
                     description: approvedByIdentityProvider identifies the provider
                       that authenticated the approver.
@@ -1803,6 +1837,92 @@ spec:
                   - name
                   type: object
                 type: array
+              cleanupAcknowledgements:
+                description: |-
+                  cleanupAcknowledgements records the applied
+                  DebugSessionCleanupAcknowledgements that retired residuals of this
+                  session. Rejections are recorded on the acknowledgement object only.
+                  A record is omitted when it would push the serialized session beyond
+                  the controller's size budget; the retained acknowledgement object then
+                  keeps its provenance.
+                items:
+                  description: |-
+                    DebugSessionCleanupAcknowledgementStatus records one applied
+                    DebugSessionCleanupAcknowledgement in the DebugSession status.
+                  properties:
+                    acknowledgedBy:
+                      description: acknowledgedBy is the user recorded in the acknowledgement.
+                      type: string
+                    applied:
+                      description: |-
+                        applied is true when every listed identity matched an outstanding
+                        residual and was retired.
+                      type: boolean
+                    message:
+                      description: message explains a rejected acknowledgement.
+                      type: string
+                    name:
+                      description: name of the processed acknowledgement.
+                      type: string
+                    processedAt:
+                      description: processedAt is when the controller processed the
+                        acknowledgement.
+                      format: date-time
+                      type: string
+                    reason:
+                      description: reason is the optional reason or ticket reference.
+                      type: string
+                    retired:
+                      description: retired lists the identities retired by this acknowledgement.
+                      items:
+                        description: |-
+                          CleanupAcknowledgedIdentity names one DebugSession cleanup residual by its
+                          full recorded identity. UID is empty only for an unresolved create intent.
+                        properties:
+                          apiVersion:
+                            description: apiVersion of the residual resource.
+                            minLength: 1
+                            type: string
+                          kind:
+                            description: kind of the residual resource.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: name of the residual resource.
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: namespace of the residual resource; empty
+                              for cluster-scoped resources.
+                            type: string
+                          uid:
+                            description: uid is the recorded UID; omit it only for
+                              an unresolved create intent.
+                            type: string
+                        required:
+                        - apiVersion
+                        - kind
+                        - name
+                        type: object
+                      maxItems: 256
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    uid:
+                      description: uid of the processed acknowledgement; each is processed
+                        once.
+                      type: string
+                  required:
+                  - acknowledgedBy
+                  - applied
+                  - name
+                  - processedAt
+                  - uid
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - uid
+                x-kubernetes-list-type: map
               conditions:
                 description: conditions provide detailed status information.
                 items:
@@ -2772,6 +2892,17 @@ spec:
                         email is the email address of the participant (from OIDC "email" claim).
                         Used for sending email notifications.
                       type: string
+                    identities:
+                      description: |-
+                        identities are the participant's authenticated identities at join time
+                        (username, email, verified token subject and mapped hub username),
+                        compared by cleanup acknowledgement four-eyes checks. Empty when the
+                        token subject was not verified; acknowledgements then fail closed.
+                      items:
+                        type: string
+                      maxItems: 8
+                      type: array
+                      x-kubernetes-list-type: atomic
                     identityProviderIssuer:
                       description: identityProviderIssuer identifies the issuer that
                         authenticated the participant.

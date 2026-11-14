@@ -568,17 +568,80 @@ kubectl get secrets,configmaps -n breakglass-system -o yaml > backup.yaml
 
 ## Uninstalling Breakglass
 
-```bash
-# Delete all custom resources
-kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all
+Uninstall in this order. Keep the controller running until step 6, and the
+ClusterConfigs it needs to reach target clusters until step 5: it cleans up the spoke
+resources of debug sessions and releases the
+`breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
+of Applied DebugSessionCleanupAcknowledgements.
 
-# Delete deployment
+Deleting a DebugSession object is **not** a cleanup barrier. Only sessions
+whose template uses node maintenance, a hotfix or an admission recipe carry a
+finalizer; every other session (workload, hybrid, kubectl-debug) disappears
+at once and leaves its spoke resources behind. So end sessions through the
+API first and delete the objects only after their cleanup has finished:
+
+```bash
+# 1. End every session through the API (or let it expire). Pending sessions
+#    can be rejected instead.
+bgctl debug session list
+bgctl debug session terminate <session>
+
+# 2. Wait until every session reports CleanupComplete=True. The controller
+#    sets it only on a terminal session (Expired, Terminated, Failed or
+#    Rejected) whose tracked spoke resources (deployed, auxiliary and
+#    pod-template resources, kubectl-debug operations and copied pods, node
+#    maintenance, hotfix and admission-recipe state) are all gone and whose
+#    cleanup is not failing.
+#    kubectl wait fails with "no matching resources found" when there are no
+#    sessions, so it runs only if sessions exist. A session whose cleanup
+#    failed (CleanupFailed=True) does not become CleanupComplete until a retry
+#    succeeds or its residuals are acknowledged, so the wait may run into its
+#    timeout; use the check below.
+sessions=$(kubectl get debugsessions -A -o name)
+[ -z "$sessions" ] || kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
+# If the wait times out, list the sessions that are not done yet:
+kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
+# For a session with CLEANUP_FAILED=True, verify its residual resources are
+# gone, retire them with a DebugSessionCleanupAcknowledgement
+# (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone)
+# and wait again. Resources a template keeps on purpose (deleteAfter: false)
+# are not removed by any step.
+
+# 3. Delete the session objects and wait until they are gone.
+kubectl delete debugsessions --all -A --wait=true --timeout=10m
+
+# 4. With no session left, the controller releases every acknowledgement.
+#    Verify that no acknowledgement still carries a finalizer (no output):
+kubectl get debugsessioncleanupacknowledgements -A \
+  -o jsonpath='{range .items[?(@.metadata.finalizers)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+kubectl delete debugsessioncleanupacknowledgements --all -A --wait
+
+# 5. Delete the remaining custom resources.
+kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A --wait
+
+# 6. Only then remove the controller.
 kubectl delete namespace breakglass-system
 
 # On tenant clusters, remove webhook config:
 # 1. Remove authorization-config.yaml
 # 2. Remove webhook kubeconfig
 # 3. Restart kube-apiserver
+```
+
+If the controller was removed first, the namespace or CRD deletion hangs on
+these finalizers. (If only the DebugSession CRD was removed while the
+controller still runs, it releases the acknowledgements itself.) Remove the
+acknowledgement retention finalizer by hand
+(this drops the retirement evidence, which is safe only because no
+controller will write the sessions again):
+
+```bash
+kubectl get debugsessioncleanupacknowledgements -A --no-headers \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name |
+while read -r ns name; do
+  kubectl patch debugsessioncleanupacknowledgement "$name" -n "$ns" \
+    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]'
+done
 ```
 
 ## Controller Configuration Flags

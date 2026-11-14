@@ -207,6 +207,13 @@ jobs:
           # Also build CRDs only
           ./bin/kustomize build config/crd > manifests-current/crds.yaml
           echo "✅ config/crd built successfully"
+          # Every webhook must point at the deployed service. The kustomize
+          # patches address webhooks by index, so a new webhook needs a new patch.
+          unpatched=$(grep -c 'name: webhook-service$' manifests-current/base.yaml || true)
+          if [ "$unpatched" != "0" ]; then
+            echo "::error::$unpatched webhook(s) still reference the unpatched webhook-service; add patches in config/webhook/kustomization.yaml"
+            exit 1
+          fi
       - name: Get latest release tag
         id: get_release
         run: |
@@ -631,6 +638,19 @@ jobs:
             BUILD_DATE=${{ steps.commit.outputs.timestamp }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+      - name: Image binary excludes e2e fault injection
+        run: |
+          # The claim hold hook exists only in e2e_ha builds (e2e/build-ha-image.sh).
+          # Scan the /breakglass binary of the image that is published.
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          container=$(docker create "$FIRST_TAG")
+          docker cp "$container:/breakglass" /tmp/breakglass-image-binary
+          docker rm "$container"
+          test -s /tmp/breakglass-image-binary
+          if grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-image-binary; then
+            echo "image binary contains the e2e fault injection" >&2
+            exit 1
+          fi
       - name: Tag image for E2E artifact
         run: |
           # Get the first tag from the built images and tag it as breakglass:e2e for local use
@@ -1170,6 +1190,19 @@ jobs:
           # Enable audit webhook tests
           AUDIT_WEBHOOK_TEST: "true"
 
+      - name: Run cleanup acknowledgement HA E2E (2 replicas, claim-holder kill, API server restart)
+        if: matrix.shard == 'api-debug'
+        run: |
+          set -o pipefail
+          bash e2e/build-ha-image.sh
+          go test -tags=e2e_ha -v ./e2e/api -run '^TestDebugSessionCleanupAcknowledgementHA$' -count=1 -timeout 30m 2>&1 | tee e2e-ha-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+          E2E_SKIP_CLEANUP_ON_FAILURE: "true"
+          AUDIT_WEBHOOK_TEST: "true"
+          KIND_CLUSTER_NAME: breakglass-hub
+
       - name: Reproduce convergence HelmRelease readiness and target-stage policy
         if: matrix.shard == 'api-rest'
         run: |
@@ -1362,6 +1395,7 @@ jobs:
           echo "--- Test results ---"
           cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp e2e-ha-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-artifact-results.txt e2e-artifact-s3-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
 

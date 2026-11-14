@@ -92,6 +92,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.BreakglassSessionSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassSessionStatus"):
 		return &apiv1alpha1.BreakglassSessionStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CleanupAcknowledgedIdentity"):
+		return &apiv1alpha1.CleanupAcknowledgedIdentityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CleanupAcknowledgementTransition"):
+		return &apiv1alpha1.CleanupAcknowledgementTransitionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfig"):
 		return &apiv1alpha1.ClusterConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfigSpec"):
@@ -150,6 +154,14 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionArtifactStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgement"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementObjectStatus"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementSpec"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementStatus"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
 		return &apiv1alpha1.DebugSessionClusterBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingSpec"):
