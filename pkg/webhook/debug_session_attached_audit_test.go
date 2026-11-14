@@ -101,7 +101,7 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			wc := &WebhookController{
 				log: log, escalManager: &escalation.EscalationManager{Client: cli},
 				sesManager: breakglass.NewSessionManagerWithClient(cli), auditService: svc,
-				attachedEmit: func(ctx context.Context, event *audit.Event) bool { return svc.TryEmit(ctx, event) },
+				attachedEmit: func(ctx context.Context, event *audit.Event) audit.EmitResult { return svc.TryEmitResult(ctx, event) },
 				podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 				},
@@ -160,7 +160,7 @@ func TestDebugSessionAttachedDoesNotDelaySARResponse(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	svc := audit.NewService(cli, nil, zap.NewNop(), "controller")
 	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: svc,
-		attachedEmit: func(context.Context, *audit.Event) bool { <-release; return true }}
+		attachedEmit: func(context.Context, *audit.Event) audit.EmitResult { <-release; return audit.EmitAccepted }}
 	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
 		User:               "requester",
 		ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "debug", Name: "own-pod"},
@@ -200,12 +200,12 @@ func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
 	var delivered []*audit.Event
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(_ context.Context, event *audit.Event) bool {
+		attachedEmit: func(_ context.Context, event *audit.Event) audit.EmitResult {
 			<-release
 			mu.Lock()
 			defer mu.Unlock()
 			delivered = append(delivered, event)
-			return true
+			return audit.EmitAccepted
 		}}
 	authorizedAt := time.Now().UTC()
 	for range 3 {
@@ -227,7 +227,7 @@ func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
 
 	// A blocked delivery does not hold shutdown past its deadline.
 	blocked := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(context.Context, *audit.Event) bool { select {} }}
+		attachedEmit: func(context.Context, *audit.Event) audit.EmitResult { select {} }}
 	for range 3 {
 		blocked.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
 	}
@@ -251,13 +251,13 @@ func TestDebugSessionAttachedShutdownCountsInFlightAndBuffered(t *testing.T) {
 	taken := make(chan struct{}, 1)
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(context.Context, *audit.Event) bool {
+		attachedEmit: func(context.Context, *audit.Event) audit.EmitResult {
 			select {
 			case taken <- struct{}{}:
 			default:
 			}
 			<-release
-			return false // the audit service closed meanwhile
+			return audit.EmitNoPipeline // the audit service closed meanwhile
 		}}
 	before := drops()
 	wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
@@ -274,7 +274,7 @@ func TestDebugSessionAttachedShutdownCountsInFlightAndBuffered(t *testing.T) {
 	hold := make(chan struct{})
 	defer close(hold)
 	buffered := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(context.Context, *audit.Event) bool { <-hold; return false }}
+		attachedEmit: func(context.Context, *audit.Event) audit.EmitResult { <-hold; return audit.EmitNoPipeline }}
 	for range 4 {
 		buffered.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
 	}
@@ -346,10 +346,10 @@ func TestDebugSessionAttachedAuditPipelineStates(t *testing.T) {
 	require.NoError(t, gated.ReloadMultipleWithAvailability(context.Background(), nil, false)) // disabled
 	var handedOn atomic.Int32
 	wc2 := &WebhookController{log: zap.NewNop().Sugar(), auditService: gated,
-		attachedEmit: func(ctx context.Context, e *audit.Event) bool {
+		attachedEmit: func(ctx context.Context, e *audit.Event) audit.EmitResult {
 			<-release
 			handedOn.Add(1)
-			return gated.TryEmit(ctx, e)
+			return gated.TryEmitResult(ctx, e)
 		}}
 	wc2.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
 	require.NoError(t, gated.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
@@ -361,4 +361,33 @@ func TestDebugSessionAttachedAuditPipelineStates(t *testing.T) {
 	close(release)
 	wc2.StopAttachedAudit(context.Background())
 	require.Zero(t, handedOn.Load(), "nothing was handed off while audit was disabled")
+}
+
+// An event that no pipeline took while audit is configured (for example
+// between two pipelines during a reload) is counted; a drop that the running
+// pipeline already counted is not counted twice.
+func TestDebugSessionAttachedCountsUncountedLosses(t *testing.T) {
+	unavailable := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "unavailable"))
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	svc := audit.NewService(cli, nil, zap.NewNop(), "controller")
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "attached"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	t.Cleanup(func() { _ = svc.Close() })
+	results := make(chan audit.EmitResult, 2)
+	results <- audit.EmitNoPipeline // a reload swapped the pipeline
+	results <- audit.EmitDropped    // the running pipeline counted it
+	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: svc,
+		attachedEmit: func(context.Context, *audit.Event) audit.EmitResult { return <-results }}
+	before := unavailable()
+	for range 2 {
+		wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	}
+	wc.StopAttachedAudit(context.Background())
+	require.Equal(t, before+1, unavailable())
 }

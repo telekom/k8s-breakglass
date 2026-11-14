@@ -329,9 +329,9 @@ type WebhookController struct {
 	// attachedAbandoned is set when the shutdown drain missed its deadline:
 	// the worker then counts every event it cannot hand on.
 	attachedAbandoned atomic.Bool
-	// attachedEmit delivers a handed-off event and reports whether the audit
-	// pipeline accepted it (audit.Service.TryEmit; tests).
-	attachedEmit    func(context.Context, *audit.Event) bool
+	// attachedEmit delivers a handed-off event (audit.Service.TryEmitResult;
+	// tests).
+	attachedEmit    func(context.Context, *audit.Event) audit.EmitResult
 	rateLimiter     *ratelimit.IPRateLimiter // per-IP rate limiter for SAR requests
 	activityTracker *ActivityTracker         // optional buffered session activity tracker (#314)
 }
@@ -1199,7 +1199,7 @@ func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, 
 func (wc *WebhookController) startAttachedAudit() {
 	emit := wc.attachedEmit
 	if emit == nil {
-		emit = wc.auditService.TryEmit
+		emit = wc.auditService.TryEmitResult
 	}
 	wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
 	wc.attachedDone = make(chan struct{})
@@ -1210,18 +1210,18 @@ func (wc *WebhookController) startAttachedAudit() {
 				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
 				continue
 			}
-			if emit(item.ctx, item.event) {
+			// A running pipeline counts its own drops (EmitDropped). An event
+			// that no pipeline took is counted here, unless audit is
+			// intentionally disabled.
+			if emit(item.ctx, item.event) != audit.EmitNoPipeline {
 				continue
 			}
 			switch {
 			case wc.attachedAbandoned.Load():
-				// An item in flight when the drain gave up counts itself:
-				// after the audit service closed, TryEmit no longer accepts it.
+				// In flight when the drain gave up; the service closed meanwhile.
 				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
-			case wc.auditService != nil && wc.auditService.ConfigurationState() == audit.ConfigurationUnavailable:
-				// No pipeline to count the loss: audit is configured but not
-				// (yet) running. Intentionally disabled audit stays a no-op;
-				// a running pipeline counts its own queue drops.
+			case wc.auditService == nil || wc.auditService.ConfigurationState() != audit.ConfigurationDisabled:
+				// Not running yet, or between two pipelines during a reload.
 				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "unavailable").Inc()
 				if wc.log != nil {
 					wc.log.Warnw("Dropping debug_session.attached audit event: the audit pipeline is unavailable", "session", item.event.RequestContext.DebugSessionName)

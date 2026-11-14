@@ -392,24 +392,52 @@ func (s *Service) Emit(ctx context.Context, event *Event) {
 	s.TryEmit(ctx, event)
 }
 
+// EmitResult is the outcome of TryEmitResult.
+type EmitResult int
+
+const (
+	// EmitAccepted: queued, or intentionally filtered or sampled.
+	EmitAccepted EmitResult = iota
+	// EmitDropped: the running pipeline dropped the event and counted it in
+	// breakglass_audit_events_dropped_total.
+	EmitDropped
+	// EmitNoPipeline: no pipeline took the event (not configured yet,
+	// disabled, closed, or between two pipelines during a reload). Nothing
+	// counted the loss; a caller that does not retry should.
+	EmitNoPipeline
+)
+
 // TryEmit is Emit that reports whether the event was accepted (queued, or
 // intentionally filtered or sampled). It returns false when no pipeline is
 // running or the event was dropped, so the caller can retry it.
 func (s *Service) TryEmit(ctx context.Context, event *Event) bool {
+	return s.TryEmitResult(ctx, event) == EmitAccepted
+}
+
+// TryEmitResult is TryEmit that also tells a counted drop from an uncounted
+// one.
+func (s *Service) TryEmitResult(ctx context.Context, event *Event) EmitResult {
 	m := s.currentManager()
 	if m == nil {
-		return false
+		return EmitNoPipeline
 	}
-	result := m.emit(ctx, event)
-	if result != emitClosed {
-		return result == emitAccepted
+	switch m.emit(ctx, event) {
+	case emitAccepted:
+		return EmitAccepted
+	case emitDropped:
+		return EmitDropped
 	}
 	// A reload replaced the Manager between the read and the enqueue: hand
 	// the event to the new one once instead of losing it.
 	if next := s.currentManager(); next != nil && next != m {
-		return next.TryEmit(ctx, event)
+		switch next.emit(ctx, event) {
+		case emitAccepted:
+			return EmitAccepted
+		case emitDropped:
+			return EmitDropped
+		}
 	}
-	return false
+	return EmitNoPipeline
 }
 
 // currentManager returns the enabled Manager without holding s.mu during the

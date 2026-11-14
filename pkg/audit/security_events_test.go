@@ -172,3 +172,23 @@ func TestServiceCloseWaitsForBeforeCloseHooks(t *testing.T) {
 	require.EqualValues(t, 1, runs.Load(), "hooks run once")
 	require.True(t, acceptedAtEnd.Load(), "the pipeline stayed open until the hook finished")
 }
+
+func TestServiceTryEmitResult(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).Build(), nil, zap.NewNop(), "ns")
+	event := func() *Event {
+		return &Event{Type: EventDebugSessionAttached, Actor: Actor{User: "a"}, Target: Target{Kind: "pods", Name: "p"}}
+	}
+	require.Equal(t, EmitNoPipeline, svc.TryEmitResult(context.Background(), event()), "not configured yet")
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "log"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	require.Equal(t, EmitAccepted, svc.TryEmitResult(context.Background(), event()))
+	require.True(t, svc.TryEmit(context.Background(), event()))
+	require.NoError(t, svc.Close())
+	require.Equal(t, EmitNoPipeline, svc.TryEmitResult(context.Background(), event()), "closed")
+}
