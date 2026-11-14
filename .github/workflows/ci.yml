@@ -561,16 +561,6 @@ jobs:
         run: test -z "$(gofmt -l $(git ls-files '*.go') | tee /dev/stderr)" || { echo 'Please run make fmt'; exit 1; }
       - name: Vet
         run: go vet ./...
-      - name: Release binary excludes e2e fault injection
-        run: |
-          # The claim hold hook exists only in e2e_ha builds.
-          CGO_ENABLED=0 go build -trimpath -o /tmp/breakglass-release ./cmd
-          if grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-release; then
-            echo "release binary contains the e2e fault injection" >&2
-            exit 1
-          fi
-          CGO_ENABLED=0 go build -tags e2e_ha -trimpath -o /tmp/breakglass-e2e-ha ./cmd
-          grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-e2e-ha
 
   build-image:
     name: Build Image
@@ -648,6 +638,19 @@ jobs:
             BUILD_DATE=${{ steps.commit.outputs.timestamp }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+      - name: Image binary excludes e2e fault injection
+        run: |
+          # The claim hold hook exists only in e2e_ha builds (e2e/build-ha-image.sh).
+          # Scan the /breakglass binary of the image that is published.
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          container=$(docker create "$FIRST_TAG")
+          docker cp "$container:/breakglass" /tmp/breakglass-image-binary
+          docker rm "$container"
+          test -s /tmp/breakglass-image-binary
+          if grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-image-binary; then
+            echo "image binary contains the e2e fault injection" >&2
+            exit 1
+          fi
       - name: Tag image for E2E artifact
         run: |
           # Get the first tag from the built images and tag it as breakglass:e2e for local use

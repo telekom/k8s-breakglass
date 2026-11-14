@@ -592,7 +592,13 @@ bgctl debug session terminate <session>
 #    pod-template resources, kubectl-debug operations and copied pods, node
 #    maintenance, hotfix and admission-recipe state) are all gone and whose
 #    cleanup is not failing.
-kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
+#    kubectl wait fails with "no matching resources found" when there are no
+#    sessions, so it runs only if sessions exist. A session whose cleanup
+#    failed (CleanupFailed=True) never becomes CleanupComplete on its own, so
+#    the wait then runs into its timeout; use the check below.
+if [ -n "$(kubectl get debugsessions -A -o name)" ]; then
+  kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
+fi
 # If the wait times out, list the sessions that are not done yet:
 kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
 # For a session with CLEANUP_FAILED=True, verify its residual resources are
@@ -602,8 +608,7 @@ kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.met
 # are not removed by any step.
 
 # 3. Delete the session objects and wait until they are gone.
-kubectl delete debugsessions --all -A --wait=false
-kubectl wait --for=delete debugsessions --all -A --timeout=10m
+kubectl delete debugsessions --all -A --wait=true --timeout=10m
 
 # 4. With no session left, the controller releases every acknowledgement.
 #    Verify that no acknowledgement still carries a finalizer (no output):

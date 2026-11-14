@@ -18,6 +18,8 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -1038,36 +1040,100 @@ func TestAcknowledgementIsReleasedOnlyWhenTheSessionKindIsDefinitivelyNotServed(
 	assert.False(t, retained(), "an unserved DebugSession kind releases the retention finalizer")
 }
 
+// budgetSession is a failing session padded by pad bytes, with an entry an
+// earlier acknowledgement already retired.
+func budgetSession(t *testing.T, pad int) *breakglassv1alpha1.DebugSession {
+	ds := failingSession(t)
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses,
+		breakglassv1alpha1.AuxiliaryResourceStatus{Name: "earlier", Deleted: true, Error: acknowledgedAbsentReason},
+		breakglassv1alpha1.AuxiliaryResourceStatus{Name: "padding", Deleted: true, Error: "x" + strings.Repeat("x", pad)})
+	return ds
+}
+
 func TestCompletionNearTheSizeBudgetStillRetires(t *testing.T) {
-	for name, headroom := range map[string]int{
-		"record does not fit":          200,   // the retirement reasons fit, the record does not
-		"retirement reasons not fit":   -4096, // already over budget: only deleted markers are kept
-		"record fits with the reasons": 4096,
+	// The size after completing with record and reasons, without padding,
+	// locates the exact first-record edge.
+	probe := budgetSession(t, 0)
+	_, recorded := completeCleanupAcknowledgement(probe, decideCleanupAcknowledgement(probe, acknowledgement(probe, "a", allResidualsOfFailingSession...), "", false))
+	require.True(t, recorded)
+	edge := cleanupAcknowledgementStatusBudget - serializedSize(probe)
+
+	for name, tc := range map[string]struct {
+		pad              int
+		recorded, reason bool
+	}{
+		"record fits exactly":         {pad: edge, recorded: true, reason: true},
+		"record one byte over":        {pad: edge + 1, reason: true},
+		"reasons do not fit either":   {pad: edge + 4096},
+		"record fits with room to go": {pad: edge - 4096, recorded: true, reason: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := budgetSession(t, tc.pad)
+			record := decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", allResidualsOfFailingSession...), "", false)
+			require.True(t, record.Applied, record.Message)
+
+			changed, recorded := completeCleanupAcknowledgement(ds, record)
+			require.True(t, changed, "an Applied acknowledgement is always completable")
+			assert.Empty(t, outstandingCleanupResiduals(ds), "every listed residual is retired")
+			assert.True(t, acknowledgementCompleted(ds, record))
+			assert.Equal(t, tc.recorded, recorded)
+			assert.Equal(t, tc.recorded, acknowledgementProcessed(ds, record.UID), "the record is kept only within the budget")
+			if tc.reason {
+				assert.LessOrEqual(t, serializedSize(ds), cleanupAcknowledgementStatusBudget)
+			}
+			for _, entry := range ds.Status.AuxiliaryResourceStatuses {
+				switch entry.Name {
+				case "earlier":
+					assert.Equal(t, acknowledgedAbsentReason, entry.Error, "an earlier acknowledgement keeps its reason")
+				case "padding":
+				default:
+					assert.True(t, entry.Deleted, entry.Name)
+					assert.Equal(t, map[bool]string{true: acknowledgedAbsentReason, false: ""}[tc.reason], entry.Error, entry.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestOutdatedCRDIsReportedOnlyWhenAWrittenRecordWasPruned(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pad   int
+		prune bool
+		want  int
+	}{
+		"record pruned by an outdated CRD":  {prune: true, want: 1},
+		"record omitted by the size budget": {pad: cleanupAcknowledgementStatusBudget},
+		"record stored":                     {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ds := failingSession(t)
-			ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "padding", Deleted: true})
-			pad := &ds.Status.AuxiliaryResourceStatuses[len(ds.Status.AuxiliaryResourceStatuses)-1]
-			pad.Error = strings.Repeat("x", cleanupAcknowledgementStatusBudget-serializedSize(ds)-headroom)
-			ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
-			record := decideCleanupAcknowledgement(ds, ack, "", false)
-			require.True(t, record.Applied, record.Message)
-
-			require.True(t, completeCleanupAcknowledgement(ds, record), "an Applied acknowledgement is always completable")
-			assert.Empty(t, outstandingCleanupResiduals(ds), "every listed residual is retired")
-			assert.True(t, acknowledgementCompleted(ds, record))
-			if headroom >= 0 {
-				assert.LessOrEqual(t, serializedSize(ds), cleanupAcknowledgementStatusBudget)
+			if tc.pad > 0 {
+				// Leave room for the retirement reasons but not the record.
+				ds = budgetSession(t, 0)
+				probe := ds.DeepCopy()
+				_, _ = completeCleanupAcknowledgement(probe, decideCleanupAcknowledgement(probe, acknowledgement(probe, "a", allResidualsOfFailingSession...), "", false))
+				ds.Status.AuxiliaryResourceStatuses[len(ds.Status.AuxiliaryResourceStatuses)-1].Error += strings.Repeat("x", cleanupAcknowledgementStatusBudget-serializedSize(probe)+1)
 			}
-			recorded := acknowledgementProcessed(ds, record.UID)
-			assert.Equal(t, headroom > 1024, recorded, "the record is kept only within the budget")
-			reasons := 0
-			for _, entry := range ds.Status.AuxiliaryResourceStatuses {
-				if entry.Error == acknowledgedAbsentReason {
-					reasons++
-				}
+			f := newAckFixture(t, ds, acknowledgement(ds, "a", allResidualsOfFailingSession...))
+			if tc.prune {
+				f.c.client = interceptor.NewClient(f.hub.(client.WithWatch), interceptor.Funcs{
+					SubResourcePatch: func(ctx context.Context, cl client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+						if err := cl.SubResource(subResource).Patch(ctx, obj, patch, opts...); err != nil {
+							return err
+						}
+						if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok {
+							session.Status.CleanupAcknowledgements = nil
+							return cl.Status().Update(ctx, session)
+						}
+						return nil
+					},
+				})
 			}
-			assert.Equal(t, headroom >= 0, reasons > 0, "retirement reasons are dropped only when they exceed the budget")
+			core, logs := observer.New(zapcore.ErrorLevel)
+			f.c.log = zap.New(core).Sugar()
+			require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+			assert.False(t, cleanupConditionFailed(ds), "the residuals are retired")
+			assert.Equal(t, tc.want, logs.FilterMessageSnippet("CRD lacks status.cleanupAcknowledgements").Len())
 		})
 	}
 }

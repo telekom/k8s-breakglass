@@ -748,13 +748,15 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			}
 		}
 		transition := *ack.Status.Transition
+		recorded := false
 		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
 				if ds.UID != "" && current.UID != ds.UID {
 					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
 				}
-				if !completeCleanupAcknowledgement(current, record) {
+				var changed bool
+				if changed, recorded = completeCleanupAcknowledgement(current, record); !changed {
 					return false, nil
 				}
 				setCleanupCondition(current)
@@ -769,8 +771,8 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		ds.Status = patched.Status
 		ds.ResourceVersion = patched.ResourceVersion
 		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
-		if !acknowledgementProcessed(ds, record.UID) && cleanupAcknowledgementRecordFits(ds, record) {
-			// The API server pruned the field: the DebugSession CRD predates
+		if recorded && !acknowledgementProcessed(ds, record.UID) {
+			// The record was written but is absent: the API server pruned the field: the DebugSession CRD predates
 			// this controller. The retirement persisted and the
 			// acknowledgement keeps its provenance; only the session record
 			// and the CleanupAcknowledged reason are lost.
@@ -1080,7 +1082,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			// Residuals retired by an applied acknowledgement stay retired even
 			// when a stale concurrent writer still lists them.
 			retireAcknowledgedResiduals(current)
-			retireIdentities(current, completed)
+			retireIdentities(current, completed, acknowledgedAbsentReason)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)

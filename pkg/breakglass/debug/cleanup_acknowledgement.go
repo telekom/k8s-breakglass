@@ -230,36 +230,36 @@ func outstandingCleanupResiduals(ds *breakglassv1alpha1.DebugSession) map[Cleanu
 
 // completeCleanupAcknowledgement applies an Applied decision to ds: it
 // retires the decided identities that are still outstanding and appends the
-// record while there is room. A full record list never blocks the
-// retirement; the decision on the acknowledgement object stays the
-// provenance. It reports false when there was nothing left to do.
-func completeCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool {
+// record while there is room within the record cap and the serialized size
+// budget. Neither limit blocks the retirement; the decision on the
+// acknowledgement object stays the provenance. It reports changed=false when
+// there was nothing left to do, and recorded when the record was appended.
+func completeCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) (changed, recorded bool) {
 	if acknowledgementCompleted(ds, record) {
-		return false
+		return false, false
 	}
-	retireIdentities(ds, record.Retired)
-	if !acknowledgementProcessed(ds, record.UID) && cleanupAcknowledgementRecordFits(ds, record) {
+	before := ds.Status.DeepCopy()
+	retireIdentities(ds, record.Retired, acknowledgedAbsentReason)
+	if !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
 		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, record)
+		recorded = serializedSize(ds) <= cleanupAcknowledgementStatusBudget
+		if !recorded {
+			// The record does not fit: omit it; the retained acknowledgement
+			// object keeps its provenance and retired identities.
+			ds.Status.CleanupAcknowledgements = ds.Status.CleanupAcknowledgements[:len(ds.Status.CleanupAcknowledgements)-1]
+		}
 	}
 	if serializedSize(ds) > cleanupAcknowledgementStatusBudget {
-		// Even the retirement markers do not fit: keep only Deleted, which
-		// never grows the object beyond what was stored before.
-		clearAcknowledgedAbsentReasons(ds)
+		// Even this acknowledgement's retirement reasons do not fit: retire
+		// its entries again from the original status without a reason.
+		// Earlier acknowledgements keep theirs; the status then grows by at
+		// most the deleted flags of the entries retired here.
+		records := ds.Status.CleanupAcknowledgements
+		ds.Status = *before
+		retireIdentities(ds, record.Retired, "")
+		ds.Status.CleanupAcknowledgements = records
 	}
-	return true
-}
-
-// cleanupAcknowledgementRecordFits reports whether record can be added to
-// status.cleanupAcknowledgements within the record cap and the serialized
-// size budget. A record that does not fit is omitted; the retained
-// acknowledgement object keeps its provenance and retired identities.
-func cleanupAcknowledgementRecordFits(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool {
-	if len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords {
-		return false
-	}
-	recordSize, err := json.Marshal(record)
-	// +1 for the separating comma in the list.
-	return err == nil && serializedSize(ds)+len(recordSize) < cleanupAcknowledgementStatusBudget
+	return true, recorded
 }
 
 // serializedSize is the JSON size of ds; an unmarshalable object counts as
@@ -270,20 +270,6 @@ func serializedSize(ds *breakglassv1alpha1.DebugSession) int {
 		return cleanupAcknowledgementStatusBudget + 1
 	}
 	return len(raw)
-}
-
-func clearAcknowledgedAbsentReasons(ds *breakglassv1alpha1.DebugSession) {
-	for i := range ds.Status.AuxiliaryResourceStatuses {
-		entry := &ds.Status.AuxiliaryResourceStatuses[i]
-		if entry.Error == acknowledgedAbsentReason {
-			entry.Error = ""
-		}
-		for j := range entry.AdditionalResources {
-			if child := &entry.AdditionalResources[j]; child.Error == acknowledgedAbsentReason {
-				child.Error = ""
-			}
-		}
-	}
 }
 
 // acknowledgementCompleted reports whether an Applied acknowledgement needs
@@ -607,7 +593,7 @@ func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
 			ids = append(ids, record.Retired...)
 		}
 	}
-	retireIdentities(ds, ids)
+	retireIdentities(ds, ids, acknowledgedAbsentReason)
 }
 
 // retireIdentities removes or marks deleted every inventory entry named in ids.
@@ -616,7 +602,7 @@ func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
 // apiVersion, kind, namespace and name only. A later intent with the same name
 // in the same session would also match. Sessions in cleanup create nothing, so
 // this is accepted; matching the create operation ID would close it.
-func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []CleanupAcknowledgedIdentity) {
+func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []CleanupAcknowledgedIdentity, reason string) {
 	retired := map[CleanupAcknowledgedIdentity]bool{}
 	for _, id := range ids {
 		retired[id] = true
@@ -645,12 +631,12 @@ func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []CleanupAcknowle
 	for i := range status.AuxiliaryResourceStatuses {
 		entry := &status.AuxiliaryResourceStatuses[i]
 		if !entry.Deleted && is(entry.APIVersion, entry.Kind, entry.Namespace, entry.ResourceName, entry.UID) {
-			entry.Deleted, entry.Error = true, acknowledgedAbsentReason
+			entry.Deleted, entry.Error = true, reason
 		}
 		for j := range entry.AdditionalResources {
 			child := &entry.AdditionalResources[j]
 			if !child.Deleted && is(child.APIVersion, child.Kind, child.Namespace, child.ResourceName, child.UID) {
-				child.Deleted, child.Error = true, acknowledgedAbsentReason
+				child.Deleted, child.Error = true, reason
 			}
 		}
 	}
