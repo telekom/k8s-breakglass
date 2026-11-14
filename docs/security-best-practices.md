@@ -552,6 +552,259 @@ enable it when group sync is configured and healthy for every approver
 identity provider. Also restrict who can create groups in the identity
 provider. See [Approval before the first group sync](breakglass-escalation.md#approval-before-the-first-group-sync).
 
+## Reserved debug-session labels
+
+Debug pods carry labels and annotations with the prefixes
+`breakglass.telekom.com/debug-session` (for example `debug-session` and
+`debug-session-uid`) and `breakglass.telekom.com/ephemeral.`. Runtime-security
+integrations key on them: Falco exceptions and Tetragon policies relax their
+rules for debug sessions, and session recording attributes activity to the
+session named there. Kubernetes does not protect label keys, so without an
+extra policy anyone who may create or edit a pod can set these keys on their
+own pod. That pod then passes as a debug session: it gets the relaxed
+runtime rules and its activity is attributed to a session that never
+approved it. Removing the label from a real debug pod would hide it from the
+same tools.
+
+The optional component `config/components/runtime-label-reservation` closes
+this. Its ValidatingAdmissionPolicy denies every create or update that adds,
+changes or removes a reserved key, unless the request comes from the
+breakglass controller. It covers:
+
+- Pods, including the `pods/status` and `pods/ephemeralcontainers`
+  subresources, and Pod bindings (`pods/binding`, `bindings`), whose
+  annotations the API server copies onto the Pod;
+- the pod templates of Deployments, ReplicaSets, StatefulSets, DaemonSets,
+  Jobs, CronJobs and ReplicationControllers, and the templates that
+  ControllerRevisions store for StatefulSets and DaemonSets (a StatefulSet
+  creates Pods from its current revision, so a forged revision would
+  otherwise launder the keys through the exempt StatefulSet controller).
+
+The MOTD hook annotation `breakglass.t-caas.telekom.com/motd-profile` is
+reserved in the same places: it is projected into a file that interactive
+shells in the debug Pod source, so whoever could edit it could run code in
+the participants' shells without exec rights.
+
+A marked Pod must also not outlive its session through a long grace period:
+a debug container that ignores SIGTERM keeps running until the grace period
+ends, and a later delete without one does not shorten it. Non-exempt deletes
+of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
+`terminationGracePeriodSeconds`. An Eviction does not go through Pod DELETE
+admission and does not carry the Pod's labels, so the policy cannot tell
+whether it targets a debug Pod; it caps `deleteOptions.gracePeriodSeconds` at
+30 seconds (the Kubernetes default) for every non-exempt eviction in the
+cluster. Trade-off: `kubectl drain --grace-period` above 30 and node
+autoscalers that evict with a longer grace period (the cluster-autoscaler
+sends the Pod's own period, up to `--max-graceful-termination-sec`) are
+denied for Pods with a longer `terminationGracePeriodSeconds` while the policy
+is installed; evictions without a grace period are unaffected.
+
+Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
+created by the kube-controller-manager, not by the controller. The policy therefore also
+exempts the kube-controller-manager users that copy a template into Pods
+(`system:kube-controller-manager` and the `kube-system` controller
+ServiceAccounts, including the garbage collector and the namespace
+controller, which only delete). This is safe only because the templates themselves are
+reserved: nobody but the controller can put a reserved key into a template
+that the kube-controller-manager would copy. Other operators that create Pods
+from their own custom resources are not exempt, so they cannot be used to
+launder the keys.
+
+Keeping the keys is not enough on its own: anyone allowed to edit a debug pod
+or a debug Deployment could otherwise swap its image or command, or add an
+ephemeral container, through the API and run their own code under the
+genuine markers. The policy blocks these spec edits (see below); exec, attach
+and port-forward are a separate path that it cannot block (see the
+limitation further down). They could also
+remove a marked ReplicaSet's owner reference, or change its labels so the
+Deployment does not adopt it again; cleanup deletes the Deployment and the
+detached ReplicaSet keeps creating marked Pods. On every Pod and workload
+whose Pod or pod template carries a reserved key, the policy therefore also
+freezes the pod spec, the owner references, the labels and the selector, and
+refuses new finalizers (on the object and in its pod template, which the
+workload controllers copy onto the Pods), for everyone except the exempt users, through the main
+resource and its `status` subresource. Workload status itself is reserved for
+the kube-controller-manager as well: a StatefulSet's `status.currentRevision`
+selects the ControllerRevision its Pods are created from, and a partial
+revision without metadata would inherit the reserved labels. For the same
+reason nobody else may delete a marked ControllerRevision: the StatefulSet
+controller looks its current revision up by name only, so a deleted revision
+could be recreated under that name with a spec-only patch carrying another
+image. A foreign finalizer would otherwise hold
+a deleted debug workload while its Pods keep running; independently of the
+policy, cleanup switches a delete that such a finalizer holds to Foreground, so
+the garbage collector removes the Pods anyway. Orphaning deletes
+of such workloads are denied too: deletes must set `propagationPolicy`
+`Background` (the `kubectl delete` default) or `Foreground`, because Jobs and
+ReplicationControllers orphan their Pods when no policy is given, and the
+exempt garbage collector would carry out the orphaning. Scaling, kubelet status
+updates, annotation edits and cascading deletes stay allowed;
+`kubectl rollout restart` and `kubectl debug` against debug workloads are
+denied. The `scale` subresource carries only a replica count, so scaling a
+debug workload stays allowed and cannot change what its Pods run or how they
+are marked.
+
+**Limitation: exec, attach and port-forward.** `pods/exec`, `pods/attach` and
+`pods/portforward` are CONNECT requests. Admission policies cannot see the
+target Pod's labels on CONNECT, so this policy cannot stop them, and the
+breakglass authorizer only grants extra rights to session participants; it
+does not take away existing RBAC. Anyone whose RBAC allows exec into a marked
+Pod (for example through the built-in `edit` or `admin` ClusterRoles in its
+namespace) can therefore run commands there that runtime-security tools
+attribute to the session. Run debug Pods in dedicated namespaces where no
+identity other than the controller and the session's participants holds
+`pods/exec`, `pods/attach` or `pods/portforward`, and audit the bindings
+there regularly. The following script reads the RoleBindings in the debug
+namespace, all ClusterRoleBindings and the Roles and ClusterRoles they
+reference, and lists every subject whose rules allow exec, attach or
+port-forward there. It counts wildcard verbs, resources and API groups, and
+aggregated ClusterRoles such as `edit` and `admin` already contain their
+aggregated rules. It aborts with an error if any list cannot be read:
+
+```bash
+#!/usr/bin/env bash
+# Lists every subject whose RoleBinding (in the debug namespace) or
+# ClusterRoleBinding grants exec, attach or port-forward on Pods there.
+set -euo pipefail
+ns=${1:-breakglass-debug}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fetch() { # file, kubectl get arguments...
+  local file=$1; shift
+  kubectl get "$@" -o json >"$tmp/$file" || { echo "error: cannot list $*" >&2; exit 1; }
+}
+fetch rb.json rolebindings -n "$ns"
+fetch roles.json roles -n "$ns"
+fetch crb.json clusterrolebindings
+fetch cr.json clusterroles
+jq -nr --slurpfile rb "$tmp/rb.json" --slurpfile roles "$tmp/roles.json" \
+  --slurpfile crb "$tmp/crb.json" --slurpfile cr "$tmp/cr.json" --arg ns "$ns" '
+  # Rules that allow exec, attach or port-forward (get pods/exec: WebSocket exec
+  # before Kubernetes 1.31). Wildcards count, including forms RBAC may not honour.
+  def grants: [.rules[]? | select(
+      any(.apiGroups[]?; . == "" or . == "*") and
+      any(.verbs[]?; . == "*" or . == "create" or . == "get") and
+      any(.resources[]?; . as $r | ["*", "*/*", "pods/*", "pods/exec", "pods/attach", "pods/portforward",
+                                   "*/exec", "*/attach", "*/portforward"] | index($r) != null))];
+  ($roles[0].items | map({key: .metadata.name, value: .}) | from_entries) as $role
+  | ($cr[0].items | map({key: .metadata.name, value: .}) | from_entries) as $clusterrole
+  | [ ($rb[0].items[], $crb[0].items[]) as $b
+      | ((if $b.roleRef.kind == "Role" then $role else $clusterrole end)[$b.roleRef.name]) as $target
+      | ([$b.subjects[]? | "\(.kind) \(.name)"] | join(", ")) as $who
+      | if $target == null then
+          # Grants nothing today, but whatever role is created under that name later.
+          "WARNING roleRef \($b.roleRef.kind)/\($b.roleRef.name) not found (\($b.kind) \($b.metadata.name), subjects: \($who))"
+        else
+          ($target | grants) as $g
+          | select($g | length > 0)
+          | (if any($g[]; (.resourceNames // []) == []) then "all Pods"
+             else "only Pods " + ([$g[].resourceNames[]] | unique | join(", ")) end) as $scope
+          | $b.subjects[]?
+          | "\(.kind) \(.name)\(if .kind == "ServiceAccount" then " (namespace \(.namespace // $ns))" else "" end): \($scope) in \($ns), via \($b.kind) \($b.metadata.name) -> \($b.roleRef.kind) \($b.roleRef.name)"
+        end ]
+  | if length == 0 then "no subjects with exec, attach or port-forward found in \($ns)" else .[] end'
+```
+
+A `Group system:authenticated` (or `system:serviceaccounts`) line means every
+user (or every ServiceAccount) has that access. A `WARNING roleRef ... not
+found` line is a binding whose Role or ClusterRole does not exist: it grants
+nothing today, but whatever role is later created under that name; review
+or delete it. To spot-check one identity,
+including its group memberships, use
+`kubectl auth can-i create pods --subresource=exec -n <ns> --as=<user> --as-group=<group>`.
+
+Only the controller's identity and the identities of session participants
+should appear, plus identities the cluster trusts anyway: cluster
+administrators, `system:masters`, and control-plane subjects bound through
+the built-in `system:` ClusterRoleBindings. Remove any other binding that
+grants these rights in the debug namespace, for example a binding to `edit`,
+`admin` or `cluster-admin`.
+
+A possible future hardening is an opt-in authorizer or validating-webhook
+check that denies exec, attach and port-forward on marked Pods for anyone
+who is not a participant of the matching session; it is not part of this
+policy.
+
+Session cleanup deletes the resources the controller recorded, not everything
+that carries the session label. A label-based sweep would turn label forgery
+into a way to make the controller delete other workloads on clusters without
+this policy, so the policy prevents detachment at admission instead.
+
+Admission is not retroactive, and a label value proves nothing about who set
+it: before the policy was installed, anyone could have labelled an unrelated
+Pod or Deployment with the name of a real session. Establish a clean start
+instead of trying to vouch for existing objects:
+
+1. Install the policy.
+2. Terminate or let expire every DebugSession targeting the cluster.
+3. Delete every remaining object that carries a reserved key, for example
+   all objects listed by:
+
+   ```bash
+   kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers,controllerrevisions \
+     -A -o json | jq -r '.items[]
+       | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata, .data.spec.template.metadata)
+           | (.labels // {}), (.annotations // {}) | keys[]
+           | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral.")
+               or . == "breakglass.t-caas.telekom.com/motd-profile")]
+         | length > 0)
+       | "\(.kind) \(.metadata.namespace)/\(.metadata.name)"'
+   ```
+
+4. Only then let runtime-security rules trust the keys. From here on, every
+   object carrying them was created by the controller, or by the
+   kube-controller-manager from a template the controller wrote.
+
+Deploy the component on every cluster where debug pods run, and list every
+identity the controller writes debug pods as on that cluster. Otherwise the
+policy denies the controller's own writes and debug sessions fail to deploy:
+
+- the ClusterConfig credentials' user, shown by `kubectl auth whoami` with
+  them. With `kubeconfigSecretRef` this is the kubeconfig's user or
+  ServiceAccount. With `oidcAuth` or `oidcFromIdentityProvider` it is the
+  username the target API server maps from the token, including its
+  configured prefix (for example `oidc:breakglass@example.com`).
+  Alternatively, list an OIDC group that only the controller's client is in
+  under `controllerGroups` (`variables/1`);
+- every ServiceAccount a DebugSessionTemplate impersonates through
+  `spec.impersonation`, because those writes reach the API server as the
+  ServiceAccount;
+- the in-cluster controller ServiceAccount
+  (`system:serviceaccount:breakglass-system:breakglass-manager`, the
+  default), if the hub is itself a target.
+
+```yaml
+components:
+  - ../../components/runtime-label-reservation
+patches:
+  - target:
+      kind: ValidatingAdmissionPolicy
+      name: breakglass-runtime-label-reservation
+    patch: |
+      - op: replace
+        path: /spec/variables/0/expression
+        value: '["system:serviceaccount:breakglass-system:breakglass-manager", "oidc:breakglass@example.com"]'
+      - op: replace
+        path: /spec/variables/1/expression
+        value: '["oidc:breakglass-controllers"]'
+```
+
+With Helm, set `runtimeLabelReservation.enabled=true` and
+`runtimeLabelReservation.controllerUsers` and/or
+`runtimeLabelReservation.controllerGroups` in the `escalation-config` chart.
+If the kube-controller-manager runs without
+`--use-service-account-credentials`, `system:kube-controller-manager` already
+covers it; adjust `workloadControllerUsers` only for distributions that use
+other identities.
+
+The component needs Kubernetes 1.30 or newer (ValidatingAdmissionPolicy GA).
+It is not part of `config/base`, so clusters from Kubernetes 1.24 keep working
+without it; on those clusters, runtime-security rules must not trust the
+labels alone. Treat the keys as trustworthy only on clusters with the policy
+in place, and keep RBAC that lets users write to the controller's identity or
+impersonate the exempt users, or add users to an exempt group, as tightly held
+as cluster-admin.
+
 ## Cross-Site Request Forgery (CSRF) Protection
 
 The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:

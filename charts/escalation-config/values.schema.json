@@ -1238,6 +1238,36 @@
       },
       "type": "array"
     },
+    "runtimeLabelReservation": {
+      "additionalProperties": false,
+      "description": "Optional ValidatingAdmissionPolicy reserving the debug-session pod labels and annotations for the breakglass controller. Requires Kubernetes 1.30 or newer.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Create the ValidatingAdmissionPolicy and its Deny binding.",
+          "type": "boolean"
+        },
+        "controllerUsers": {
+          "description": "Users the breakglass controller writes debug pods as on this cluster.",
+          "items": {"minLength": 1, "type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        },
+        "controllerGroups": {
+          "description": "Groups whose members count as the breakglass controller on this cluster.",
+          "items": {"minLength": 1, "type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        },
+        "workloadControllerUsers": {
+          "description": "kube-controller-manager users that create Pods from reserved workload templates, plus its garbage collector and namespace controller.",
+          "items": {"minLength": 1, "type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "type": "object"
+    },
     "validatingAdmissionPolicy": {
       "additionalProperties": false,
       "description": "Optional cluster-scoped ValidatingAdmissionPolicy resources. Requires Kubernetes 1.30 or newer.",

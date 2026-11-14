@@ -136,6 +136,16 @@ The Helm value `validatingAdmissionPolicy.validationActions` accepts `Deny`,
 so keep the default `Warn, Audit` actions during phase 1 unless request blocking
 is intentional. `Deny` and `Warn` cannot be combined.
 
+### Runtime label reservation
+
+`config/components/runtime-label-reservation` (Helm:
+`runtimeLabelReservation.enabled`) is a separate, enforcing (`Deny`) policy
+for target clusters. It reserves the debug-session pod labels and annotations
+for the controller; see
+[Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels).
+It is independent of the phase-1 policies above and also needs Kubernetes
+1.30+.
+
 ### Verify
 
 Check policies are deployed:

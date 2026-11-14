@@ -80,6 +80,17 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 		return fmt.Errorf("verify tracked resource deletion: %w", err)
 	}
 	if remaining.GetUID() == uid {
+		// A foreign finalizer can hold the owner indefinitely. With Background
+		// propagation the garbage collector keeps its dependents (for a
+		// workload: the ReplicaSets and Pods) until the owner is gone; switching
+		// the pending delete to Foreground makes it delete them now.
+		if remaining.GetDeletionTimestamp() != nil && len(remaining.GetFinalizers()) > 0 &&
+			!slices.Contains(remaining.GetFinalizers(), metav1.FinalizerDeleteDependents) {
+			if err := target.Delete(ctx, remaining, client.Preconditions{UID: &uid},
+				client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete dependents of tracked resource with UID %s pending finalizers: %w", uid, err)
+			}
+		}
 		return fmt.Errorf("delete tracked resource with UID %s is pending finalizers", uid)
 	}
 	return nil

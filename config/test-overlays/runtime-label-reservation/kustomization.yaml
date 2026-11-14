@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Test overlay for the runtime-label-reservation component. The policy is
+# cluster-scoped and independent of the controller, so no base is needed.
+# Run: kustomize build config/test-overlays/runtime-label-reservation/
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+components:
+  - ../../components/runtime-label-reservation

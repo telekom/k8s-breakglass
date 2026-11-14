@@ -648,6 +648,34 @@ validatingAdmissionPolicy:
 `Deny` is enforcing: a policy violation blocks the API request. Keep the default
 `Warn, Audit` actions during phase 1 unless request blocking is intentional.
 
+## Runtime label reservation
+
+`runtimeLabelReservation.enabled=true` renders an enforcing
+ValidatingAdmissionPolicy that reserves the `breakglass.telekom.com/debug-session*`
+and `breakglass.telekom.com/ephemeral.*` pod labels and annotations and the
+`breakglass.t-caas.telekom.com/motd-profile` MOTD hook annotation (and the
+same keys in workload pod templates) for the breakglass controller, so
+runtime-security tools such as Falco or Tetragon can trust them. It is the
+same policy as `config/components/runtime-label-reservation`; render it for
+every cluster where debug pods run, from one release per cluster. Requires
+Kubernetes 1.30 or newer. See
+[Reserved debug-session labels](../../docs/security-best-practices.md#reserved-debug-session-labels).
+
+```yaml
+runtimeLabelReservation:
+  enabled: true
+  controllerUsers:
+    - oidc:breakglass@example.com   # the user of the hub's ClusterConfig credentials on this cluster
+  controllerGroups: []
+```
+
+| Value | Description | Default |
+|-------|-------------|---------|
+| `runtimeLabelReservation.enabled` | Create the policy and its `Deny` binding | `false` |
+| `runtimeLabelReservation.controllerUsers` | Users the controller writes debug pods as on this cluster (its ServiceAccount, the ClusterConfig credential user — for OIDC the mapped username with prefix — and ServiceAccounts templates impersonate) | `[system:serviceaccount:breakglass-system:breakglass-manager]` |
+| `runtimeLabelReservation.controllerGroups` | Groups whose members count as the controller, e.g. an OIDC group only the controller's client is in | `[]` |
+| `runtimeLabelReservation.workloadControllerUsers` | kube-controller-manager users that create Pods from reserved templates, plus its garbage collector and namespace controller | `system:kube-controller-manager` and the `kube-system` workload controller, garbage collector and namespace controller ServiceAccounts |
+
 ## Uninstalling
 
 ```bash
