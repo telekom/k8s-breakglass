@@ -802,9 +802,10 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			if len(privacyOnlyGroups) > 0 && pruneUnconfiguredGroupStatus(updated, groups, groups) {
 				changed = true
 			}
-			// Legacy mode never refreshes per-IdP memberships, for example after
-			// IdP discovery failed or found no enabled IdP. Drop them so stale
-			// members cannot keep approving.
+			// Legacy mode never refreshes per-IdP memberships; it runs when IdP
+			// discovery finds no enabled IdP (a discovery failure keeps the last
+			// synced status instead). Drop them so stale members cannot keep
+			// approving.
 			if pruneProviderGroupMemberships(updated) {
 				changed = true
 				// The aggregate entries were built from per-IdP results. Without
