@@ -667,6 +667,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	for i := range pending {
 		ack := &pending[i]
 		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
+		actorVerified := false
 		if ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied {
 			// Decided earlier; only the session completion is outstanding.
 			record = appliedRecord(ack)
@@ -687,7 +688,9 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
 				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			record = decideCleanupAcknowledgement(live, ack, acknowledgementActorRefusal(ack, webhookActive, webhookSince), c.legacyIdentityFourEyes)
+			actorRefusal := acknowledgementActorRefusal(ack, webhookActive, webhookSince)
+			actorVerified = actorRefusal == "" // the admission webhook verified acknowledgedBy
+			record = decideCleanupAcknowledgement(live, ack, actorRefusal, c.legacyIdentityFourEyes)
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
 				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
 			}
@@ -716,7 +719,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 				log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", ack.Spec.AcknowledgedBy, "reason", record.Message)
 				if c.shouldEmitAudit(ctx, ds) {
 					if auditManager := c.currentAuditManager(); auditManager != nil {
-						auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, false, nil, record.Message)
+						auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, actorVerified, ack.Spec.Reason, false, nil, record.Message)
 					}
 				}
 				continue
@@ -792,7 +795,8 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", identityStrings(record.Retired))
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, true, identityStrings(record.Retired), "")
+				// Applied implies the actor was verified when it was decided.
+				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, true, ack.Spec.Reason, true, identityStrings(record.Retired), "")
 				switch {
 				case transition.CleanupFailed && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)

@@ -1108,7 +1108,7 @@
     },
     "debugSessionCleanupAcknowledgement": {
       "title": "Debug session cleanup acknowledgement",
-      "description": "Outcome of a DebugSessionCleanupAcknowledgement. The envelope actor is the acknowledging operator (verified by the admission webhook); the target is the DebugSession.",
+      "description": "Outcome of a DebugSessionCleanupAcknowledgement. The envelope actor is the acknowledging operator when the admission webhook verified it (actorVerified), otherwise the controller; the target is the DebugSession.",
       "type": "object",
       "properties": {
         "cluster": {
@@ -1126,6 +1126,15 @@
         "applied": {
           "type": "boolean",
           "description": "True if the acknowledgement retired residuals; false if it was rejected."
+        },
+        "actorVerified": {
+          "type": "boolean",
+          "description": "True if the admission webhook verified spec.acknowledgedBy, which is then the envelope actor. If false, the actor is the controller (system) and the unverified name is in claimedAcknowledgedBy."
+        },
+        "claimedAcknowledgedBy": {
+          "type": "string",
+          "description": "Unverified spec.acknowledgedBy of an acknowledgement rejected because its actor could not be verified.",
+          "x-pii": true
         },
         "retired": {
           "type": "array",
@@ -1147,7 +1156,8 @@
         "cluster",
         "source",
         "acknowledgement",
-        "applied"
+        "applied",
+        "actorVerified"
       ]
     },
     "debugSessionWorkload": {

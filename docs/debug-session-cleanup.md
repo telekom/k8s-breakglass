@@ -269,7 +269,10 @@ acknowledgement triggers a reconcile of its session at once.
   more residuals are retired with further acknowledgements, and cleanup
   completes once every residual is retired.
 - Every outcome is audited as `debug_session.cleanup_acknowledged` (severity
-  warning) with the acknowledging user as actor. If the controller stops
+  warning). The actor is the acknowledging user when the admission webhook
+  verified it; an acknowledgement rejected because its actor could not be
+  verified is audited with the controller (`system`) as actor and the
+  unverified name as `claimedAcknowledgedBy`. If the controller stops
   between recording the outcome and emitting the event, that event is lost.
 - **Rejected:** nothing is retired, the cleanup backoff is unchanged, and the
   reason is in the acknowledgement's `status.message`. Fix the problem and

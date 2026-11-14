@@ -137,6 +137,8 @@ func TestCleanupAcknowledgementIsAuditedWithTheOperatorAsActor(t *testing.T) {
 	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
 	require.Len(t, acks, 1)
 	assert.Equal(t, "operator@example.com", acks[0].Actor.User)
+	assert.Equal(t, true, acks[0].Details["actorVerified"])
+	assert.NotContains(t, acks[0].Details, "claimedAcknowledgedBy")
 	assert.Equal(t, true, acks[0].Details["applied"])
 	assert.Equal(t, "CHG-1663: Kyverno CRDs removed", acks[0].Details["reason"])
 	assert.Equal(t, "DebugSessionCleanupAcknowledgement", acks[0].Details["source"])
@@ -190,6 +192,10 @@ func TestCleanupAcknowledgementRefusedWithoutValidatingWebhook(t *testing.T) {
 	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
 	require.Len(t, acks, 1)
 	assert.Equal(t, false, acks[0].Details["applied"])
+	// The unverified acknowledgedBy is not audited as the actor.
+	assert.Equal(t, "system", acks[0].Actor.User)
+	assert.Equal(t, false, acks[0].Details["actorVerified"])
+	assert.Equal(t, "operator@example.com", acks[0].Details["claimedAcknowledgedBy"])
 }
 
 func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
@@ -217,6 +223,12 @@ func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
 		"update only": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.Rules[0].Operations = []admissionregistrationv1.OperationType{admissionregistrationv1.Update}
 		})}},
+		"create only": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
+			w.Rules[0].Operations = []admissionregistrationv1.OperationType{admissionregistrationv1.Create}
+		})}},
+		"all operations": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
+			w.Rules[0].Operations = []admissionregistrationv1.OperationType{admissionregistrationv1.OperationAll}
+		})}, want: true},
 		"other version": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) { w.Rules[0].APIVersions = []string{"v1beta1"} })}},
 		"object selector": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.ObjectSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"x": "y"}}
@@ -304,6 +316,26 @@ func TestCleanupAcknowledgementWebhookVerifiesTheActor(t *testing.T) {
 	require.Error(t, err, "acknowledgedBy must name the creating user")
 	_, err = validator.ValidateCreate(context.Background(), ack)
 	require.Error(t, err, "no admission request")
+
+	// The spec is immutable even where the CRD's CEL rule is not enforced.
+	metadataOnly := ack.DeepCopy()
+	metadataOnly.Finalizers = []string{cleanupAcknowledgementFinalizer}
+	_, err = validator.ValidateUpdate(asUser("operator@example.com"), ack, metadataOnly)
+	require.NoError(t, err, "metadata changes such as the retention finalizer are allowed")
+	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement){
+		"actor":   func(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) { a.Spec.AcknowledgedBy = "someone-else" },
+		"session": func(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) { a.Spec.SessionUID = "other-uid" },
+		"identities": func(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			a.Spec.Identities = a.Spec.Identities[:1]
+		},
+		"reason": func(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) { a.Spec.Reason = "changed" },
+	} {
+		changed := ack.DeepCopy()
+		mutate(changed)
+		_, err = validator.ValidateUpdate(asUser("operator@example.com"), ack, changed)
+		require.Error(t, err, name)
+		assert.True(t, apierrors.IsInvalid(err), name)
+	}
 }
 
 func TestCleanupProceedsWhenAcknowledgementCRDIsMissing(t *testing.T) {
@@ -925,7 +957,7 @@ func TestAcknowledgementCreatedBeforeTheWebhookIsRefused(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "breakglass", CreationTimestamp: metav1.NewTime(installed),
 			ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl", Time: ptr.To(metav1.NewTime(changed))}}},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{{Name: cleanupAcknowledgementWebhookName, FailurePolicy: &fail, Rules: []admissionregistrationv1.RuleWithOperations{{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			Rule:       admissionregistrationv1.Rule{APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, APIVersions: []string{"*"}, Resources: []string{"debugsessioncleanupacknowledgements"}},
 		}}}},
 	}

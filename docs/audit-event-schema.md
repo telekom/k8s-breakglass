@@ -204,8 +204,9 @@ failed. Fields: `message`, `cluster`, `grantedGroup`, `matchedGroup`,
 `debug_session.cleanup_acknowledged`: the outcome of a
 DebugSessionCleanupAcknowledgement (see
 [DebugSession cleanup recovery](debug-session-cleanup.md)). The actor is the
-acknowledging operator, verified by the admission webhook; the target is the
-DebugSession.
+acknowledging operator when the admission webhook verified it
+(`actorVerified`); otherwise it is the controller (`system`) and the
+unverified name is in `claimedAcknowledgedBy`. The target is the DebugSession.
 
 | Field | Type | PII | Description |
 |---|---|---|---|
@@ -213,12 +214,14 @@ DebugSession.
 | `source` | string | | Always `DebugSessionCleanupAcknowledgement`. |
 | `acknowledgement` | string | | Acknowledgement name, in the target namespace. |
 | `applied` | boolean | | `true` if residuals were retired, `false` if the acknowledgement was rejected. |
+| `actorVerified` | boolean | | `true` if the admission webhook verified `acknowledgedBy`. |
+| `claimedAcknowledgedBy` | string | **yes** | Unverified `acknowledgedBy` of an acknowledgement rejected because its actor could not be verified. |
 | `retired` | string[] | | Retired residual identities; absent for rejections. |
 | `reason` | string | | Operator-supplied reason. |
 | `message` | string | | Rejection reason. |
 
 ```json
-{"id":"7c6b5a49-3827-4615-a4b3-c2d1e0f9a8b7","schemaVersion":"v1","type":"debug_session.cleanup_acknowledged","severity":"warning","timestamp":"2026-11-13T09:40:00Z","actor":{"user":"operator@example.com"},"target":{"kind":"DebugSession","name":"dbg-node-a","namespace":"breakglass"},"details":{"cluster":"prod-eu-1","source":"DebugSessionCleanupAcknowledgement","acknowledgement":"dbg-node-a-ack-1","applied":true,"retired":["policies.kyverno.io/v1/PolicyException/breakglass-debug/dbg-node-a (uid=0f1e2d3c-4b5a-4968-8776-655443322110)"],"reason":"CHG-1234: Kyverno CRDs removed"},"requestContext":{"debugSessionName":"dbg-node-a"}}
+{"id":"7c6b5a49-3827-4615-a4b3-c2d1e0f9a8b7","schemaVersion":"v1","type":"debug_session.cleanup_acknowledged","severity":"warning","timestamp":"2026-11-13T09:40:00Z","actor":{"user":"operator@example.com"},"target":{"kind":"DebugSession","name":"dbg-node-a","namespace":"breakglass"},"details":{"cluster":"prod-eu-1","source":"DebugSessionCleanupAcknowledgement","acknowledgement":"dbg-node-a-ack-1","applied":true,"actorVerified":true,"retired":["policies.kyverno.io/v1/PolicyException/breakglass-debug/dbg-node-a (uid=0f1e2d3c-4b5a-4968-8776-655443322110)"],"reason":"CHG-1234: Kyverno CRDs removed"},"requestContext":{"debugSessionName":"dbg-node-a"}}
 ```
 
 ### Debug session workloads (`debugSessionWorkload`)

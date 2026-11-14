@@ -533,7 +533,10 @@ func webhookVerifiesAcknowledgements(config admissionregistrationv1.ValidatingWe
 				(slices.Contains(rule.APIVersions, breakglassv1alpha1.GroupVersion.Version) || slices.Contains(rule.APIVersions, "*")) &&
 				slices.Contains(rule.Resources, "debugsessioncleanupacknowledgements") &&
 				(rule.Scope == nil || *rule.Scope == admissionregistrationv1.NamespacedScope || *rule.Scope == admissionregistrationv1.AllScopes) &&
-				(slices.Contains(rule.Operations, admissionregistrationv1.Create) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
+				// CREATE verifies the actor; UPDATE keeps the spec immutable
+				// where the CRD's CEL rule is not enforced.
+				(slices.Contains(rule.Operations, admissionregistrationv1.OperationAll) ||
+					slices.Contains(rule.Operations, admissionregistrationv1.Create) && slices.Contains(rule.Operations, admissionregistrationv1.Update)) {
 				return true
 			}
 		}

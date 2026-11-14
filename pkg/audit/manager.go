@@ -1102,14 +1102,22 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 }
 
 // DebugSessionCleanupAcknowledged records an operator acknowledgement of
-// cleanup residuals as absent, with the acknowledging user as actor. Applied
-// is false when the controller rejected it; message then says why.
-func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, acknowledgement, user, reason string, applied bool, identities []string, message string) {
+// cleanup residuals as absent. Applied is false when the controller rejected
+// it; message then says why. The acknowledging user is the actor only when
+// actorVerified: the admission webhook verified it. Otherwise the actor is
+// the controller and the unverified name is kept as claimedAcknowledgedBy.
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, acknowledgement, user string, actorVerified bool, reason string, applied bool, identities []string, message string) {
 	details := map[string]interface{}{
 		"cluster":         cluster,
 		"source":          "DebugSessionCleanupAcknowledgement",
 		"acknowledgement": acknowledgement,
 		"applied":         applied,
+		"actorVerified":   actorVerified,
+	}
+	actor := Actor{User: user}
+	if !actorVerified {
+		actor = Actor{User: "system"}
+		details["claimedAcknowledgedBy"] = user
 	}
 	if len(identities) > 0 {
 		details["retired"] = append([]string(nil), identities...)
@@ -1123,7 +1131,7 @@ func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionNa
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionCleanupAcknowledged,
 		Severity: SeverityWarning,
-		Actor:    Actor{User: user},
+		Actor:    actor,
 		Target: Target{
 			Kind:      "DebugSession",
 			Name:      sessionName,

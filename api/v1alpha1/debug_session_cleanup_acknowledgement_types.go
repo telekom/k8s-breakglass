@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -207,9 +208,16 @@ func (a *DebugSessionCleanupAcknowledgement) ValidateCreate(ctx context.Context,
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: "DebugSessionCleanupAcknowledgement"}, obj.Name, errs)
 }
 
-// ValidateUpdate leaves spec immutability to the CRD schema.
-func (a *DebugSessionCleanupAcknowledgement) ValidateUpdate(context.Context, *DebugSessionCleanupAcknowledgement, *DebugSessionCleanupAcknowledgement) (admission.Warnings, error) {
-	return nil, nil
+// ValidateUpdate rejects any spec change. The CRD rule self == oldSelf
+// enforces the same, but CEL validation is not enabled on every supported
+// hub (Kubernetes 1.24), and a changed acknowledgedBy would keep the
+// creation timestamp the controller trusts.
+func (a *DebugSessionCleanupAcknowledgement) ValidateUpdate(_ context.Context, oldObj, newObj *DebugSessionCleanupAcknowledgement) (admission.Warnings, error) {
+	if equality.Semantic.DeepEqual(oldObj.Spec, newObj.Spec) {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: "DebugSessionCleanupAcknowledgement"}, newObj.Name,
+		field.ErrorList{field.Forbidden(field.NewPath("spec"), "is immutable; create a new acknowledgement instead")})
 }
 
 // ValidateDelete allows deletion; processed outcomes stay in session status.
