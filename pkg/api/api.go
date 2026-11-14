@@ -21,7 +21,6 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/static"
-	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -205,6 +204,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Correlation ID middleware. Registered before the rate limiter so that
 	// every response, including a 429, carries the request correlation ID.
 	engine.Use(correlationID)
+	// The access log and panic recovery come before the rate limiter, so that
+	// rejected (429) requests are logged too. accessLog is outside
+	// recoverPanics so that it logs the final status of a request whose
+	// handler panicked.
+	engine.Use(accessLog(log), recoverPanics(log))
 
 	// Basic per-IP rate limiter for public/unauthenticated endpoints
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
@@ -237,16 +241,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(otelgin.Middleware("k8s-breakglass"))
 
 	engine.Use(
-		ginzap.Ginzap(log, time.RFC3339, true),
-		ginzap.RecoveryWithZap(log, false),
 		requestLogger(log),
-		func(c *gin.Context) { // request start/end structured log
-			start := time.Now()
-			c.Next()
-			cid, _ := c.Get(apiresponses.CIDKey)
-			// ensure a concise http_request log always includes cid
-			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
-		},
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
 			c.Next()
 			if len(c.Errors) > 0 {
@@ -716,8 +711,8 @@ func (s *Server) registerWebhookListener(c APIController) error {
 		},
 		correlationID,
 		otelgin.Middleware("k8s-breakglass-webhook"),
-		ginzap.Ginzap(s.log, time.RFC3339, true),
-		ginzap.RecoveryWithZap(s.log, false),
+		accessLog(s.log),
+		recoverPanics(s.log),
 		requestLogger(s.log),
 	)
 	// The controller's SAR rate limiter runs first, so requests rejected by
@@ -748,6 +743,31 @@ func correlationID(c *gin.Context) {
 	c.Set(apiresponses.CIDKey, cid)
 	c.Writer.Header().Set(requestIDHeader, cid)
 	c.Next()
+}
+
+// accessLog writes one http_request line per request. It logs the route
+// template, or the path without the query string, and never the query: it
+// can carry OIDC authorization codes and approval-link tokens.
+func accessLog(log *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		// Read before the handlers run: the SPA fallback rewrites the URL path.
+		rawPath := c.Request.URL.Path
+		c.Next()
+		path := c.FullPath()
+		if path == "" {
+			path = rawPath
+		}
+		cid, _ := c.Get(apiresponses.CIDKey)
+		log.Info("http_request",
+			zap.String("cid", fmt.Sprintf("%v", cid)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", path),
+			zap.Int("status", c.Writer.Status()),
+			zap.Duration("latency", time.Since(start)),
+			zap.String("ip", c.ClientIP()),
+			zap.String("user_agent", c.Request.UserAgent()))
+	}
 }
 
 // requestLogger attaches a sugared logger with request fields.
@@ -1731,4 +1751,26 @@ func isTerminalStreamRequest(r *http.Request) bool {
 	}
 	name, suffix, ok := strings.Cut(rest, "/")
 	return ok && name != "" && suffix == "terminal"
+}
+
+// recoverPanics answers a panicking request with 500 and logs the panic
+// without the request headers, so that credentials never reach the log.
+// (gin-contrib/zap's RecoveryWithZap logs a full request dump, Authorization
+// included.)
+func recoverPanics(log *zap.Logger) gin.HandlerFunc {
+	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, rec any) {
+		cid, _ := c.Get(apiresponses.CIDKey)
+		log.Error("[Recovery from panic]",
+			zap.Any("error", rec),
+			zap.String("cid", fmt.Sprintf("%v", cid)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.FullPath()))
+		// A handler that already wrote (for example a flushed terminal or
+		// recording stream) keeps its status and body; appending an error
+		// body would corrupt the stream.
+		if !c.Writer.Written() {
+			apiresponses.RespondInternalErrorSimple(c, "internal server error")
+		}
+		c.Abort()
+	})
 }

@@ -62,9 +62,13 @@ patches:
     - op: replace
       path: /spec/template/spec/containers/0/args/6
       value: --cluster-config-check-interval=10s
+    # Debug logging in the human-readable console format
     - op: add
       path: /spec/template/spec/containers/0/args/-
-      value: --debug
+      value: --log-level=debug
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --log-format=console
     # Set faster cleanup interval for E2E tests (10 seconds instead of 5 minutes)
     - op: add
       path: /spec/template/spec/containers/0/env/-
