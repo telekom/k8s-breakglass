@@ -321,7 +321,10 @@ type WebhookController struct {
 	// attachedAudit hands debug_session.attached to a background worker so
 	// a saturated audit queue cannot delay the SubjectAccessReview response.
 	attachedAuditOnce sync.Once
+	attachedAuditMu   sync.RWMutex // guards closing attachedAudit
 	attachedAudit     chan attachedAuditItem
+	attachedStopped   bool
+	attachedDone      chan struct{}
 	// attachedEmit delivers a handed-off event (audit.Service.Emit; tests).
 	attachedEmit    func(context.Context, *audit.Event)
 	rateLimiter     *ratelimit.IPRateLimiter // per-IP rate limiter for SAR requests
@@ -1165,31 +1168,71 @@ func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, 
 	if event == nil {
 		return
 	}
-	wc.attachedAuditOnce.Do(func() {
-		emit := wc.attachedEmit
-		if emit == nil {
-			emit = wc.auditService.Emit
-		}
-		wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
-		// ponytail: one process-lifetime worker; it only waits on the audit
-		// queue, which bounds every Emit by its WriteTimeout.
-		go func() {
-			for item := range wc.attachedAudit {
-				emit(item.ctx, item.event)
-			}
-		}()
-	})
+	// The authorization time, not the time the worker hands the event on.
+	event.Timestamp = time.Now().UTC()
+	wc.attachedAuditOnce.Do(wc.startAttachedAudit)
+	wc.attachedAuditMu.RLock()
+	defer wc.attachedAuditMu.RUnlock()
+	if wc.attachedStopped {
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+		return
+	}
 	select {
 	case wc.attachedAudit <- attachedAuditItem{ctx: context.WithoutCancel(ctx), event: event}:
 	default:
 		// The audit pipeline is saturated far beyond its own queue; count the
 		// loss like a full audit queue instead of delaying authorization.
-		metrics.AuditEventsDropped.WithLabelValues("webhook-attached-handoff", "queue_full").Inc()
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "queue_full").Inc()
 		if wc.log != nil {
 			wc.log.Warnw("Dropping debug_session.attached audit event: handoff buffer is full", "session", sessionName)
 		}
 	}
 }
+
+func (wc *WebhookController) startAttachedAudit() {
+	emit := wc.attachedEmit
+	if emit == nil {
+		emit = wc.auditService.Emit
+	}
+	wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
+	wc.attachedDone = make(chan struct{})
+	go func() {
+		defer close(wc.attachedDone)
+		for item := range wc.attachedAudit {
+			emit(item.ctx, item.event)
+		}
+	}()
+}
+
+// StopAttachedAudit stops accepting debug_session.attached events and drains
+// the handoff into the audit service until ctx ends. Call it after the HTTP
+// server stopped and before the audit service is closed. Events that cannot
+// be drained in time are counted as dropped with reason "shutdown".
+func (wc *WebhookController) StopAttachedAudit(ctx context.Context) {
+	wc.attachedAuditOnce.Do(func() {}) // nothing was ever handed off
+	wc.attachedAuditMu.Lock()
+	if wc.attachedStopped || wc.attachedAudit == nil {
+		wc.attachedStopped = true
+		wc.attachedAuditMu.Unlock()
+		return
+	}
+	wc.attachedStopped = true
+	close(wc.attachedAudit)
+	wc.attachedAuditMu.Unlock()
+	select {
+	case <-wc.attachedDone:
+	case <-ctx.Done():
+		if pending := len(wc.attachedAudit); pending > 0 {
+			metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Add(float64(pending))
+		}
+		if wc.log != nil {
+			wc.log.Warnw("debug_session.attached handoff not drained before shutdown deadline", "pending", len(wc.attachedAudit))
+		}
+	}
+}
+
+// attachedHandoffSink labels losses of the debug_session.attached handoff.
+const attachedHandoffSink = "webhook-attached-handoff"
 
 // attachedAuditBuffer bounds the debug_session.attached handoff.
 const attachedAuditBuffer = 1024

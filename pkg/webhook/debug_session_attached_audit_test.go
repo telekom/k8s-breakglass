@@ -175,3 +175,58 @@ func TestDebugSessionAttachedDoesNotDelaySARResponse(t *testing.T) {
 	require.JSONEq(t, `{"allowed":true}`, string(body))
 	require.Less(t, time.Since(start), time.Second)
 }
+
+func attachedSAR() *authorizationv1.SubjectAccessReview {
+	return &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+		User:               "requester",
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "debug", Name: "own-pod"},
+	}}
+}
+
+// A delayed handoff keeps the authorization time, and shutdown drains every
+// handed-off event into the audit service before it is closed.
+func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var delivered []*audit.Event
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
+		attachedEmit: func(_ context.Context, event *audit.Event) {
+			<-release
+			mu.Lock()
+			defer mu.Unlock()
+			delivered = append(delivered, event)
+		}}
+	authorizedAt := time.Now().UTC()
+	for range 3 {
+		wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wc.StopAttachedAudit(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, delivered, 3, "shutdown drains the handoff")
+	for _, event := range delivered {
+		require.WithinDuration(t, authorizedAt, event.Timestamp, 40*time.Millisecond, "authorization time, not delivery time")
+	}
+	// After the stop, new events are counted, not queued, and stopping again is safe.
+	wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	wc.StopAttachedAudit(context.Background())
+	require.Len(t, delivered, 3)
+
+	// A blocked delivery does not hold shutdown past its deadline.
+	blocked := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
+		attachedEmit: func(context.Context, *audit.Event) { select {} }}
+	for range 3 {
+		blocked.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	blocked.StopAttachedAudit(ctx)
+	require.Less(t, time.Since(start), 2*time.Second)
+
+	// A controller that never handed anything off stops cleanly.
+	(&WebhookController{}).StopAttachedAudit(context.Background())
+}
