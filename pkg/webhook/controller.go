@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -325,8 +326,12 @@ type WebhookController struct {
 	attachedAudit     chan attachedAuditItem
 	attachedStopped   bool
 	attachedDone      chan struct{}
-	// attachedEmit delivers a handed-off event (audit.Service.Emit; tests).
-	attachedEmit    func(context.Context, *audit.Event)
+	// attachedAbandoned is set when the shutdown drain missed its deadline:
+	// the worker then counts every event it cannot hand on.
+	attachedAbandoned atomic.Bool
+	// attachedEmit delivers a handed-off event and reports whether the audit
+	// pipeline accepted it (audit.Service.TryEmit; tests).
+	attachedEmit    func(context.Context, *audit.Event) bool
 	rateLimiter     *ratelimit.IPRateLimiter // per-IP rate limiter for SAR requests
 	activityTracker *ActivityTracker         // optional buffered session activity tracker (#314)
 }
@@ -1192,14 +1197,22 @@ func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, 
 func (wc *WebhookController) startAttachedAudit() {
 	emit := wc.attachedEmit
 	if emit == nil {
-		emit = wc.auditService.Emit
+		emit = wc.auditService.TryEmit
 	}
 	wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
 	wc.attachedDone = make(chan struct{})
 	go func() {
 		defer close(wc.attachedDone)
 		for item := range wc.attachedAudit {
-			emit(item.ctx, item.event)
+			if wc.attachedAbandoned.Load() {
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+				continue
+			}
+			// An item in flight when the drain gave up counts itself: after
+			// the audit service closed, TryEmit no longer accepts it.
+			if !emit(item.ctx, item.event) && wc.attachedAbandoned.Load() {
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+			}
 		}
 	}()
 }
@@ -1222,11 +1235,16 @@ func (wc *WebhookController) StopAttachedAudit(ctx context.Context) {
 	select {
 	case <-wc.attachedDone:
 	case <-ctx.Done():
-		if pending := len(wc.attachedAudit); pending > 0 {
-			metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Add(float64(pending))
+		wc.attachedAbandoned.Store(true)
+		// Take the buffered items here (the channel is closed, so this does
+		// not block); each item is counted by whoever receives it.
+		pending := 0
+		for range wc.attachedAudit {
+			pending++
 		}
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Add(float64(pending))
 		if wc.log != nil {
-			wc.log.Warnw("debug_session.attached handoff not drained before shutdown deadline", "pending", len(wc.attachedAudit))
+			wc.log.Warnw("debug_session.attached handoff not drained before shutdown deadline", "pending", pending)
 		}
 	}
 }

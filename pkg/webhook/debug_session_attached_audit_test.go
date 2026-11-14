@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -26,6 +27,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit/audittest"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 // The final authorization response emits debug_session.attached for an exec,
@@ -94,7 +96,7 @@ func TestSendAuthorizationResponseEmitsDebugSessionAttached(t *testing.T) {
 			wc := &WebhookController{
 				log: log, escalManager: &escalation.EscalationManager{Client: cli},
 				sesManager: breakglass.NewSessionManagerWithClient(cli), auditService: svc,
-				attachedEmit: func(ctx context.Context, event *audit.Event) { svc.Emit(ctx, event) },
+				attachedEmit: func(ctx context.Context, event *audit.Event) bool { return svc.TryEmit(ctx, event) },
 				podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 				},
@@ -151,7 +153,7 @@ func TestDebugSessionAttachedDoesNotDelaySARResponse(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	svc := audit.NewService(cli, nil, zap.NewNop(), "controller")
 	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: svc,
-		attachedEmit: func(context.Context, *audit.Event) { <-release }}
+		attachedEmit: func(context.Context, *audit.Event) bool { <-release; return true }}
 	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
 		User:               "requester",
 		ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "debug", Name: "own-pod"},
@@ -191,11 +193,12 @@ func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
 	var delivered []*audit.Event
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
 	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(_ context.Context, event *audit.Event) {
+		attachedEmit: func(_ context.Context, event *audit.Event) bool {
 			<-release
 			mu.Lock()
 			defer mu.Unlock()
 			delivered = append(delivered, event)
+			return true
 		}}
 	authorizedAt := time.Now().UTC()
 	for range 3 {
@@ -217,7 +220,7 @@ func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
 
 	// A blocked delivery does not hold shutdown past its deadline.
 	blocked := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
-		attachedEmit: func(context.Context, *audit.Event) { select {} }}
+		attachedEmit: func(context.Context, *audit.Event) bool { select {} }}
 	for range 3 {
 		blocked.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
 	}
@@ -229,4 +232,48 @@ func TestDebugSessionAttachedHandoffTimestampAndDrain(t *testing.T) {
 
 	// A controller that never handed anything off stops cleanly.
 	(&WebhookController{}).StopAttachedAudit(context.Background())
+}
+
+// An item already taken by the worker when the shutdown deadline passes is
+// counted once its delivery fails, and buffered items are counted at Stop.
+func TestDebugSessionAttachedShutdownCountsInFlightAndBuffered(t *testing.T) {
+	drops := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown"))
+	}
+	release := make(chan struct{})
+	taken := make(chan struct{}, 1)
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
+		attachedEmit: func(context.Context, *audit.Event) bool {
+			select {
+			case taken <- struct{}{}:
+			default:
+			}
+			<-release
+			return false // the audit service closed meanwhile
+		}}
+	before := drops()
+	wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	<-taken // one item in flight, buffer empty
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	wc.StopAttachedAudit(ctx)
+	require.Equal(t, before, drops(), "the in-flight item is not counted while it may still succeed")
+	close(release)
+	require.Eventually(t, func() bool { return drops() == before+1 }, 5*time.Second, 10*time.Millisecond,
+		"the failed in-flight item is counted")
+
+	// Buffered items behind a blocked worker are counted at the deadline.
+	hold := make(chan struct{})
+	defer close(hold)
+	buffered := &WebhookController{log: zap.NewNop().Sugar(), auditService: audit.NewService(cli, nil, zap.NewNop(), "controller"),
+		attachedEmit: func(context.Context, *audit.Event) bool { <-hold; return false }}
+	for range 4 {
+		buffered.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	}
+	before = drops()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel2()
+	buffered.StopAttachedAudit(ctx2)
+	require.GreaterOrEqual(t, drops(), before+3, "the buffered items are counted at the deadline")
 }

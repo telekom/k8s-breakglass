@@ -611,6 +611,27 @@ func TestEscalationAuditDrainOnShutdown(t *testing.T) {
 	require.Equal(t, before+1, shutdownDrops(), "the undelivered event is counted")
 	require.Empty(t, rejecting.take())
 
+	// An observation concurrent with the drain takes the counted-loss path
+	// while the retained snapshot keeps draining.
+	c := newEscalationAuditor(rejecting, zap.NewNop().Sugar())
+	c.deletion(auditedEscalation(9))
+	before = shutdownDrops()
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel3()
+	done := make(chan struct{})
+	go func() { c.drain(ctx3); close(done) }()
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.stopped
+	}, time.Second, time.Millisecond, "the drain stops observations before it starts delivering")
+	concurrent := auditedEscalation(10)
+	concurrent.UID = "concurrent"
+	c.deletion(concurrent)
+	<-done
+	require.Equal(t, before+2, shutdownDrops(), "the concurrent deletion and the undelivered snapshot are counted")
+	require.NotContains(t, c.pending, escalationAuditKey{uid: "concurrent", generation: 10, deleted: true})
+
 	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
 }
 

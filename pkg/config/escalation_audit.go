@@ -292,11 +292,11 @@ func (a *escalationAuditor) drain(ctx context.Context) {
 	if a == nil {
 		return
 	}
-	defer func() {
-		a.mu.Lock()
-		a.stopped = true
-		a.mu.Unlock()
-	}()
+	// Stop first: observations from here on take the counted-loss path,
+	// while the snapshots retained so far drain.
+	a.mu.Lock()
+	a.stopped = true
+	a.mu.Unlock()
 	for {
 		a.mu.Lock()
 		for _, entry := range a.pending {
