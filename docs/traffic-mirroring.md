@@ -193,13 +193,24 @@ synchronous durable audit sink.
 
 - Only traffic that passes the kernel datapath of the interface is visible:
   DPDK-bound SR-IOV VFs and hardware-offloaded flows are not mirrored.
-- Packets are mirrored at the tc clsact hooks of the source network
-  namespace: ingress before netfilter there (MultiNetworkPolicy, host
-  firewall), egress before host-side Cilium or Calico policy. The capture can
-  therefore contain packets that policy drops afterwards.
+- Packets are mirrored by a tc clsact filter in the source network
+  namespace, so ingress copies are taken before netfilter there
+  (MultiNetworkPolicy, host firewall). For a Pod source, egress copies are
+  also taken before host-side Cilium or Calico policy, which runs outside the
+  Pod's namespace. The capture can therefore contain packets that policy
+  drops afterwards.
+- A tcx program, or a tc filter at a lower preference, that returns a verdict
+  on the same hook ends classification before the mirror filter, which then
+  sees none of those packets. Cilium and Calico eBPF programs on Node
+  devices do this, so a Node source can capture nothing. The mirror itself
+  uses the `continue` action and never hides packets from later filters.
+  `Ready` and the `mirroring` state mean that the mirror is attached, not
+  that it observes packets.
 - A renamed or re-created source interface fails the session: the mirror
   agent checks the interface index and hardware address while it runs, and
   teardown removes the operation's filters from every link of the namespace.
+  A failed teardown keeps its reason in `status.trafficMirror.teardownResult`
+  and the `CleanupFailed` condition.
 - Captures are the decoded `tcpdump` output in the capture container log.
   Uploading pcaps to the [diagnostic artifact store](diagnostic-artifacts.md)
   is planned as a separate recipe.

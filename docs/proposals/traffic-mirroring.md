@@ -62,7 +62,12 @@ with `hostPID`, created only after the capture Pod runs.
   `tbf` on the mirror device (`maxBandwidthMbps`; excess copies are dropped,
   the original traffic is never shaped), adds `clsact` if absent and one
   `basic` (no ematch, so match-all) filter per direction with
-  `action mirred egress mirror dev bgm… cookie <operation>`. The agent also
+  `action mirred egress mirror dev bgm… continue cookie <operation>`.
+  `continue` lets classification go on to foreign filters at higher
+  preferences; mirred's default `pipe` would end it and bypass them. The
+  agent records the interface's ifindex and MAC at attach and fails with
+  `interface-changed` when they change, so a renamed or re-created
+  interface reports a lost mirror instead of a silent one. The agent also
   receives the absolute approved expiry: it refuses to attach after it and
   detaches itself, with verification, when it is reached.
 - The capture Pod's only container (`NET_RAW`, plus `SETUID`/`SETGID` to drop
@@ -87,8 +92,17 @@ with `hostPID`, created only after the capture Pod runs.
 The `basic` classifier is used because `cls_matchall` is missing from some
 VM kernels and `u32` hash tables are shared between the clsact ingress and
 egress hooks, which makes per-hook ownership ambiguous. Teardown deletes only
-the exact filter handles whose action carries the operation cookie, so a
-foreign filter added at the same preference survives.
+the exact filter handles whose action carries the operation cookie, on every
+link of the namespace so that a renamed interface is covered, and a foreign
+filter added at the same preference survives.
+
+The copies are taken at the clsact hook in the source namespace: ingress
+before netfilter there (MultiNetworkPolicy, host firewall) and, for a Pod
+source, egress before host-side Cilium or Calico policy, so a capture can
+contain packets that policy drops later. A tcx program or a lower-preference
+filter that returns a verdict on the same hook (for example a CNI's eBPF
+program on a Node device) runs first and hides those packets from the
+mirror; the `mirroring` state means attached, not observing.
 
 Because the mechanism is plain `tc` in the source network namespace, it works
 for the primary interface, Multus secondary interfaces and kernel-bound
@@ -152,8 +166,9 @@ fails closed if any identity, label or the interface changed.
    the absolute approved expiry, and `activeDeadlineSeconds` is a backstop,
    so mirroring ends on time even while the controller is down.
 5. **Verified teardown.** Whenever `createAttempted` is set, the controller
-   then runs a teardown Pod on the same Node. It deletes only filters whose
-   action cookie is the operation's and the mirror device, leaves the
+   then runs a teardown Pod on the same Node. It deletes, on every link of
+   the namespace, only filters whose action cookie is the operation's, and
+   the mirror device, leaves the
    `clsact` qdisc (another tool may own it), and exits successfully only
    after re-reading that none remain. The helper opens the source network
    namespace once, repeats the identity checks (not the host namespace, owns
@@ -163,7 +178,9 @@ fails closed if any identity, label or the interface changed.
    address change does not prove that the filters are gone, so cleanup
    stays unresolved until an operator inspects the Node. Any failed
    namespace inspection also fails the teardown. The teardown result is
-   recorded in `status.trafficMirror.teardownResult` and the stop receipt.
+   recorded in `status.trafficMirror.teardownResult` and the stop receipt;
+   until it is verified, that field and the `CleanupFailed` condition carry
+   the bounded reason of the last failed attempt.
    Every inspection must succeed: a namespace or `tc` read error fails the
    teardown instead of counting as absence. A failed teardown Pod is
    replaced; the session keeps its finalizer and reports `CleanupFailed`

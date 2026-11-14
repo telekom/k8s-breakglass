@@ -761,6 +761,9 @@ func boundedCleanupConditionMessage(ds *breakglassv1alpha1.DebugSession) string 
 		return "Cleanup failed; residual resources remain in the durable inventory."
 	}
 	message := prefix + strings.Join(identities, ", ")
+	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released && !mirror.TeardownVerified && mirror.TeardownResult != "" {
+		message += "; traffic mirror " + mirror.TeardownResult
+	}
 	if len(message) <= maxCleanupConditionMessage {
 		return message
 	}

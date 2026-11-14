@@ -59,8 +59,10 @@ const (
 	trafficMirrorActiveRequeue  = 15 * time.Second
 	trafficMirrorTeardownSuffix = "-teardown"
 	trafficMirrorCaptureSuffix  = "-capture"
-	trafficMirrorSessionUID     = "breakglass.t-caas.telekom.com/session-uid"
-	trafficMirrorOperation      = "breakglass.t-caas.telekom.com/traffic-mirror-operation"
+	// maxTrafficMirrorMessage bounds the helper termination messages kept in status.
+	maxTrafficMirrorMessage = 512
+	trafficMirrorSessionUID = "breakglass.t-caas.telekom.com/session-uid"
+	trafficMirrorOperation  = "breakglass.t-caas.telekom.com/traffic-mirror-operation"
 )
 
 // trafficMirrorTuple derives the kernel identities of an operation: the tc
@@ -539,9 +541,9 @@ func trafficMirrorFailure(pod *corev1.Pod) string {
 		switch {
 		case terminated == nil:
 		case container.Name == "mirror" && terminated.ExitCode != 0:
-			return fmt.Sprintf("mirror agent exited %d: %s", terminated.ExitCode, terminated.Message)
+			return fmt.Sprintf("mirror agent exited %d: %s", terminated.ExitCode, truncate(terminated.Message, maxTrafficMirrorMessage))
 		case container.Name == "capture" && terminated.ExitCode != 0 && terminated.ExitCode != 124:
-			return fmt.Sprintf("capture exited %d: %s", terminated.ExitCode, terminated.Message)
+			return fmt.Sprintf("capture exited %d: %s", terminated.ExitCode, truncate(terminated.Message, maxTrafficMirrorMessage))
 		}
 	}
 	if pod.Status.Phase == corev1.PodFailed && pod.Status.Reason != "DeadlineExceeded" {
@@ -824,11 +826,19 @@ func (c *DebugSessionController) runTrafficMirrorTeardown(ctx context.Context, t
 		// the source sandbox had been recreated.
 		return true, "Node " + ds.Spec.TrafficMirror.NodeName + ": " + trafficMirrorTerminationMessage(pod), nil
 	case corev1.PodFailed:
-		// Delete the failed attempt; the next cleanup creates a fresh one.
+		// Keep why the attempt failed (for example teardown-unverifiable) for
+		// the CleanupFailed condition, then delete it; the next cleanup creates
+		// a fresh one.
+		reason := "teardown failed on Node " + ds.Spec.TrafficMirror.NodeName + ": " + trafficMirrorTerminationMessage(pod)
+		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) {
+			current.TeardownResult = reason
+		}); err != nil {
+			return false, "", err
+		}
 		if _, err := deleteTrafficMirrorPod(ctx, target, ds, name); err != nil {
 			return false, "", err
 		}
-		return false, "", fmt.Errorf("trafficMirror teardown failed: %s", trafficMirrorTerminationMessage(pod))
+		return false, "", fmt.Errorf("trafficMirror %s", reason)
 	}
 	return false, "teardown Pod is running", nil
 }
@@ -836,10 +846,10 @@ func (c *DebugSessionController) runTrafficMirrorTeardown(ctx context.Context, t
 func trafficMirrorTerminationMessage(pod *corev1.Pod) string {
 	for _, container := range pod.Status.ContainerStatuses {
 		if container.State.Terminated != nil && container.State.Terminated.Message != "" {
-			return container.State.Terminated.Message
+			return truncate(container.State.Terminated.Message, maxTrafficMirrorMessage)
 		}
 	}
-	return pod.Status.Message
+	return truncate(pod.Status.Message, maxTrafficMirrorMessage)
 }
 
 // trafficMirrorPodOperations allows at most reading the capture logs. An

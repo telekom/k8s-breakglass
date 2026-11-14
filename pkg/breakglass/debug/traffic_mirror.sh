@@ -259,6 +259,7 @@ attach() {
 	in_capture ip -o addr show | grep -F -q " $MIRROR_CAPTURE_POD_IP/" || fail capture-missing "the capture network namespace does not own the capture Pod IP"
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
 	ifid=$(link_id)
+	[ -n "$ifid" ] || fail inspect-failed "cannot read the index and address of $MIRROR_INTERFACE"
 	detach
 	for hook in ingress egress; do
 		if [ -n "$(in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF")" ]; then

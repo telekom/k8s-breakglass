@@ -373,10 +373,20 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	require.Equal(t, "node-a", pod.Spec.NodeName)
 
 	// A failed teardown is never accepted; the attempt is replaced.
-	setMirrorPodStatus(t, f, teardown, func(pod *corev1.Pod) { pod.Status.Phase = corev1.PodFailed })
-	require.ErrorContains(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "teardown failed")
+	// Its bounded reason reaches the status and the CleanupFailed condition.
+	reason := "teardown-unverifiable: tc filters with the operation cookie remain on net1 ingress"
+	setMirrorPodStatus(t, f, teardown, func(pod *corev1.Pod) {
+		pod.Status.Phase = corev1.PodFailed
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "teardown", State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: reason + strings.Repeat(".", 4096)}}}}
+	})
+	require.ErrorContains(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), reason)
 	require.Nil(t, f.pod(t, teardown))
 	require.False(t, f.ds.Status.TrafficMirror.TeardownVerified)
+	require.Contains(t, f.ds.Status.TrafficMirror.TeardownResult, "Node node-a: "+reason)
+	require.Less(t, len(f.ds.Status.TrafficMirror.TeardownResult), 600, "the termination message is bounded")
+	setCleanupCondition(f.ds)
+	require.Contains(t, f.ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, reason)
 
 	require.ErrorIs(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), errTrafficMirrorTeardownPending)
 	setMirrorPodStatus(t, f, teardown, func(pod *corev1.Pod) { pod.Status.Phase = corev1.PodSucceeded })

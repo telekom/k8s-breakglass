@@ -305,3 +305,14 @@ func TestTrafficMirrorHelperAttachDetectsRecreatedInterface(t *testing.T) {
 	require.Contains(t, output, "interface-changed")
 	require.NotContains(t, output, "mirror-expired")
 }
+
+func TestTrafficMirrorHelperAttachRefusesUnreadableInterfaceIdentity(t *testing.T) {
+	h := newHelperHost(t)
+	// eth0 exists, but ip prints nothing for it: an empty identity would
+	// later "match" a missing interface.
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.link.eth0"), nil, 0o644))
+	code, output := h.run("attach")
+	require.Equal(t, 1, code, output)
+	require.Contains(t, output, "inspect-failed")
+	require.NotContains(t, h.calls(), "mirred", "no mirror filter is attached")
+}

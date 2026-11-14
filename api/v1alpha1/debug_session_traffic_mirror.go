@@ -177,7 +177,8 @@ type TrafficMirrorStatus struct {
 	// +optional
 	CapturePodUID string `json:"capturePodUID,omitempty"`
 	// teardownResult records what the verified teardown found, for example
-	// that the source sandbox had been recreated.
+	// that the source sandbox had been recreated. While teardownVerified is
+	// false it holds why the last teardown attempt failed.
 	// +optional
 	TeardownResult string `json:"teardownResult,omitempty"`
 	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
