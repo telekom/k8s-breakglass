@@ -82,6 +82,9 @@ type escalationAuditor struct {
 	// escalationAuditSeenLimit; the oldest entries are evicted.
 	seen    map[escalationAuditKey]time.Time
 	pending map[escalationAuditKey]*pendingEscalationAudit
+	// stopped is set by the shutdown drain: the audit service closes next,
+	// so later changes are counted as lost instead of retained silently.
+	stopped bool
 }
 
 func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLogger) *escalationAuditor {
@@ -174,6 +177,11 @@ func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalat
 	}
 	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation}
 	a.mu.Lock()
+	if a.stopped {
+		a.mu.Unlock()
+		a.countShutdownLoss()
+		return
+	}
 	if _, seen := a.seen[key]; seen {
 		a.mu.Unlock()
 		return
@@ -208,6 +216,11 @@ func (a *escalationAuditor) deletion(obj client.Object) {
 	event.Timestamp = a.now().UTC()
 	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}
 	a.mu.Lock()
+	if a.stopped {
+		a.mu.Unlock()
+		a.countShutdownLoss()
+		return
+	}
 	if _, seen := a.seen[key]; !seen {
 		a.record(key, event)
 	}
@@ -279,6 +292,11 @@ func (a *escalationAuditor) drain(ctx context.Context) {
 	if a == nil {
 		return
 	}
+	defer func() {
+		a.mu.Lock()
+		a.stopped = true
+		a.mu.Unlock()
+	}()
 	for {
 		a.mu.Lock()
 		for _, entry := range a.pending {
@@ -297,6 +315,14 @@ func (a *escalationAuditor) drain(ctx context.Context) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// countShutdownLoss counts a change observed after the shutdown drain: the
+// informer can still deliver events until the manager stops, but the audit
+// service is closing.
+func (a *escalationAuditor) countShutdownLoss() {
+	metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Inc()
+	a.logger.Warnw("Escalation change observed after the audit shutdown drain is not audited")
 }
 
 // escalationAuditSink labels losses of retained escalation audit events.

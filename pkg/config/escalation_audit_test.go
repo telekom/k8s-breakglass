@@ -19,9 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/audit/audittest"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 type escalationAuditCapture struct {
@@ -588,6 +590,16 @@ func TestEscalationAuditDrainOnShutdown(t *testing.T) {
 	require.Less(t, time.Since(start), 2*time.Second, "the drain is bounded by its context")
 
 	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
+
+	// Changes observed after the drain are counted, not retained.
+	lost := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown"))
+	a.deletion(auditedEscalation(7))
+	late := auditedEscalation(8)
+	late.UID = "late"
+	a.specChange(late)
+	require.Equal(t, lost+2, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown")))
+	require.NotContains(t, a.pending, escalationAuditKey{uid: "esc-uid", generation: 7, deleted: true})
+	require.NotContains(t, a.pending, escalationAuditKey{uid: "late", generation: 8})
 }
 
 // The drain runs from audit.Service.Close while the pipeline still accepts.

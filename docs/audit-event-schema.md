@@ -288,7 +288,11 @@ are lost when the controller crashes before they were accepted (a new leader
 re-emits the current generation of each existing escalation, but not
 intermediate generations or a delete it did not observe) or when the pipeline
 does not accept them within the retention bounds. With no AuditConfig at all,
-auditing is disabled and nothing is retained or retried. The actor is `system`; the event does not identify who changed the spec.
+auditing is disabled and nothing is retained or retried. On a graceful shutdown
+the controller delivers all retained events (up to 10 s) before the audit
+pipeline closes; changes the watch delivers after that drain, and events it
+cannot deliver in time, are counted in
+`breakglass_audit_events_dropped_total{sink="escalation-audit",reason="shutdown"}`. The actor is `system`; the event does not identify who changed the spec.
 `resourceVersion` is the version that the controller observed, which can
 belong to a later status or metadata write. To attribute a change, search the
 Kubernetes API server audit log for create, update, patch and delete requests
