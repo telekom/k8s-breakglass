@@ -24,16 +24,40 @@ log message, level or literal field key must regenerate the catalogue.
 |---------|---------|--------|--------|--------|
 | Controller (`/breakglass`, `cmd/main.go`) | `breakglass-manager` Deployment. Covers the hub API, frontend, SubjectAccessReview webhook, validating webhooks, reconcilers, cleanup, audit, mail, leader election, debug sessions, terminal recordings and artifacts | zap | debug, info, warn, error | `json` (default) or `console` on stderr |
 | `breakglass artifacts provision` (`cmd/artifacts.go`) | one-off subcommand of the controller binary | plain text | none | text on stdout; `fatal: …` on stderr |
-| `bgctl` (`cmd/bgctl`) | operator CLI | plain text | `--verbose` / `BGCTL_VERBOSE=true` | the verbose request trace (`[DEBUG] [bgctl] METHOD path (correlationID=…)`, then `-> status`) goes to stderr; command output goes to stdout (`-o table\|wide\|json\|yaml`) |
-| `cluster-validator` (`cmd/cluster-validator`) | validator image | plain text | none | `cluster-validator: <error>` on stderr; the JSON report on stdout or a file |
-| Node-maintenance helpers: `utils/node-maintenance/cmd/hotfix-action`, `utils/node-maintenance/cmd/kexec-action`, `utils/node-maintenance/cmd/network-action`, `utils/node-maintenance/cmd/service-action`, and the `node-maintenance` shell entrypoint | node-maintenance utility image | plain text | none | `<name>: <error>` on stderr; `hotfix-action` writes its JSON result to stdout and the termination log |
-| Diagnostic artifact collector: `utils/images/diagnostic-artifact-collector/copier`, `utils/images/diagnostic-artifact-collector/uploader`, and the shell entrypoint | artifact collection pod | plain text | none | `diagnostic-artifact-collector: …` on stderr. The uploader replaces upload URLs, tokens and archive paths with `[URL]`, `[TOKEN]` and `[ARCHIVE]` |
+| `bgctl` (`cmd/bgctl`) | operator CLI | zap | warn by default; debug with `--verbose` | `console` (default) or `json` on stderr. Debug lines log each API request (`METHOD path (correlationID=…)` and `-> status`), never the token. Command output goes to stdout (`-o table\|wide\|json\|yaml`) and never mixes with the logs. A failed command prints cobra's plain `Error: <message>` line in every format: it is the command's result for the user, not a log line |
+| `cluster-validator` (`cmd/cluster-validator`) | validator image | zap | info by default; only errors are logged | `text` (default: `cluster-validator: <error>`), `json` or `console` on stderr, option errors included; the JSON report goes to stdout or a file. An invalid `--log-level` or `--log-format` is printed as a plain `cluster-validator: <error>` line, because no logger can be built |
+| Node-maintenance helpers: `utils/node-maintenance/cmd/hotfix-action`, `utils/node-maintenance/cmd/kexec-action`, `utils/node-maintenance/cmd/network-action`, `utils/node-maintenance/cmd/service-action`, and the `node-maintenance` shell entrypoint | node-maintenance utility image | standard-library `log/slog` (the three `*-action` repair helpers); plain text (`hotfix-action`, shell) | `LOG_LEVEL`, error lines only | `<name>: <error>` on stderr (`text`, default) or JSON (`LOG_FORMAT=json`); `hotfix-action` reports through its JSON result on stdout and the termination log and writes no log lines |
+| Diagnostic artifact collector: `utils/images/diagnostic-artifact-collector/copier`, `utils/images/diagnostic-artifact-collector/uploader`, and the shell entrypoint | artifact collection pod | standard-library `log/slog` (`copier`, `uploader`); plain text (shell) | `LOG_LEVEL`, error lines only | `diagnostic-artifact-safe-copy: copy failed` and `artifact upload …` on stderr (`text`, default) or JSON (`LOG_FORMAT=json`); the shell writes `diagnostic-artifact-collector: …`. The uploader replaces upload URLs, tokens and archive paths with `[URL]`, `[TOKEN]` and `[ARCHIVE]` |
 | `utils/network-debug/tools` (`fetch`) | network-debug image build only; not in the runtime image | plain text | none | errors on stderr during the image build |
 | `dump-reader`, `storage-debug`, `network-debug`, `workload-debug` images | debug-session pods | shell `printf`/`echo` | none | `<name>: <message>` on stderr. The third-party tools built into them (`pwru`, `kubestr`) keep their own logging |
 | Frontend | browser (the controller serves the files) | browser console | debug only in a development build (`?debugLogs=` or the `breakglass:debugLogs` local-storage key) | browser console; nothing is sent to the server |
 
-Only the controller has log levels. The rest of this page covers the
-controller.
+The controller, `bgctl` and `cluster-validator` take `--log-level` and
+`--log-format` and the `LOG_LEVEL` and `LOG_FORMAT` environment variables,
+through the shared package `pkg/logging`. A flag overrides its variable.
+
+| Program | Default level | Default format | Formats |
+|---------|---------------|----------------|---------|
+| Controller | `info` (`debug` with the deprecated `--debug`) | `json` (`console` with `--debug`) | `json`, `console` |
+| `bgctl` | `warn` (`debug` with `--verbose`) | `console` | `json`, `console`, `text` |
+| `cluster-validator` | `info` | `text` | `json`, `console`, `text` |
+| `kexec-action`, `network-action`, `service-action`, `copier`, `uploader` | `info` | `text` | `json`, `text` (`console` is an alias of `text`) |
+
+The helpers in the last row take only the environment variables `LOG_LEVEL`
+and `LOG_FORMAT`, no flags: their argument lists are fixed (for example,
+`kexec-action` takes exactly five arguments and the uploader only
+`--archive /output/artifact.tar.gz`), and any extra argument is rejected. Each
+is built from its own directory with `GO111MODULE=off` and only the standard
+library, so it cannot import `pkg/logging`. Each image directory therefore
+carries the same small `logging.go` based on `log/slog`. The `text` format
+writes the historical line. The `json` format writes one object per line with
+`level`, `ts`, `logger` (the binary name) and `msg`, like the controller. An
+invalid value is reported on stderr and the helper exits with code 2. Each
+helper writes at most one error line before it exits. `hotfix-action` writes
+no log lines; its result is the JSON document on stdout and in the termination
+message. The shell entrypoints write plain text.
+
+The rest of this page covers the controller.
 
 ## Controller
 
@@ -223,7 +247,10 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
+| bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
+| cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
 | controller | 468 | 346 | 361 | 270 | 0 | 0 | 0 |
+| utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -231,6 +258,24 @@ Fields marked † can hold personal or host data (user identities, e-mail
 addresses, group names, IP addresses, command lines). `(dynamic)` is a
 message built at run time, typically from an error value; `…` marks the
 variable part of a concatenated message.
+
+### bgctl
+
+#### `pkg/bgctl/cmd`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| debug | (dynamic) |  | root.go |
+| warn | (dynamic) |  | root.go |
+
+### cluster-validator
+
+#### `cmd/cluster-validator`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
+| error | `write report to stdout: …` |  | main.go |
 
 ### controller
 
@@ -1793,5 +1838,38 @@ variable part of a concatenated message.
 | error | `deny evaluation error for session` | `action`, `error`, `session` | authorize_helpers.go |
 | error | `deny policy evaluation failed closed` | `action`, `error`, `scope` | authorize_helpers.go |
 | error | `failed creating clientset for session SAR` | `error` | controller.go |
+
+### utility images
+
+#### `utils/images/diagnostic-artifact-collector/copier`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
+
+#### `utils/images/diagnostic-artifact-collector/uploader`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | `artifact upload accepts only --archive /output/artifact.tar.gz` |  | main.go |
+| error | `artifact upload failed: …` |  | main.go |
+
+#### `utils/node-maintenance/cmd/kexec-action`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
+
+#### `utils/node-maintenance/cmd/network-action`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
+
+#### `utils/node-maintenance/cmd/service-action`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| error | (dynamic) |  | main.go |
 
 <!-- END GENERATED -->
