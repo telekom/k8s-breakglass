@@ -35,8 +35,13 @@ var policyExceptionGVK = schema.GroupVersionKind{Group: "policies.kyverno.io", V
 // servedKinds is a target RESTMapper that serves every kind of s (with its
 // real scope) and the extra namespaced kinds, as the API server's discovery
 // would. Kinds it does not list are unserved: RESTMapping returns NoMatch.
+// Like discovery, a lookup without a version resolves any served version.
 func servedKinds(s *runtime.Scheme, extra ...schema.GroupVersionKind) meta.RESTMapper {
-	mapper := meta.NewDefaultRESTMapper(nil)
+	versions := make([]schema.GroupVersion, 0, len(extra))
+	for _, gvk := range extra {
+		versions = append(versions, gvk.GroupVersion())
+	}
+	mapper := meta.NewDefaultRESTMapper(versions)
 	for _, gvk := range extra {
 		mapper.Add(gvk, meta.RESTScopeNamespace)
 	}
@@ -174,6 +179,49 @@ func TestPreflightAuxiliaryKinds(t *testing.T) {
 	disabled := newTestAuxiliaryResourceManager()
 	disabled.disableUnservedKindHandling = true
 	require.NoError(t, disabled.PreflightAuxiliaryKinds(context.Background(), session, spec(exception), nil, target, "breakglass-debug"))
+
+	// The kind is served, but only in another version than the rendered one.
+	otherVersion := fake.NewClientBuilder().WithScheme(Scheme).
+		WithRESTMapper(servedKinds(Scheme, schema.GroupVersionKind{Group: policyExceptionGVK.Group, Version: "v2", Kind: policyExceptionGVK.Kind})).Build()
+	err = newTestAuxiliaryResourceManager().PreflightAuxiliaryKinds(context.Background(), session, spec(exception), nil, otherVersion, "breakglass-debug")
+	require.ErrorIs(t, err, errAuxiliaryKindNotServed, "a kind served only in another version is not served")
+	assert.Contains(t, err.Error(), "requires policies.kyverno.io/v1 PolicyException")
+
+	// Discovery failures: only an all-NotFound failure is definitive.
+	notFound := apierrors.NewNotFound(schema.GroupResource{Group: policyExceptionGVK.Group}, policyExceptionGVK.Version)
+	for name, tc := range map[string]struct {
+		err  error
+		fail bool
+	}{
+		"group version not found": {err: &apiutil.ErrResourceDiscoveryFailed{policyExceptionGVK.GroupVersion(): notFound}, fail: true},
+		"mixed 404 and 503": {err: &apiutil.ErrResourceDiscoveryFailed{
+			policyExceptionGVK.GroupVersion():           notFound,
+			{Group: "other.example.com", Version: "v1"}: apierrors.NewServiceUnavailable("aggregated API down"),
+		}},
+		"503 only": {err: &apiutil.ErrResourceDiscoveryFailed{policyExceptionGVK.GroupVersion(): apierrors.NewServiceUnavailable("aggregated API down")}},
+	} {
+		failing := fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(discoveryFailingMapper{RESTMapper: servedKinds(Scheme), err: tc.err}).Build()
+		err := newTestAuxiliaryResourceManager().PreflightAuxiliaryKinds(context.Background(), session, spec(configMap, exception), nil, failing, "breakglass-debug")
+		if tc.fail {
+			assert.ErrorIs(t, err, errAuxiliaryKindNotServed, name)
+		} else {
+			assert.NoError(t, err, "%s: a transient discovery failure must not fail activation", name)
+		}
+	}
+}
+
+// discoveryFailingMapper fails the mapping of every non-core kind with err,
+// as a RESTMapper does when discovery of its group version failed.
+type discoveryFailingMapper struct {
+	meta.RESTMapper
+	err error
+}
+
+func (m discoveryFailingMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	if gk.Group == "" {
+		return m.RESTMapper.RESTMapping(gk, versions...)
+	}
+	return nil, m.err
 }
 
 func TestActivationFailsBeforeTargetWriteWhenRequiredKindIsNotServed(t *testing.T) {
