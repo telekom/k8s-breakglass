@@ -4,13 +4,20 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	auditv1 "github.com/telekom/k8s-breakglass/api/audit/v1"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -70,4 +77,29 @@ func TestDebugSessionAttachedEvent(t *testing.T) {
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", ra("pods", "log"), Target{}, "", "", ""))
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", ra("services", "proxy"), Target{}, "", "", ""))
 	require.Nil(t, DebugSessionAttachedEvent("alice", nil, "spoke", nil, Target{}, "", "", ""))
+}
+
+// debug_session.attached is emitted on the authorization path: enrichment
+// must not look up the session in the Pod's namespace on the hub.
+func TestDebugSessionAttachedSkipsIdentityLookup(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	var lookups atomic.Int32
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			lookups.Add(1)
+			return c.Get(ctx, key, obj, opts...)
+		},
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			lookups.Add(1)
+			return c.List(ctx, list, opts...)
+		},
+	}).Build()
+	svc := NewService(cli, nil, zap.NewNop(), "breakglass")
+	event := DebugSessionAttachedEvent("alice", nil, "spoke",
+		&authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Name: "p", Namespace: "debug"},
+		Target{Kind: "pods", Name: "p", Namespace: "debug"}, "breakglass", "dbg", "dbg-uid")
+	svc.enrichResourceIdentity(context.Background(), event)
+	require.Zero(t, lookups.Load())
+	require.Equal(t, "dbg-uid", event.RequestContext.DebugSessionUID)
 }
