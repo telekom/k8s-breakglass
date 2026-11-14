@@ -116,11 +116,16 @@ type DebugSessionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	RequestedByKubernetesUser string `json:"requestedByKubernetesUser,omitempty"`
 
-	// requestedBySubject is the requester's verified token subject (OIDC
-	// "sub"). Cleanup acknowledgements compare against it for four-eyes,
-	// because the hub API server may name the requester oidc:<sub>.
+	// requestedByIdentities are the requester's authenticated identities at
+	// request time (username, email, verified token subject and mapped hub
+	// username). Cleanup acknowledgements compare against all of them for
+	// four-eyes, because the hub API server may name the requester by any of
+	// them. Empty when the token subject was not verified; acknowledgements
+	// then fail closed.
 	// +optional
-	RequestedBySubject string `json:"requestedBySubject,omitempty"`
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=atomic
+	RequestedByIdentities []string `json:"requestedByIdentities,omitempty"`
 
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
@@ -492,8 +497,9 @@ type DebugSessionApproval struct {
 	// +optional
 	ApprovedByIdentityProvider string `json:"approvedByIdentityProvider,omitempty"`
 	// approvedByIdentities are the approver's authenticated identities at
-	// approval time (username, email, verified token subject and, when it
-	// resolved, the Kubernetes user on the target cluster). Cleanup acknowledgements
+	// approval time (username, email, verified token subject, mapped hub
+	// username and, when it resolved, the Kubernetes user on the target
+	// cluster). Cleanup acknowledgements
 	// compare against all of them for four-eyes; an approval without them
 	// predates this field and is treated as not comparable.
 	// +optional
@@ -540,10 +546,14 @@ type DebugSessionParticipant struct {
 	// +kubebuilder:validation:MinLength=1
 	KubernetesUser string `json:"kubernetesUser,omitempty"`
 
-	// subject is the participant's verified token subject (OIDC "sub"),
-	// compared by cleanup acknowledgement four-eyes checks.
+	// identities are the participant's authenticated identities at join time
+	// (username, email, verified token subject and mapped hub username),
+	// compared by cleanup acknowledgement four-eyes checks. Empty when the
+	// token subject was not verified; acknowledgements then fail closed.
 	// +optional
-	Subject string `json:"subject,omitempty"`
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=atomic
+	Identities []string `json:"identities,omitempty"`
 
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.

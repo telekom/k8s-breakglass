@@ -845,7 +845,7 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 #### `--allow-legacy-identity-cleanup-acknowledgement`
 
-Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's token subject (`spec.requestedBySubject`, `status.participants[].subject`), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).
+Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's identities (`spec.requestedByIdentities`, `status.participants[].identities`, empty without a verified token subject), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).
 
 | Property | Value |
 |----------|-------|

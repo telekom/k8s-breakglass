@@ -51,6 +51,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", user)
+				ctx.Set("authenticated_username", "corp/"+user)
 				ctx.Set("user_identifier_prefix", tc.providerPrefix)
 				if tc.missing != "email" {
 					ctx.Set("email", user+"@example.test")
@@ -78,7 +79,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			session := detail.DebugSession
 			require.Equal(t, "alice", session.Spec.RequestedBy, "API ownership identity must remain unchanged")
 			require.Equal(t, tc.want, session.Spec.RequestedByKubernetesUser)
-			require.Equal(t, "alice-sub", session.Spec.RequestedBySubject, "the requester's token subject is recorded for four-eyes")
+			require.Equal(t, []string{"alice", "alice-sub", "alice@example.test", "corp/alice"}, session.Spec.RequestedByIdentities, "the requester's identities are recorded for four-eyes")
 			// The existing API owner can still read the canonicalized session.
 			read := httptest.NewRecorder()
 			router.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/debugSessions/"+session.Name, nil))
@@ -99,7 +100,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			require.Len(t, session.Status.Participants, 1)
 			require.Equal(t, "bob", session.Status.Participants[0].User)
 			require.Equal(t, strings.Replace(tc.want, "alice", "bob", 1), session.Status.Participants[0].KubernetesUser)
-			require.Equal(t, "bob-sub", session.Status.Participants[0].Subject, "a participant's token subject is recorded for four-eyes")
+			require.Equal(t, []string{"bob", "bob-sub", "bob@example.test", "corp/bob"}, session.Status.Participants[0].Identities, "a participant's identities are recorded for four-eyes")
 		})
 	}
 }
@@ -108,14 +109,14 @@ func TestActivationCopiesCanonicalKubernetesOwner(t *testing.T) {
 	controller, session, template, _ := newDeploymentFenceFixture(t)
 	controller.connectionLeases = nil
 	session.Spec.RequestedByKubernetesUser = "canonical-subject"
-	session.Spec.RequestedBySubject = "tester-sub"
+	session.Spec.RequestedByIdentities = []string{"tester", "tester-sub"}
 	require.NoError(t, controller.client.Update(context.Background(), session))
 	_, err := controller.activateSession(context.Background(), session, template, nil)
 	require.NoError(t, err)
 	require.Len(t, session.Status.Participants, 1)
 	require.Equal(t, "tester", session.Status.Participants[0].User)
 	require.Equal(t, "canonical-subject", session.Status.Participants[0].KubernetesUser)
-	require.Equal(t, "tester-sub", session.Status.Participants[0].Subject)
+	require.Equal(t, []string{"tester", "tester-sub"}, session.Status.Participants[0].Identities)
 }
 
 func TestActivationStartedAuditCarriesActivatedSessionUID(t *testing.T) {

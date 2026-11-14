@@ -196,20 +196,22 @@ ClusterRole from a RoleBinding in the session's namespace instead.
   session identities are stored unprefixed or with a spoke prefix. Group
   membership is not compared: four-eyes concerns the acting person.
   Every party is compared by every identity the hub API server may name them
-  by, including the verified token subject (for example `oidc:<sub>` while
-  the target cluster maps users by email):
-  - the requester by username, email, Kubernetes user and
-    `spec.requestedBySubject`;
-  - each participant by username, email, Kubernetes user and
-    `status.participants[].subject`;
+  by: username, email, verified token subject and mapped hub username (for
+  example `oidc:<sub>` or `corp/alice` while the target cluster maps users by
+  email), recorded when they act:
+  - the requester by `spec.requestedBy`, `requestedByEmail`,
+    `requestedByKubernetesUser` and `spec.requestedByIdentities`;
+  - each participant by user, email, Kubernetes user and
+    `status.participants[].identities`;
   - the approver by `approvedBy` and every entry of
-    `status.approval.approvedByIdentities` (username, email, token subject and
-    the target-cluster Kubernetes user, resolved like at session creation:
+    `status.approval.approvedByIdentities`, which also holds the
+    target-cluster Kubernetes user (resolved like at session creation:
     ClusterConfig name or tenant alias, in any namespace).
 
-  If any of these identities is not recorded (a requester or participant
-  token subject is missing, the approval predates `approvedByIdentities`, or
-  `status.approval.approvedByIdentitiesIncomplete` is set), the session
+  If any of these identities is not recorded (no verified token subject for
+  the requester or a participant, so their identity list is empty; an approval
+  that predates `approvedByIdentities`; or
+  `status.approval.approvedByIdentitiesIncomplete` set), the session
   cannot be fully compared, so its acknowledgements are rejected (fail
   closed) unless the controller runs with
   `--allow-legacy-identity-cleanup-acknowledgement`, which compares only the

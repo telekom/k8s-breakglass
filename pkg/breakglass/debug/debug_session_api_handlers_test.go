@@ -5239,9 +5239,13 @@ func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCrea
 		cluster    string
 		configs    []client.Object
 		subject    string
+		mapped     string
 		want       []string
 		unresolved bool
 	}{
+		// The hub names the approver by a mapped username without a colon
+		// prefix, which only the recorded mapped identity matches.
+		"mapped hub username":        {cluster: "spoke-e", subject: "subject-123", mapped: "corp/alice", configs: []client.Object{clusterConfig("spoke-e", "default", "", email)}, want: []string{"alice", "alice@example.com", "corp/alice", "oidc:alice@example.com", "subject-123"}},
 		"tenant alias":               {cluster: "tenant-a", subject: "alice-sub", configs: []client.Object{clusterConfig("spoke-a", "default", "tenant-a", sub)}, want: []string{"alice", "alice-sub", "alice@example.com", "oidc:alice-sub"}},
 		"ClusterConfig in namespace": {cluster: "spoke-b", subject: "alice-sub", configs: []client.Object{clusterConfig("spoke-b", "clusters", "", sub)}, want: []string{"alice", "alice-sub", "alice@example.com", "oidc:alice-sub"}},
 		// The spoke maps by email, the hub API server by subject: the
@@ -5255,7 +5259,7 @@ func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCrea
 		t.Run(name, func(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default", Labels: map[string]string{DebugSessionLabelKey: "pending-session"}},
-				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster, RequestedBy: "requester@example.com", RequestedBySubject: "requester-sub", TemplateRef: "test-template"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster, RequestedBy: "requester@example.com", RequestedByIdentities: []string{"requester-sub", "requester@example.com"}, TemplateRef: "test-template"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
 					State:            breakglassv1alpha1.DebugSessionStatePendingApproval,
 					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"alice"}}},
@@ -5270,6 +5274,9 @@ func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCrea
 				c.Set("email", "alice@example.com")
 				if tc.subject != "" {
 					c.Set("user_id", tc.subject)
+				}
+				if tc.mapped != "" {
+					c.Set("authenticated_username", tc.mapped)
 				}
 				c.Next()
 			})
@@ -5287,6 +5294,9 @@ func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCrea
 			assert.Equal(t, tc.want, stored.Status.Approval.ApprovedByIdentities)
 			if tc.subject != "" {
 				assert.True(t, sessionPartyMatches(stored, "oidc:"+tc.subject), "the approver cannot acknowledge as their hub subject identity")
+			}
+			if tc.mapped != "" {
+				assert.True(t, sessionPartyMatches(stored, tc.mapped), "the approver cannot acknowledge as their mapped hub username")
 			}
 			if tc.unresolved {
 				ack := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{Spec: breakglassv1alpha1.DebugSessionCleanupAcknowledgementSpec{AcknowledgedBy: "oidc:someone-else"}}

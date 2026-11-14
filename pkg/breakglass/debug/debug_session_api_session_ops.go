@@ -123,7 +123,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	participant := breakglassv1alpha1.DebugSessionParticipant{
 		User:                   username,
 		KubernetesUser:         kubernetesUser,
-		Subject:                ctx.GetString("user_id"),
+		Identities:             authenticatedIdentities(ctx, identity),
 		Email:                  userEmail,
 		IdentityProviderName:   ctx.GetString("identity_provider_name"),
 		IdentityProviderIssuer: ctx.GetString("issuer"),
@@ -639,21 +639,40 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
-// approverIdentities lists the approver's distinct authenticated identities
-// (username, email, verified token subject and target-cluster Kubernetes
-// user), so cleanup acknowledgements can enforce four-eyes against each of
-// them: the hub API server may name the approver by any of them, for example
-// oidc:<sub> while the target cluster maps by email. Approval does not depend
-// on them; when the subject is missing or the Kubernetes user does not
-// resolve, incomplete is true and acknowledgements fail closed.
-func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (ids []string, incomplete bool) {
-	ids = []string{identity.username}
-	if identity.email != "" {
-		ids = append(ids, identity.email)
-	}
+// authenticatedIdentities lists the caller's distinct authenticated
+// identities (username, email, verified token subject and mapped hub
+// username), so cleanup acknowledgements can enforce four-eyes against each
+// of them: the hub API server may name the caller by any of them, for example
+// oidc:<sub> or a mapped corp/alice while the target cluster maps by email.
+// It returns nil without a verified token subject, which makes four-eyes
+// fail closed for that party.
+func authenticatedIdentities(ctx *gin.Context, identity debugSessionReadIdentity) []string {
 	subject := ctx.GetString("user_id")
-	if subject != "" {
-		ids = append(ids, subject)
+	if subject == "" {
+		return nil
+	}
+	ids := []string{identity.username, subject}
+	for _, id := range []string{identity.email, ctx.GetString("authenticated_username")} {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+// approverIdentities adds the target-cluster Kubernetes user to the
+// approver's authenticated identities. Approval does not depend on them;
+// when the subject is missing or the Kubernetes user does not resolve,
+// incomplete is true and acknowledgements fail closed.
+func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (ids []string, incomplete bool) {
+	ids = authenticatedIdentities(ctx, identity)
+	incomplete = ids == nil
+	if ids == nil {
+		ids = []string{identity.username}
+		if identity.email != "" {
+			ids = append(ids, identity.email)
+		}
 	}
 	resolved := false
 	if clusterConfig, err := c.sessionClusterConfig(apiCtx, session); err == nil {
@@ -662,7 +681,7 @@ func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx 
 		}
 	}
 	slices.Sort(ids)
-	return slices.Compact(ids), subject == "" || !resolved
+	return slices.Compact(ids), incomplete || !resolved
 }
 
 // sessionClusterConfig resolves spec.cluster as session creation does: by

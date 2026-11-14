@@ -51,7 +51,7 @@ func TestIdentityProvenanceSurvivesStatusApply(t *testing.T) {
 	require.Equal(t, desired.Status.ApproverIdentityProvider, stored.Status.ApproverIdentityProvider)
 	require.Equal(t, desired.Status.ApproverIdentityProviders, stored.Status.ApproverIdentityProviders)
 
-	debug := &breakglassv1alpha1.DebugSessionStatus{Approval: &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "approver", ApprovedByIdentityProvider: "provider-a", ApprovedByIdentities: []string{"approver", "approver@example.com", "oidc:approver"}, ApprovedByIdentitiesIncomplete: true}, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "owner", Subject: "owner-sub", IdentityProviderName: "provider-a", IdentityProviderIssuer: "https://a.example"}}}
+	debug := &breakglassv1alpha1.DebugSessionStatus{Approval: &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "approver", ApprovedByIdentityProvider: "provider-a", ApprovedByIdentities: []string{"approver", "approver@example.com", "oidc:approver"}, ApprovedByIdentitiesIncomplete: true}, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "owner", Identities: []string{"corp/owner", "owner", "owner-sub"}, IdentityProviderName: "provider-a", IdentityProviderIssuer: "https://a.example"}}}
 	// Round-trip the same explicit converter used by both controller SSA paths.
 	raw, err := json.Marshal(DebugSessionStatusFrom(debug))
 	require.NoError(t, err)

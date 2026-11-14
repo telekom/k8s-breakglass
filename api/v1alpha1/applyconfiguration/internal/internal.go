@@ -2304,6 +2304,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: email
       type:
         scalar: string
+    - name: identities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: identityProviderIssuer
       type:
         scalar: string
@@ -2322,9 +2328,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: role
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ParticipantRole
-    - name: subject
-      type:
-        scalar: string
     - name: user
       type:
         scalar: string
@@ -2386,10 +2389,13 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: requestedByEmail
       type:
         scalar: string
-    - name: requestedByKubernetesUser
+    - name: requestedByIdentities
       type:
-        scalar: string
-    - name: requestedBySubject
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: requestedByKubernetesUser
       type:
         scalar: string
     - name: requestedDuration

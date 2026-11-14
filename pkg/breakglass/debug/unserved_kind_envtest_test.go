@@ -87,7 +87,7 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 
 	activate := func(t *testing.T, name string, handling bool) *breakglassv1alpha1.DebugSession {
 		t.Helper()
-		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "target", TemplateRef: template.Name, RequestedBy: "requester", RequestedBySubject: "requester-sub", RequestedDuration: "2m", TargetNamespace: "default", Reason: "unserved kind regression"}}
+		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "target", TemplateRef: template.Name, RequestedBy: "requester", RequestedByIdentities: []string{"requester", "requester-sub"}, RequestedDuration: "2m", TargetNamespace: "default", Reason: "unserved kind regression"}}
 		require.NoError(t, hub.Create(ctx, ds))
 		sink := &cleanupAuditCaptureSink{}
 		c, manager := newController(handling, sink)
@@ -119,7 +119,7 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 	// intent that never reached the API server.
 	failedWithUnresolvedIntent := func(t *testing.T, name string) *breakglassv1alpha1.DebugSession {
 		t.Helper()
-		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "target", TemplateRef: template.Name, RequestedBy: "requester", RequestedBySubject: "requester-sub", RequestedDuration: "2m", TargetNamespace: "default", Reason: "unserved kind regression"}}
+		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "target", TemplateRef: template.Name, RequestedBy: "requester", RequestedByIdentities: []string{"requester", "requester-sub"}, RequestedDuration: "2m", TargetNamespace: "default", Reason: "unserved kind regression"}}
 		require.NoError(t, hub.Create(ctx, ds))
 		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 		ds.Status.ResolvedTemplate = template.Spec.DeepCopy()

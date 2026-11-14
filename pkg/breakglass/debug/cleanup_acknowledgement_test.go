@@ -48,7 +48,7 @@ var acknowledgedPolicyExceptions = []CleanupAcknowledgedIdentity{
 func failingSession(t *testing.T) *breakglassv1alpha1.DebugSession {
 	t.Helper()
 	ds := unresolvedPolicyExceptionSession()
-	ds.Spec.RequestedBy, ds.Spec.RequestedBySubject = "requester", "requester-sub"
+	ds.Spec.RequestedBy, ds.Spec.RequestedByIdentities = "requester", []string{"requester", "requester-sub"}
 	ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{
 		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "child", UID: "child-uid"},
 	}
@@ -363,7 +363,7 @@ func TestFourEyesRejectsSessionParties(t *testing.T) {
 			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "Operator@example.com"}
 		}},
 		"participant": {mutate: func(ds *breakglassv1alpha1.DebugSession) {
-			ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "x", Email: "operator@example.com", Subject: "x-sub"}}
+			ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "x", Email: "operator@example.com", Identities: []string{"x", "x-sub"}}}
 		}},
 		"prefixed hub username vs unprefixed requester": {
 			mutate: func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBy = "operator@example.com" },
@@ -1212,16 +1212,19 @@ func TestCleanupCompleteIsMarkedOnlyWithoutTrackedResources(t *testing.T) {
 	}
 }
 
-// A party the hub API server names by its token subject (oidc:<sub>) is
-// recognized by that subject, and an unrecorded subject fails closed.
-func TestFourEyesComparesTokenSubjectsOfRequesterAndParticipants(t *testing.T) {
+// A party the hub API server names by its token subject (oidc:<sub>) or a
+// mapped username without a colon prefix (corp/alice) is recognized by its
+// recorded identities, and an unrecorded identity set fails closed.
+func TestFourEyesComparesEveryRecordedPartyIdentity(t *testing.T) {
 	session := func() *breakglassv1alpha1.DebugSession {
 		ds := failingSession(t)
 		ds.Spec.RequestedByEmail = "requester@example.com"
+		ds.Spec.RequestedByIdentities = []string{"corp/requester", "requester", "requester-sub", "requester@example.com"}
 		ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{
-			{User: "requester", Email: "requester@example.com", Subject: "requester-sub", Role: breakglassv1alpha1.ParticipantRoleOwner},
-			{User: "bob", Email: "bob@example.com", KubernetesUser: "bob@example.com", Subject: "bob-sub", Role: breakglassv1alpha1.ParticipantRoleViewer},
+			{User: "requester", Email: "requester@example.com", Identities: ds.Spec.RequestedByIdentities, Role: breakglassv1alpha1.ParticipantRoleOwner},
+			{User: "bob", Email: "bob@example.com", KubernetesUser: "bob@example.com", Identities: []string{"bob", "bob-sub", "bob@example.com", "corp/bob"}, Role: breakglassv1alpha1.ParticipantRoleViewer},
 		}
+		ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "carol", ApprovedByIdentities: []string{"carol", "carol-sub", "carol@example.com", "corp/carol", "oidc:carol@example.com"}}
 		return ds
 	}
 	decide := func(ds *breakglassv1alpha1.DebugSession, by string, legacy bool) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
@@ -1236,28 +1239,31 @@ func TestFourEyesComparesTokenSubjectsOfRequesterAndParticipants(t *testing.T) {
 		ds *breakglassv1alpha1.DebugSession
 		by string
 	}{
-		"requester":                           {ds: session(), by: "oidc:requester-sub"},
-		"requester of an unactivated session": {ds: notActivated, by: "oidc:requester-sub"},
-		"participant":                         {ds: session(), by: "oidc:bob-sub"},
+		"requester subject":                   {ds: session(), by: "oidc:requester-sub"},
+		"requester mapped username":           {ds: session(), by: "corp/requester"},
+		"requester of an unactivated session": {ds: notActivated, by: "corp/requester"},
+		"participant subject":                 {ds: session(), by: "oidc:bob-sub"},
+		"participant mapped username":         {ds: session(), by: "corp/bob"},
+		"approver mapped username":            {ds: session(), by: "corp/carol"},
 	} {
 		record := decide(tc.ds, tc.by, true) // even with the legacy opt-out
 		assert.False(t, record.Applied, name)
 		assert.Contains(t, record.Message, "is the requester, approver or a participant", name)
 	}
-	assert.True(t, decide(session(), "oidc:operator-sub", false).Applied, "an independent operator may acknowledge")
+	assert.True(t, decide(session(), "corp/operator", false).Applied, "an independent operator may acknowledge")
 
 	for name, tc := range map[string]struct {
 		strip func(*breakglassv1alpha1.DebugSession)
 		want  string
 	}{
-		"requester subject missing":   {strip: func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBySubject = "" }, want: "spec.requestedBySubject"},
-		"participant subject missing": {strip: func(ds *breakglassv1alpha1.DebugSession) { ds.Status.Participants[1].Subject = "" }, want: `participant "bob"`},
+		"requester identities missing":   {strip: func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedByIdentities = nil }, want: "spec.requestedByIdentities"},
+		"participant identities missing": {strip: func(ds *breakglassv1alpha1.DebugSession) { ds.Status.Participants[1].Identities = nil }, want: `participant "bob"`},
 	} {
 		ds := session()
 		tc.strip(ds)
-		record := decide(ds, "oidc:operator-sub", false)
+		record := decide(ds, "corp/operator", false)
 		assert.False(t, record.Applied, name)
 		assert.Contains(t, record.Message, tc.want, name)
-		assert.True(t, decide(ds, "oidc:operator-sub", true).Applied, name+": the legacy opt-out compares the recorded identities")
+		assert.True(t, decide(ds, "corp/operator", true).Applied, name+": the legacy opt-out compares the recorded identities")
 	}
 }

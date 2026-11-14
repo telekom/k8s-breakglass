@@ -645,18 +645,25 @@ spec:
                   requestedByEmail is the email address of the requester (from OIDC "email" claim).
                   Used for sending email notifications.
                 type: string
+              requestedByIdentities:
+                description: |-
+                  requestedByIdentities are the requester's authenticated identities at
+                  request time (username, email, verified token subject and mapped hub
+                  username). Cleanup acknowledgements compare against all of them for
+                  four-eyes, because the hub API server may name the requester by any of
+                  them. Empty when the token subject was not verified; acknowledgements
+                  then fail closed.
+                items:
+                  type: string
+                maxItems: 8
+                type: array
+                x-kubernetes-list-type: atomic
               requestedByKubernetesUser:
                 description: |-
                   requestedByKubernetesUser is the exact authenticated identity selected by the
                   target cluster userIdentifierClaim policy for Kubernetes authorization.
                   API ownership continues to use requestedBy and its provider identity.
                 minLength: 1
-                type: string
-              requestedBySubject:
-                description: |-
-                  requestedBySubject is the requester's verified token subject (OIDC
-                  "sub"). Cleanup acknowledgements compare against it for four-eyes,
-                  because the hub API server may name the requester oidc:<sub>.
                 type: string
               requestedDuration:
                 description: |-
@@ -1657,8 +1664,9 @@ spec:
                   approvedByIdentities:
                     description: |-
                       approvedByIdentities are the approver's authenticated identities at
-                      approval time (username, email, verified token subject and, when it
-                      resolved, the Kubernetes user on the target cluster). Cleanup acknowledgements
+                      approval time (username, email, verified token subject, mapped hub
+                      username and, when it resolved, the Kubernetes user on the target
+                      cluster). Cleanup acknowledgements
                       compare against all of them for four-eyes; an approval without them
                       predates this field and is treated as not comparable.
                     items:
@@ -2884,6 +2892,17 @@ spec:
                         email is the email address of the participant (from OIDC "email" claim).
                         Used for sending email notifications.
                       type: string
+                    identities:
+                      description: |-
+                        identities are the participant's authenticated identities at join time
+                        (username, email, verified token subject and mapped hub username),
+                        compared by cleanup acknowledgement four-eyes checks. Empty when the
+                        token subject was not verified; acknowledgements then fail closed.
+                      items:
+                        type: string
+                      maxItems: 8
+                      type: array
+                      x-kubernetes-list-type: atomic
                     identityProviderIssuer:
                       description: identityProviderIssuer identifies the issuer that
                         authenticated the participant.
@@ -2913,11 +2932,6 @@ spec:
                       - owner
                       - participant
                       - viewer
-                      type: string
-                    subject:
-                      description: |-
-                        subject is the participant's verified token subject (OIDC "sub"),
-                        compared by cleanup acknowledgement four-eyes checks.
                       type: string
                     user:
                       description: user is the username/identifier of the participant.

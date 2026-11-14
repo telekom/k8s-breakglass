@@ -24,8 +24,9 @@ type DebugSessionApprovalApplyConfiguration struct {
 	// approvedByIdentityProvider identifies the provider that authenticated the approver.
 	ApprovedByIdentityProvider *string `json:"approvedByIdentityProvider,omitempty"`
 	// approvedByIdentities are the approver's authenticated identities at
-	// approval time (username, email, verified token subject and, when it
-	// resolved, the Kubernetes user on the target cluster). Cleanup acknowledgements
+	// approval time (username, email, verified token subject, mapped hub
+	// username and, when it resolved, the Kubernetes user on the target
+	// cluster). Cleanup acknowledgements
 	// compare against all of them for four-eyes; an approval without them
 	// predates this field and is treated as not comparable.
 	ApprovedByIdentities []string `json:"approvedByIdentities,omitempty"`

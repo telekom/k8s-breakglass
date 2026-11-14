@@ -319,14 +319,14 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 	same := func(identity string) bool {
 		return identity != "" && (strings.EqualFold(identity, user) || strings.EqualFold(unprefixed(identity), unprefixed(user)))
 	}
-	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) || same(ds.Spec.RequestedBySubject) {
+	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) || slices.ContainsFunc(ds.Spec.RequestedByIdentities, same) {
 		return true
 	}
 	if approval := ds.Status.Approval; approval != nil && (same(approval.ApprovedBy) || slices.ContainsFunc(approval.ApprovedByIdentities, same)) {
 		return true
 	}
 	for _, participant := range ds.Status.Participants {
-		if same(participant.User) || same(participant.KubernetesUser) || same(participant.Email) || same(participant.Subject) {
+		if same(participant.User) || same(participant.KubernetesUser) || same(participant.Email) || slices.ContainsFunc(participant.Identities, same) {
 			return true
 		}
 	}
@@ -337,15 +337,15 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 // were not completely recorded, or returns "". Four-eyes compares the
 // acknowledging user with every recorded identity of the requester,
 // participants and approver; an unrecorded identity (for example the token
-// subject, by which the hub API server may name the user as oidc:<sub>)
-// could otherwise acknowledge unnoticed.
+// subject or mapped username by which the hub API server may name the user,
+// such as oidc:<sub> or corp/alice) could otherwise acknowledge unnoticed.
 func partyIdentitiesIncomplete(ds *breakglassv1alpha1.DebugSession) string {
-	if ds.Spec.RequestedBySubject == "" {
-		return "the requester's token subject is not recorded (spec.requestedBySubject)"
+	if len(ds.Spec.RequestedByIdentities) == 0 {
+		return "the requester's identities are not recorded (spec.requestedByIdentities)"
 	}
 	for _, participant := range ds.Status.Participants {
-		if participant.Subject == "" {
-			return fmt.Sprintf("the token subject of participant %q is not recorded (status.participants[].subject)", participant.User)
+		if len(participant.Identities) == 0 {
+			return fmt.Sprintf("the identities of participant %q are not recorded (status.participants[].identities)", participant.User)
 		}
 	}
 	if approval := ds.Status.Approval; approval != nil && approval.ApprovedBy != "" {

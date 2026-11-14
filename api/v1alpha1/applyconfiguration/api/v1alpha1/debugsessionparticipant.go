@@ -23,9 +23,11 @@ type DebugSessionParticipantApplyConfiguration struct {
 	// kubernetesUser is the exact target-cluster authenticated identity. When absent,
 	// legacy sessions use user; email is never treated as an authorization alias.
 	KubernetesUser *string `json:"kubernetesUser,omitempty"`
-	// subject is the participant's verified token subject (OIDC "sub"),
-	// compared by cleanup acknowledgement four-eyes checks.
-	Subject *string `json:"subject,omitempty"`
+	// identities are the participant's authenticated identities at join time
+	// (username, email, verified token subject and mapped hub username),
+	// compared by cleanup acknowledgement four-eyes checks. Empty when the
+	// token subject was not verified; acknowledgements then fail closed.
+	Identities []string `json:"identities,omitempty"`
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.
 	Email *string `json:"email,omitempty"`
@@ -65,11 +67,13 @@ func (b *DebugSessionParticipantApplyConfiguration) WithKubernetesUser(value str
 	return b
 }
 
-// WithSubject sets the Subject field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Subject field is set to the value of the last call.
-func (b *DebugSessionParticipantApplyConfiguration) WithSubject(value string) *DebugSessionParticipantApplyConfiguration {
-	b.Subject = &value
+// WithIdentities adds the given value to the Identities field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Identities field.
+func (b *DebugSessionParticipantApplyConfiguration) WithIdentities(values ...string) *DebugSessionParticipantApplyConfiguration {
+	for i := range values {
+		b.Identities = append(b.Identities, values[i])
+	}
 	return b
 }
 
