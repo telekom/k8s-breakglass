@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
+	auditv1 "github.com/telekom/k8s-breakglass/api/audit/v1"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -94,10 +95,17 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	stop = func() {}
 	groups := []string{"/operations/platform", "auditors", "system:authenticated"}
 	actorCtx := audit.WithAuthenticatedActor(ctx, []string{"operator"}, groups)
+	// A structured, security-relevant event (sessionLifecycle details) with a
+	// correlation ID, as the session controller emits it.
 	svc.Emit(actorCtx, &audit.Event{
-		ID: "outage-event", Type: audit.EventConfigChanged,
+		ID: "outage-event", Type: audit.EventSessionRequested,
 		Actor:  audit.Actor{User: "operator"},
 		Target: audit.Target{Kind: "Namespace", Name: ns.Name, UID: string(ns.UID)},
+		Details: map[string]interface{}{
+			"message": "Session requested", "cluster": "audit-delivery", "grantedGroup": "cluster-admin",
+			"state": "Pending", "ticketSystemID": "INC-1", "user": "operator",
+		},
+		RequestContext: &audit.RequestContext{CorrelationID: "outage-correlation", SessionName: "outage-session", SessionUID: string(ns.UID)},
 	})
 	require.Eventually(t, func() bool {
 		stats := svc.GetQueuedSinkHealth()
@@ -110,9 +118,22 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	message, err := reader.ReadMessage(ctx)
 	require.NoError(t, err)
+	// The record produced by the real Kafka sink honours the published
+	// contract (docs/audit-event-schema.md): schema, key and headers.
+	require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+	require.Equal(t, "outage-event", string(message.Key))
+	headers := map[string]string{}
+	for _, header := range message.Headers {
+		headers[header.Key] = string(header.Value)
+	}
+	require.Equal(t, string(audit.EventSessionRequested), headers["event-type"])
+	require.Equal(t, audit.SchemaVersion, headers["schema-version"])
+	require.Equal(t, "operator", headers["actor"])
+	require.Equal(t, "outage-correlation", headers["correlation-id"])
 	var event audit.Event
 	require.NoError(t, json.Unmarshal(message.Value, &event))
 	require.Equal(t, "outage-event", event.ID)
+	require.Equal(t, audit.SchemaVersion, event.SchemaVersion)
 	require.Equal(t, string(ns.UID), event.Target.UID)
 	require.Equal(t, "operator", event.Actor.User)
 	require.ElementsMatch(t, groups, event.Actor.Groups)

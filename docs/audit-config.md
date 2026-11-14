@@ -231,6 +231,9 @@ sinks:
 
 ## Event Types
 
+The versioned consumer contract (JSON Schema, Kafka key and headers, delivery
+semantics, per-type details) is in [Audit event schema](audit-event-schema.md).
+
 The audit system captures 120+ event types organized by category:
 
 ### Session Events
