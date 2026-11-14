@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	bgconfig "github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -366,7 +368,7 @@ func TestEscalationWatchEventsOnKafka(t *testing.T) {
 	mgr, err := ctrl.NewManager(config.GetConfigOrDie(), ctrl.Options{Scheme: scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
 	require.NoError(t, err)
-	escalations := bgconfig.NewEscalationReconciler(mgr.GetClient(), zap.NewNop().Sugar(), nil, nil, nil, time.Minute).WithAuditEmitter(svc)
+	escalations := bgconfig.NewEscalationReconciler(mgr.GetClient(), zaptest.NewLogger(t).Sugar(), nil, nil, nil, time.Minute).WithAuditEmitter(svc)
 	require.NoError(t, escalations.SetupWithManager(mgr))
 	mgrCtx, stopManager := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -375,25 +377,56 @@ func TestEscalationWatchEventsOnKafka(t *testing.T) {
 		stopManager()
 		require.NoError(t, <-done)
 	})
-	require.True(t, mgr.GetCache().WaitForCacheSync(ctx))
 
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "audit-escalation-watch"}}
 	require.NoError(t, cli.Create(ctx, ns))
 	t.Cleanup(func() { _ = cli.Delete(context.Background(), ns) })
-	esc := &breakglassv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{Name: "watched", Namespace: ns.Name},
-		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: "platform-admin", MaxValidFor: "1h",
-			Allowed:   breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster"}, Groups: []string{"users"}},
-			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
-		},
+	newEscalation := func(name string) *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns.Name},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "platform-admin", MaxValidFor: "1h",
+				Allowed:   breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster"}, Groups: []string{"users"}},
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			},
+		}
 	}
+	processed := func() int64 {
+		health := svc.GetQueuedSinkHealth()
+		if len(health) != 1 {
+			return 0
+		}
+		return health[0].ProcessedEvents
+	}
+	// The controller's watch starts after the manager does; a sentinel
+	// escalation shows that it is watching before the measured sequence.
+	require.NoError(t, cli.Create(ctx, newEscalation("watch-ready")))
+	var stopped atomic.Pointer[error]
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-done:
+			stopped.Store(&err)
+			return true
+		default:
+		}
+		return processed() >= 1
+	}, 2*time.Minute, 500*time.Millisecond, "the escalation controller never audited the sentinel")
+	if err := stopped.Load(); err != nil {
+		t.Fatalf("manager stopped early: %v", *err)
+	}
+	baseline := processed()
+
+	esc := newEscalation("watched")
 	require.NoError(t, cli.Create(ctx, esc))
 	patch := client.MergeFrom(esc.DeepCopy())
 	esc.Spec.EscalatedGroup = "platform-admin-2"
 	require.NoError(t, cli.Patch(ctx, esc, patch))
 	require.EqualValues(t, 2, esc.Generation)
 	require.NoError(t, cli.Delete(ctx, esc))
+
+	// All three events reach the Kafka sink before the topic is read.
+	require.Eventually(t, func() bool { return processed() >= baseline+3 }, time.Minute, time.Second,
+		"sink health: %+v", svc.GetQueuedSinkHealth())
 
 	prefix := "escalation/" + string(esc.UID) + "/"
 	want := map[string]audit.EventType{prefix + "1": audit.EventEscalationCreated,
