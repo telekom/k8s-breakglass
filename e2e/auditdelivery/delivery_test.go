@@ -406,6 +406,7 @@ func TestEscalationWatchEventsOnKafka(t *testing.T) {
 		select {
 		case err := <-done:
 			stopped.Store(&err)
+			done <- err // keep the result for the cleanup's receive
 			return true
 		default:
 		}
