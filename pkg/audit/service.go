@@ -99,6 +99,7 @@ type Service struct {
 	configurationState ConfigurationState
 	beforeCloseMu      sync.Mutex
 	beforeClose        []func()
+	beforeCloseOnce    sync.Once
 	configNS           string // namespace where secrets are located (controller namespace)
 	frontendBaseURL    string // links in chat (payloadFormat slack) messages
 }
@@ -586,13 +587,17 @@ func (s *Service) BeforeClose(fn func()) {
 }
 
 func (s *Service) Close() error {
-	s.beforeCloseMu.Lock()
-	hooks := s.beforeClose
-	s.beforeClose = nil
-	s.beforeCloseMu.Unlock()
-	for _, fn := range hooks {
-		fn()
-	}
+	// sync.Once blocks concurrent callers until the hooks finished, so an
+	// overlapping Close cannot tear the pipeline down under a running drain.
+	s.beforeCloseOnce.Do(func() {
+		s.beforeCloseMu.Lock()
+		hooks := s.beforeClose
+		s.beforeClose = nil
+		s.beforeCloseMu.Unlock()
+		for _, fn := range hooks {
+			fn()
+		}
+	})
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 	s.stopOnce.Do(func() {

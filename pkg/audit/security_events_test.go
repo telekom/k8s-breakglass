@@ -141,3 +141,34 @@ func TestSecurityEventsAreNeverSampled(t *testing.T) {
 	defer mu.Unlock()
 	require.ElementsMatch(t, security, got)
 }
+
+// Overlapping Close calls wait for the BeforeClose hooks: the pipeline still
+// accepts events until the drain has finished.
+func TestServiceCloseWaitsForBeforeCloseHooks(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).Build(), nil, zap.NewNop(), "ns")
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "log"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	started := make(chan struct{})
+	var acceptedAtEnd atomic.Bool
+	var runs atomic.Int32
+	svc.BeforeClose(func() {
+		runs.Add(1)
+		close(started)
+		time.Sleep(100 * time.Millisecond) // a drain in progress
+		acceptedAtEnd.Store(svc.TryEmit(context.Background(), &Event{Type: EventEscalationDeleted, Actor: Actor{User: "system"}, Target: Target{Kind: "BreakglassEscalation", Name: "e"}}))
+	})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); require.NoError(t, svc.Close()) }()
+	<-started
+	require.NoError(t, svc.Close()) // overlapping Close
+	wg.Wait()
+	require.EqualValues(t, 1, runs.Load(), "hooks run once")
+	require.True(t, acceptedAtEnd.Load(), "the pipeline stayed open until the hook finished")
+}
