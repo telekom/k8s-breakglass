@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +16,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/static"
-	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -38,6 +39,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 )
 
 type APIController interface {
@@ -58,6 +61,9 @@ type Server struct {
 	log    *zap.Logger
 	// httpServer is the underlying http.Server for graceful shutdown support
 	httpServer *http.Server
+	// webhookServer serves only the authorization webhook on
+	// server.webhook.listenAddress; nil when not configured.
+	webhookServer *http.Server
 	// idpReconciler maintains a cache of enabled IdentityProviders
 	// Used by getMultiIDPConfig to avoid querying the Kubernetes APIServer
 	idpReconciler *config.IdentityProviderReconciler
@@ -155,10 +161,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Adds essential security headers to all responses
 	// Create Server early so the CSP middleware can access s.buildCSP()
 	s := &Server{
-		log:    log,
-		config: cfg,
-		auth:   auth,
-		gin:    engine,
+		log:        log,
+		config:     cfg,
+		auth:       auth,
+		gin:        engine,
+		httpServer: newHTTPServer(cfg.Server, engine),
 	}
 
 	engine.Use(func(c *gin.Context) {
@@ -196,18 +203,12 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Correlation ID middleware. Registered before the rate limiter so that
 	// every response, including a 429, carries the request correlation ID.
-	engine.Use(func(c *gin.Context) {
-		cid := c.Request.Header.Get(requestIDHeader)
-		if !isValidRequestID(cid) {
-			cid = c.Request.Header.Get(correlationIDHeader)
-		}
-		if !isValidRequestID(cid) {
-			cid = uuid.NewString()
-		}
-		c.Set(apiresponses.CIDKey, cid)
-		c.Writer.Header().Set(requestIDHeader, cid)
-		c.Next()
-	})
+	engine.Use(correlationID)
+	// The access log and panic recovery come before the rate limiter, so that
+	// rejected (429) requests are logged too. accessLog is outside
+	// recoverPanics so that it logs the final status of a request whose
+	// handler panicked.
+	engine.Use(accessLog(log), recoverPanics(log))
 
 	// Basic per-IP rate limiter for public/unauthenticated endpoints
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
@@ -240,25 +241,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(otelgin.Middleware("k8s-breakglass"))
 
 	engine.Use(
-		ginzap.Ginzap(log, time.RFC3339, true),
-		ginzap.RecoveryWithZap(log, false),
-		// Request-scoped logger middleware: attach a sugared logger with request fields
-		func(c *gin.Context) {
-			cid, _ := c.Get(apiresponses.CIDKey)
-			reqLogger := log.Sugar().With("cid", cid, "method", c.Request.Method, "path", c.FullPath(), "remote", c.ClientIP())
-			// store under canonical key so system.GetReqLogger can find it
-			c.Set("reqLogger", reqLogger)
-			c.Set("reqLoggerKey", "reqLogger")
-			c.Set(system.ReqLoggerKey, reqLogger)
-			c.Next()
-		},
-		func(c *gin.Context) { // request start/end structured log
-			start := time.Now()
-			c.Next()
-			cid, _ := c.Get(apiresponses.CIDKey)
-			// ensure a concise http_request log always includes cid
-			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
-		},
+		requestLogger(log),
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
 			c.Next()
 			if len(c.Errors) > 0 {
@@ -673,13 +656,30 @@ func (s *Server) SetEscalationReconciler(reconciler *config.EscalationReconciler
 func (s *Server) RegisterAll(controllers []APIController) error {
 	apiGroup := s.gin.Group("/api")
 	for _, c := range controllers {
+		isWebhook := c.BasePath() == webhookBasePath
+		if isWebhook && s.config.Server.Webhook.Enabled() {
+			if err := s.registerWebhookListener(c); err != nil {
+				return err
+			}
+			if s.config.Server.Webhook.DisableOnMainListener {
+				s.log.Sugar().Infow("Authorization webhook served only on server.webhook.listenAddress")
+				// Explicit 404 so the legacy root path does not fall
+				// through to the SPA.
+				notServed := func(c *gin.Context) {
+					apiresponses.RespondError(c, http.StatusNotFound, "authorization webhook is served on server.webhook.listenAddress", c.Request.URL.Path)
+				}
+				s.gin.Any("/api/"+webhookBasePath+"/*path", notServed)
+				s.gin.Any("/"+webhookBasePath+"/*path", notServed)
+				continue
+			}
+		}
 		// Register under /api/<base>
 		if err := c.Register(apiGroup.Group(c.BasePath(), c.Handlers()...)); err != nil {
 			return err
 		}
 		// For backwards compatibility, register the webhook authorizer under the legacy root path as well.
 		// Only do this for the webhook controller to avoid exposing all handlers at the root.
-		if c.BasePath() == "breakglass/webhook" {
+		if isWebhook {
 			rootGroup := s.gin.Group("")
 			if err := c.Register(rootGroup.Group(c.BasePath(), c.Handlers()...)); err != nil {
 				return err
@@ -689,36 +689,160 @@ func (s *Server) RegisterAll(controllers []APIController) error {
 	return nil
 }
 
-func (s *Server) Listen() {
-	// Create http.Server with timeouts from configuration (defaults applied if unset)
-	timeouts := s.config.Server.GetServerTimeouts()
-	s.httpServer = &http.Server{
-		Addr:              s.config.Server.ListenAddress,
-		Handler:           s.gin,
+// webhookBasePath is the BasePath of the authorization webhook controller.
+const webhookBasePath = "breakglass/webhook"
+
+// registerWebhookListener creates the server.webhook listener, whose engine
+// serves only the webhook routes (/api/<base> and the legacy /<base>) with
+// request IDs, logging, tracing and a 1 MiB body limit, but none of the
+// browser middleware of the main listener.
+func (s *Server) registerWebhookListener(c APIController) error {
+	w := s.config.Server.Webhook
+	engine := gin.New()
+	if err := engine.SetTrustedProxies(nil); err != nil {
+		return fmt.Errorf("webhook listener trusted proxies: %w", err)
+	}
+	engine.Use(
+		func(c *gin.Context) {
+			if c.Request.Body != nil {
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+			}
+			c.Next()
+		},
+		correlationID,
+		otelgin.Middleware("k8s-breakglass-webhook"),
+		accessLog(s.log),
+		recoverPanics(s.log),
+		requestLogger(s.log),
+	)
+	// The controller's SAR rate limiter runs first, so requests rejected by
+	// the identity check still consume the per-IP budget.
+	handlers := c.Handlers()
+	if w.IdentityRequired() {
+		handlers = append(handlers, webhook.RequireClusterIdentity(s.log.Sugar()))
+	}
+	for _, prefix := range []string{"/api/", "/"} {
+		if err := c.Register(engine.Group(prefix+c.BasePath(), handlers...)); err != nil {
+			return err
+		}
+	}
+	s.webhookServer = newHTTPServer(s.config.Server.WebhookServer(), engine)
+	return nil
+}
+
+// correlationID sets the request correlation ID from X-Request-ID or
+// X-Correlation-ID, or a new UUID, and echoes it in X-Request-ID.
+func correlationID(c *gin.Context) {
+	cid := c.Request.Header.Get(requestIDHeader)
+	if !isValidRequestID(cid) {
+		cid = c.Request.Header.Get(correlationIDHeader)
+	}
+	if !isValidRequestID(cid) {
+		cid = uuid.NewString()
+	}
+	c.Set(apiresponses.CIDKey, cid)
+	c.Writer.Header().Set(requestIDHeader, cid)
+	c.Next()
+}
+
+// accessLog writes one http_request line per request. It logs the route
+// template, or the path without the query string, and never the query: it
+// can carry OIDC authorization codes and approval-link tokens.
+func accessLog(log *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		// Read before the handlers run: the SPA fallback rewrites the URL path.
+		rawPath := c.Request.URL.Path
+		c.Next()
+		path := c.FullPath()
+		if path == "" {
+			path = rawPath
+		}
+		cid, _ := c.Get(apiresponses.CIDKey)
+		log.Info("http_request",
+			zap.String("cid", fmt.Sprintf("%v", cid)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", path),
+			zap.Int("status", c.Writer.Status()),
+			zap.Duration("latency", time.Since(start)),
+			zap.String("ip", c.ClientIP()),
+			zap.String("user_agent", c.Request.UserAgent()))
+	}
+}
+
+// requestLogger attaches a sugared logger with request fields.
+func requestLogger(log *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cid, _ := c.Get(apiresponses.CIDKey)
+		reqLogger := log.Sugar().With("cid", cid, "method", c.Request.Method, "path", c.FullPath(), "remote", c.ClientIP())
+		// store under canonical key so system.GetReqLogger can find it
+		c.Set("reqLogger", reqLogger)
+		c.Set("reqLoggerKey", "reqLogger")
+		c.Set(system.ReqLoggerKey, reqLogger)
+		c.Next()
+	}
+}
+
+// Listen serves the main listener and, when configured, the webhook
+// listener. It returns the first error of either, for example a port that
+// cannot be bound, so the caller can stop the process instead of running
+// without a listener; it returns nil once both are shut down.
+func (s *Server) Listen() error {
+	errs := make(chan error, 2)
+	listeners := 1
+	if s.webhookServer != nil {
+		listeners++
+		go func() { errs <- s.serve(s.webhookServer, s.config.Server.WebhookServer(), "webhook") }()
+	}
+	go func() { errs <- s.serve(s.httpServer, s.config.Server, "main") }()
+	for range listeners {
+		if err := <-errs; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// newHTTPServer returns an http.Server for handler with the configured timeouts
+// (defaults applied if unset).
+func newHTTPServer(cfg config.Server, handler http.Handler) *http.Server {
+	timeouts := cfg.GetServerTimeouts()
+	return &http.Server{
+		Addr:              cfg.ListenAddress,
+		Handler:           handler,
 		ReadTimeout:       timeouts.GetReadTimeout(),
 		ReadHeaderTimeout: timeouts.GetReadHeaderTimeout(),
 		WriteTimeout:      timeouts.GetWriteTimeout(),
 		IdleTimeout:       timeouts.GetIdleTimeout(),
 		MaxHeaderBytes:    timeouts.GetMaxHeaderBytes(),
 	}
+}
 
+// serve runs srv until it is shut down: over HTTPS when cfg has a server
+// certificate, otherwise over HTTP. It returns nil after Shutdown.
+func (s *Server) serve(srv *http.Server, cfg config.Server, listener string) error {
+	log := s.log.Sugar().With("listener", listener)
 	var err error
-	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		s.httpServer.TLSConfig, err = serverTLSConfig(s.config.Server)
+	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+		// The reload watchers live as long as the server.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		srv.TLSConfig, err = reloadingTLSConfig(ctx, cfg, log)
 		if err != nil {
-			s.log.Sugar().Errorw("Invalid server TLS configuration", "error", err)
-			return
+			return fmt.Errorf("%s listener: invalid server TLS configuration: %w", listener, err)
 		}
-		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress,
-			"tlsMinVersion", "TLS 1.2", "clientAuth", s.httpServer.TLSConfig.ClientAuth.String())
-		err = s.httpServer.ListenAndServeTLS(s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
+		log.Infow("Starting HTTPS server", "address", cfg.ListenAddress,
+			"tlsMinVersion", "TLS 1.2", "clientAuth", srv.TLSConfig.ClientAuth.String(),
+			"tlsReload", !cfg.TLSReloadDisabled)
+		err = srv.ListenAndServeTLS(tlsFiles(cfg))
 	} else {
-		s.log.Sugar().Infow("Starting HTTP server", "address", s.config.Server.ListenAddress)
-		err = s.httpServer.ListenAndServe()
+		log.Infow("Starting HTTP server", "address", cfg.ListenAddress)
+		err = srv.ListenAndServe()
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		s.log.Sugar().Errorw("Server listen error", "error", err)
+		return fmt.Errorf("%s listener %s: %w", listener, cfg.ListenAddress, err)
 	}
+	return nil
 }
 
 // serverTLSConfig returns the HTTPS server policy, including the optional
@@ -743,6 +867,119 @@ func serverTLSConfig(cfg config.Server) (*tls.Config, error) {
 	}, nil
 }
 
+// clientCAReloadInterval is how often the client CA bundle is re-read; it
+// matches the certwatcher poll interval.
+var clientCAReloadInterval = 10 * time.Second
+
+// tlsFiles returns the certificate files for ListenAndServeTLS: none when
+// reloadingTLSConfig serves the certificate itself.
+func tlsFiles(cfg config.Server) (certFile, keyFile string) {
+	if cfg.TLSReloadDisabled {
+		return cfg.TLSCertFile, cfg.TLSKeyFile
+	}
+	return "", ""
+}
+
+// reloadingTLSConfig returns serverTLSConfig(cfg). Unless
+// cfg.TLSReloadDisabled is set, the serving certificate and the client CA
+// bundle are re-read from disk while ctx is alive, so a rotated Secret takes
+// effect for new connections without a restart. A file that fails to load
+// keeps the previous certificate or CA bundle in use.
+func reloadingTLSConfig(ctx context.Context, cfg config.Server, log *zap.SugaredLogger) (*tls.Config, error) {
+	tlsCfg, err := serverTLSConfig(cfg)
+	if err != nil || cfg.TLSReloadDisabled {
+		return tlsCfg, err
+	}
+	watcher, err := certwatcher.New(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load server certificate: %w", err)
+	}
+	go func() {
+		if err := watcher.Start(ctx); err != nil {
+			log.Errorw("Server certificate watcher stopped; the current certificate stays in use", "error", err)
+		}
+	}()
+	tlsCfg.GetCertificate = watcher.GetCertificate
+	if tlsCfg.ClientCAs == nil {
+		return tlsCfg, nil
+	}
+
+	// A config returned by GetConfigForClient replaces the server's config
+	// for the handshake, including NextProtos; set what http.Server adds by
+	// default so HTTP/2 keeps working.
+	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
+	base := tlsCfg.Clone()
+	var current atomic.Pointer[tls.Config]
+	current.Store(base)
+	var lastPEM []byte // nil: the first run re-reads what ClientTLS loaded
+	go wait.UntilWithContext(ctx, func(context.Context) {
+		data, err := os.ReadFile(cfg.ClientCAFile)
+		if err != nil {
+			log.Warnw("Cannot reload client CA bundle; the current one stays in use", "file", cfg.ClientCAFile, "error", err)
+			return
+		}
+		if bytes.Equal(data, lastPEM) {
+			return
+		}
+		first := lastPEM == nil
+		lastPEM = data // warn once per content, not on every poll
+		pool, err := parseCABundle(data)
+		if err != nil {
+			log.Warnw("Cannot reload client CA bundle; the current one stays in use", "file", cfg.ClientCAFile, "error", err)
+			return
+		}
+		next := base.Clone()
+		next.ClientCAs = pool
+		current.Store(next)
+		if !first {
+			log.Infow("Reloaded client CA bundle", "file", cfg.ClientCAFile)
+		}
+	}, clientCAReloadInterval)
+	tlsCfg.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		return current.Load(), nil
+	}
+	return tlsCfg, nil
+}
+
+// parseCABundle parses every certificate of a PEM bundle. Unlike
+// x509.CertPool.AppendCertsFromPEM it fails on a truncated, malformed or
+// unparsable certificate anywhere in the bundle, so a bundle caught
+// mid-write is not published with only some of its CAs.
+func parseCABundle(data []byte) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	count := 0
+	begin := []byte("-----BEGIN")
+	for rest := data; ; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			if bytes.Contains(rest, begin) {
+				return nil, fmt.Errorf("malformed PEM block after %d certificates", count)
+			}
+			break
+		}
+		// pem.Decode skips a malformed block and returns the next valid
+		// one; more than one BEGIN marker in the consumed text means a
+		// block was skipped.
+		if bytes.Count(rest[:len(rest)-len(next)], begin) != 1 {
+			return nil, fmt.Errorf("malformed PEM block after %d certificates", count)
+		}
+		rest = next
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("certificate %d: %w", count+1, err)
+		}
+		pool.AddCert(cert)
+		count++
+	}
+	if count == 0 {
+		return nil, errors.New("no PEM certificates")
+	}
+	return pool, nil
+}
+
 // Shutdown gracefully shuts down the HTTP server, allowing in-flight requests to complete.
 // The provided context can set a deadline for the shutdown. If the deadline is exceeded,
 // remaining connections are forcibly closed.
@@ -751,7 +988,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.log.Sugar().Infow("Initiating graceful HTTP server shutdown")
-	err := s.httpServer.Shutdown(ctx)
+	// Both listeners stop accepting at once and drain under the shared deadline.
+	var webhookErr error
+	var wg sync.WaitGroup
+	if s.webhookServer != nil {
+		wg.Go(func() { webhookErr = s.webhookServer.Shutdown(ctx) })
+	}
+	mainErr := s.httpServer.Shutdown(ctx)
+	wg.Wait()
+	err := errors.Join(mainErr, webhookErr)
 	if err != nil {
 		s.log.Sugar().Warnw("HTTP server shutdown error", "error", err)
 	} else {
@@ -1506,4 +1751,26 @@ func isTerminalStreamRequest(r *http.Request) bool {
 	}
 	name, suffix, ok := strings.Cut(rest, "/")
 	return ok && name != "" && suffix == "terminal"
+}
+
+// recoverPanics answers a panicking request with 500 and logs the panic
+// without the request headers, so that credentials never reach the log.
+// (gin-contrib/zap's RecoveryWithZap logs a full request dump, Authorization
+// included.)
+func recoverPanics(log *zap.Logger) gin.HandlerFunc {
+	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, rec any) {
+		cid, _ := c.Get(apiresponses.CIDKey)
+		log.Error("[Recovery from panic]",
+			zap.Any("error", rec),
+			zap.String("cid", fmt.Sprintf("%v", cid)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.FullPath()))
+		// A handler that already wrote (for example a flushed terminal or
+		// recording stream) keeps its status and body; appending an error
+		// body would corrupt the stream.
+		if !c.Writer.Written() {
+			apiresponses.RespondInternalErrorSimple(c, "internal server error")
+		}
+		c.Abort()
+	})
 }

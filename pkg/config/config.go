@@ -188,13 +188,24 @@ type Server struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
 	// ClientCAFile is a PEM bundle of CAs that sign accepted client
 	// certificates. Required for clientAuth verifyIfGiven and require.
-	// Read once at startup; restart the server after changing it.
+	// Re-read while the server runs unless TLSReloadDisabled is set.
 	// +optional
 	ClientCAFile string `yaml:"clientCAFile,omitempty"`
 	// ClientAuth selects the TLS client-certificate policy: none (default),
 	// request, verifyIfGiven or require. Only applies when HTTPS is enabled.
 	// +optional
 	ClientAuth string `yaml:"clientAuth,omitempty"`
+	// TLSReloadDisabled restores the previous behaviour of reading
+	// TLSCertFile, TLSKeyFile and ClientCAFile once at startup. By default
+	// the server re-reads them when they change. Transitional opt-out; it
+	// will be removed in a future release.
+	// +optional
+	TLSReloadDisabled bool `yaml:"tlsReloadDisabled,omitempty"`
+	// Webhook optionally serves the SubjectAccessReview authorization webhook
+	// on a dedicated mTLS listener. Empty Webhook.ListenAddress keeps the
+	// webhook on ListenAddress only.
+	// +optional
+	Webhook ServerWebhook `yaml:"webhook,omitempty"`
 	// HardenedIDPHints when true, prevents disclosure of available identity providers in error messages.
 	// Default: true (hardened) unless explicitly set to false in config.
 	// +optional
@@ -397,6 +408,82 @@ func (s Server) GetShutdownTimeout() time.Duration {
 	return parseDurationOrDefault(s.ShutdownTimeout, DefaultShutdownTimeout)
 }
 
+// ServerWebhook configures the optional dedicated listener for the
+// SubjectAccessReview authorization webhook. It uses the server certificate
+// (TLSCertFile/TLSKeyFile) and its own client certificate policy.
+type ServerWebhook struct {
+	// ListenAddress of the dedicated webhook listener, for example ":8443".
+	// Empty (default) disables the listener.
+	ListenAddress string `yaml:"listenAddress,omitempty"`
+	// ClientAuth is the client certificate policy of the webhook listener,
+	// with the values of Server.ClientAuth.
+	ClientAuth string `yaml:"clientAuth,omitempty"`
+	// ClientCAFile is a PEM bundle of CAs that sign kube-apiserver client
+	// certificates. Required for verifyIfGiven and require.
+	ClientCAFile string `yaml:"clientCAFile,omitempty"`
+	// RequireCommonNameMatch rejects a verified client certificate whose
+	// identity does not name the cluster in the request path. Defaults to
+	// true when ClientAuth is require. false is a transitional escape.
+	RequireCommonNameMatch *bool `yaml:"requireCommonNameMatch,omitempty"`
+	// DisableOnMainListener removes the webhook routes from ListenAddress.
+	DisableOnMainListener bool `yaml:"disableOnMainListener,omitempty"`
+}
+
+// Enabled reports whether the dedicated webhook listener is configured.
+func (w ServerWebhook) Enabled() bool { return w.ListenAddress != "" }
+
+// IdentityRequired reports whether the client certificate must name the
+// cluster: RequireCommonNameMatch, or by default whether ClientAuth is require.
+func (w ServerWebhook) IdentityRequired() bool {
+	if w.RequireCommonNameMatch != nil {
+		return *w.RequireCommonNameMatch
+	}
+	return w.ClientAuth == ClientAuthRequire
+}
+
+// WebhookServer returns the server settings of the dedicated webhook
+// listener: the server certificate, reload policy and timeouts with the
+// webhook's listen address and client certificate policy.
+func (s Server) WebhookServer() Server {
+	return Server{
+		ListenAddress:     s.Webhook.ListenAddress,
+		TLSCertFile:       s.TLSCertFile,
+		TLSKeyFile:        s.TLSKeyFile,
+		ClientAuth:        s.Webhook.ClientAuth,
+		ClientCAFile:      s.Webhook.ClientCAFile,
+		TLSReloadDisabled: s.TLSReloadDisabled,
+		Timeouts:          s.Timeouts,
+	}
+}
+
+// ValidateWebhook checks server.webhook. It fails on a dedicated listener
+// without server TLS or on the main listen address, on an invalid client
+// certificate policy (see ClientTLS), on requireCommonNameMatch without a
+// verifying policy, and on disableOnMainListener without a listener.
+func (s Server) ValidateWebhook() error {
+	w := s.Webhook
+	if !w.Enabled() {
+		if w.ClientAuth != "" || w.ClientCAFile != "" || w.RequireCommonNameMatch != nil || w.DisableOnMainListener {
+			return errors.New("server.webhook settings need server.webhook.listenAddress")
+		}
+		return nil
+	}
+	if s.TLSCertFile == "" || s.TLSKeyFile == "" {
+		return errors.New("server.webhook.listenAddress needs server.tlsCertFile and server.tlsKeyFile")
+	}
+	if w.ListenAddress == s.ListenAddress {
+		return fmt.Errorf("server.webhook.listenAddress %q must differ from server.listenAddress", w.ListenAddress)
+	}
+	mode, _, err := s.WebhookServer().clientTLS("server.webhook")
+	if err != nil {
+		return err
+	}
+	if w.IdentityRequired() && mode != tls.VerifyClientCertIfGiven && mode != tls.RequireAndVerifyClientCert {
+		return errors.New("server.webhook.requireCommonNameMatch needs server.webhook.clientAuth verifyIfGiven or require")
+	}
+	return nil
+}
+
 // Client certificate modes accepted by Server.ClientAuth.
 const (
 	ClientAuthNone          = "none"
@@ -419,29 +506,35 @@ var clientAuthTypes = map[string]tls.ClientAuthType{
 // mode, on client authentication without server TLS, and on an unreadable or
 // empty CA bundle.
 func (s Server) ClientTLS() (tls.ClientAuthType, *x509.CertPool, error) {
+	return s.clientTLS("server")
+}
+
+// clientTLS implements ClientTLS; section names the config section of
+// ClientAuth and ClientCAFile in error messages.
+func (s Server) clientTLS(section string) (tls.ClientAuthType, *x509.CertPool, error) {
 	mode, ok := clientAuthTypes[s.ClientAuth]
 	if !ok {
-		return 0, nil, fmt.Errorf("server.clientAuth %q: want one of %s, %s, %s, %s",
-			s.ClientAuth, ClientAuthNone, ClientAuthRequest, ClientAuthVerifyIfGiven, ClientAuthRequire)
+		return 0, nil, fmt.Errorf("%s.clientAuth %q: want one of %s, %s, %s, %s",
+			section, s.ClientAuth, ClientAuthNone, ClientAuthRequest, ClientAuthVerifyIfGiven, ClientAuthRequire)
 	}
 	verifies := mode == tls.VerifyClientCertIfGiven || mode == tls.RequireAndVerifyClientCert
 	switch {
 	case mode != tls.NoClientCert && (s.TLSCertFile == "" || s.TLSKeyFile == ""):
-		return 0, nil, fmt.Errorf("server.clientAuth %q needs server.tlsCertFile and server.tlsKeyFile", s.ClientAuth)
+		return 0, nil, fmt.Errorf("%s.clientAuth %q needs server.tlsCertFile and server.tlsKeyFile", section, s.ClientAuth)
 	case verifies && s.ClientCAFile == "":
-		return 0, nil, fmt.Errorf("server.clientAuth %q needs server.clientCAFile", s.ClientAuth)
+		return 0, nil, fmt.Errorf("%s.clientAuth %q needs %s.clientCAFile", section, s.ClientAuth, section)
 	case !verifies && s.ClientCAFile != "":
-		return 0, nil, errors.New("server.clientCAFile is set but server.clientAuth is not verifyIfGiven or require")
+		return 0, nil, fmt.Errorf("%s.clientCAFile is set but %s.clientAuth is not verifyIfGiven or require", section, section)
 	case !verifies:
 		return mode, nil, nil
 	}
 	pem, err := os.ReadFile(s.ClientCAFile)
 	if err != nil {
-		return 0, nil, fmt.Errorf("read server.clientCAFile: %w", err)
+		return 0, nil, fmt.Errorf("read %s.clientCAFile: %w", section, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return 0, nil, fmt.Errorf("server.clientCAFile %s contains no PEM certificates", s.ClientCAFile)
+		return 0, nil, fmt.Errorf("%s.clientCAFile %s contains no PEM certificates", section, s.ClientCAFile)
 	}
 	return mode, pool, nil
 }
