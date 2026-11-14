@@ -188,3 +188,11 @@ Build the image for linux/amd64 and linux/arm64 using the digest-pinned
 BusyBox base and its pinned builder CA bundle. Release automation must attach an SPDX SBOM and provenance
 attestation and sign the immutable manifest with keyless Cosign. Never put
 credentials or signing keys in this image.
+
+## Logging
+
+The Go helpers write their error line to stderr. `LOG_FORMAT=json` writes it as
+a JSON object (`level`, `ts`, `logger`, `msg`); the default `text` keeps the
+`<name>: <message>` line. `LOG_LEVEL` (`debug`, `info`, `warn`, `error`)
+filters the lines. An invalid value exits with code 2. See
+`docs/logging-reference.md` in the repository.

@@ -238,6 +238,28 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
 // Unlike BreakglassSession activity, DebugSession activity is included: callers
 // must use the shared live-read status writers to preserve monotonic updates.
+func cleanupAcknowledgementFrom(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) *ac.DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
+	ack := ac.DebugSessionCleanupAcknowledgementStatus().
+		WithName(a.Name).WithUID(a.UID).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt)
+	for _, id := range a.Retired {
+		retired := ac.CleanupAcknowledgedIdentity().WithAPIVersion(id.APIVersion).WithKind(id.Kind).WithName(id.Name)
+		if id.Namespace != "" {
+			retired.WithNamespace(id.Namespace)
+		}
+		if id.UID != "" {
+			retired.WithUID(id.UID)
+		}
+		ack.WithRetired(retired)
+	}
+	if a.Reason != "" {
+		ack.WithReason(a.Reason)
+	}
+	if a.Message != "" {
+		ack.WithMessage(a.Message)
+	}
+	return ack
+}
+
 func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
@@ -263,6 +285,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
+	}
+	for i := range status.CleanupAcknowledgements {
+		result.WithCleanupAcknowledgements(cleanupAcknowledgementFrom(&status.CleanupAcknowledgements[i]))
 	}
 
 	if status.LastActivity != nil {
@@ -598,6 +623,12 @@ func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.De
 	if a.ApprovedByIdentityProvider != "" {
 		result.WithApprovedByIdentityProvider(a.ApprovedByIdentityProvider)
 	}
+	if len(a.ApprovedByIdentities) > 0 {
+		result.WithApprovedByIdentities(a.ApprovedByIdentities...)
+	}
+	if a.ApprovedByIdentitiesIncomplete {
+		result.WithApprovedByIdentitiesIncomplete(true)
+	}
 	if a.ApprovedAt != nil {
 		result.WithApprovedAt(*a.ApprovedAt)
 	}
@@ -629,6 +660,9 @@ func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) 
 
 	if p.KubernetesUser != "" {
 		result.WithKubernetesUser(p.KubernetesUser)
+	}
+	if len(p.Identities) > 0 {
+		result.WithIdentities(p.Identities...)
 	}
 	if p.Email != "" {
 		result.WithEmail(p.Email)

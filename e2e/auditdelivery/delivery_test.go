@@ -10,22 +10,29 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
+	auditv1 "github.com/telekom/k8s-breakglass/api/audit/v1"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	bgconfig "github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 func kubectl(t *testing.T, args ...string) {
@@ -94,10 +101,17 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	stop = func() {}
 	groups := []string{"/operations/platform", "auditors", "system:authenticated"}
 	actorCtx := audit.WithAuthenticatedActor(ctx, []string{"operator"}, groups)
+	// A structured, security-relevant event (sessionLifecycle details) with a
+	// correlation ID, as the session controller emits it.
 	svc.Emit(actorCtx, &audit.Event{
-		ID: "outage-event", Type: audit.EventConfigChanged,
+		ID: "outage-event", Type: audit.EventSessionRequested,
 		Actor:  audit.Actor{User: "operator"},
 		Target: audit.Target{Kind: "Namespace", Name: ns.Name, UID: string(ns.UID)},
+		Details: map[string]interface{}{
+			"message": "Session requested", "cluster": "audit-delivery", "grantedGroup": "cluster-admin",
+			"state": "Pending", "ticketSystemID": "INC-1", "user": "operator",
+		},
+		RequestContext: &audit.RequestContext{CorrelationID: "outage-correlation", SessionName: "outage-session", SessionUID: string(ns.UID)},
 	})
 	require.Eventually(t, func() bool {
 		stats := svc.GetQueuedSinkHealth()
@@ -110,9 +124,22 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	message, err := reader.ReadMessage(ctx)
 	require.NoError(t, err)
+	// The record produced by the real Kafka sink honours the published
+	// contract (docs/audit-event-schema.md): schema, key and headers.
+	require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+	require.Equal(t, "outage-event", string(message.Key))
+	headers := map[string]string{}
+	for _, header := range message.Headers {
+		headers[header.Key] = string(header.Value)
+	}
+	require.Equal(t, string(audit.EventSessionRequested), headers["event-type"])
+	require.Equal(t, audit.SchemaVersion, headers["schema-version"])
+	require.Equal(t, "operator", headers["actor"])
+	require.Equal(t, "outage-correlation", headers["correlation-id"])
 	var event audit.Event
 	require.NoError(t, json.Unmarshal(message.Value, &event))
 	require.Equal(t, "outage-event", event.ID)
+	require.Equal(t, audit.SchemaVersion, event.SchemaVersion)
 	require.Equal(t, string(ns.UID), event.Target.UID)
 	require.Equal(t, "operator", event.Actor.User)
 	require.ElementsMatch(t, groups, event.Actor.Groups)
@@ -272,4 +299,158 @@ func TestDropAfterRetryWindowOptOut(t *testing.T) {
 	ids := readIDs(ctx, t, topic, int(svc.GetQueuedSinkHealth()[0].ProcessedEvents))
 	require.NotContains(t, ids, "dropped")
 	require.Contains(t, ids[0], "after-recovery-")
+}
+
+// The security events that the controller and the authorization webhook emit
+// (escalation changes, debug-session attach) reach a real broker as
+// schema-valid records with their headers.
+func TestSecurityEventsOnKafka(t *testing.T) {
+	if os.Getenv("AUDIT_DELIVERY_E2E") != "true" {
+		t.Skip("run hack/audit-delivery-kind.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cli := kubeClient(t)
+	stop := forward(t)
+	t.Cleanup(func() { stop() })
+	const topic = "audit-security"
+	svc := newKafkaService(ctx, t, cli, topic, &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1})
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-admin", Namespace: "breakglass", UID: "esc-uid", Generation: 1, ResourceVersion: "1"},
+		Spec:       breakglassv1alpha1.BreakglassEscalationSpec{EscalatedGroup: "cluster-admin"},
+	}
+	svc.Emit(ctx, audit.EscalationChangeEvent(audit.EventEscalationCreated, escalation, 0))
+	attached := audit.DebugSessionAttachedEvent("alice@example.com", []string{"ops"}, "spoke",
+		&authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Name: "dbg-pod", Namespace: "debug"},
+		audit.Target{Kind: "pods", Name: "dbg-pod", Namespace: "debug"}, "breakglass", "dbg", "dbg-uid")
+	attached.ID = "attached-event"
+	attached.RequestContext.CorrelationID = "attach-correlation"
+	svc.Emit(ctx, attached)
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{"localhost:19093"}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6})
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	seen := map[string]map[string]string{}
+	for len(seen) < 2 {
+		message, err := reader.ReadMessage(ctx)
+		require.NoError(t, err)
+		require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+		headers := map[string]string{}
+		for _, header := range message.Headers {
+			headers[header.Key] = string(header.Value)
+		}
+		seen[string(message.Key)] = headers
+	}
+	require.Equal(t, string(audit.EventEscalationCreated), seen["escalation/esc-uid/1"]["event-type"])
+	require.Equal(t, string(audit.EventDebugSessionAttached), seen["attached-event"]["event-type"])
+	require.Equal(t, "attach-correlation", seen["attached-event"]["correlation-id"])
+	require.Equal(t, "alice@example.com", seen["attached-event"]["actor"])
+}
+
+// The escalation reconciler, watching a real API server, records create,
+// update and delete of a BreakglassEscalation, and the records that a real
+// broker returns are schema-valid with their headers.
+func TestEscalationWatchEventsOnKafka(t *testing.T) {
+	if os.Getenv("AUDIT_DELIVERY_E2E") != "true" {
+		t.Skip("run hack/audit-delivery-kind.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cli := kubeClient(t)
+	stop := forward(t)
+	t.Cleanup(func() { stop() })
+	const topic = "audit-escalation-watch"
+	svc := newKafkaService(ctx, t, cli, topic, &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	mgr, err := ctrl.NewManager(config.GetConfigOrDie(), ctrl.Options{Scheme: scheme,
+		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
+	require.NoError(t, err)
+	escalations := bgconfig.NewEscalationReconciler(mgr.GetClient(), zaptest.NewLogger(t).Sugar(), nil, nil, nil, time.Minute).WithAuditEmitter(svc)
+	require.NoError(t, escalations.SetupWithManager(mgr))
+	mgrCtx, stopManager := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- mgr.Start(mgrCtx) }()
+	t.Cleanup(func() {
+		stopManager()
+		require.NoError(t, <-done)
+	})
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "audit-escalation-watch"}}
+	require.NoError(t, cli.Create(ctx, ns))
+	t.Cleanup(func() { _ = cli.Delete(context.Background(), ns) })
+	newEscalation := func(name string) *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns.Name},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup: "platform-admin", MaxValidFor: "1h",
+				Allowed:   breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"cluster"}, Groups: []string{"users"}},
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			},
+		}
+	}
+	processed := func() int64 {
+		health := svc.GetQueuedSinkHealth()
+		if len(health) != 1 {
+			return 0
+		}
+		return health[0].ProcessedEvents
+	}
+	// The controller's watch starts after the manager does; a sentinel
+	// escalation shows that it is watching before the measured sequence.
+	require.NoError(t, cli.Create(ctx, newEscalation("watch-ready")))
+	var stopped atomic.Pointer[error]
+	require.Eventually(t, func() bool {
+		select {
+		case err := <-done:
+			stopped.Store(&err)
+			done <- err // keep the result for the cleanup's receive
+			return true
+		default:
+		}
+		return processed() >= 1
+	}, 2*time.Minute, 500*time.Millisecond, "the escalation controller never audited the sentinel")
+	if err := stopped.Load(); err != nil {
+		t.Fatalf("manager stopped early: %v", *err)
+	}
+	baseline := processed()
+
+	esc := newEscalation("watched")
+	require.NoError(t, cli.Create(ctx, esc))
+	patch := client.MergeFrom(esc.DeepCopy())
+	esc.Spec.EscalatedGroup = "platform-admin-2"
+	require.NoError(t, cli.Patch(ctx, esc, patch))
+	require.EqualValues(t, 2, esc.Generation)
+	require.NoError(t, cli.Delete(ctx, esc))
+
+	// All three events reach the Kafka sink before the topic is read.
+	require.Eventually(t, func() bool { return processed() >= baseline+3 }, time.Minute, time.Second,
+		"sink health: %+v", svc.GetQueuedSinkHealth())
+
+	prefix := "escalation/" + string(esc.UID) + "/"
+	want := map[string]audit.EventType{prefix + "1": audit.EventEscalationCreated,
+		prefix + "2": audit.EventEscalationUpdated, prefix + "deleted": audit.EventEscalationDeleted}
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{"localhost:19093"}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6})
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	seen := map[string]bool{}
+	for len(seen) < len(want) {
+		message, err := reader.ReadMessage(ctx)
+		require.NoError(t, err, "received %v", seen)
+		key := string(message.Key)
+		eventType, ok := want[key]
+		if !ok {
+			continue
+		}
+		require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+		headers := map[string]string{}
+		for _, header := range message.Headers {
+			headers[header.Key] = string(header.Value)
+		}
+		require.Equal(t, string(eventType), headers["event-type"])
+		require.Equal(t, audit.SchemaVersion, headers["schema-version"])
+		seen[key] = true
+	}
+	require.Len(t, seen, 3, "created, updated and deleted arrived")
 }

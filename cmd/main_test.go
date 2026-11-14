@@ -7,6 +7,7 @@ package main
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,5 +172,17 @@ func TestServerTLSValidatedOnlyWithHTTPListener(t *testing.T) {
 	}
 	if err := validateServerTLS(server, true); err == nil {
 		t.Fatal("HTTP listener enabled: want error for unreadable client CA")
+	}
+}
+
+func TestServerWebhookTLSValidatedWithHTTPListener(t *testing.T) {
+	server := config.Server{ListenAddress: ":8080", TLSCertFile: "tls.crt", TLSKeyFile: "tls.key",
+		Webhook: config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire}}
+	if err := validateServerTLS(server, false); err != nil {
+		t.Fatalf("HTTP listener disabled: %v", err)
+	}
+	err := validateServerTLS(server, true)
+	if err == nil || !strings.Contains(err.Error(), "server.webhook.clientAuth") {
+		t.Fatalf("HTTP listener enabled: want server.webhook error, got %v", err)
 	}
 }

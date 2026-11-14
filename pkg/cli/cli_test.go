@@ -8,7 +8,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestGetEnvString(t *testing.T) {
@@ -369,6 +374,22 @@ func TestParse_DisableSessionRateLimit_FlagOverridesEnv(t *testing.T) {
 		"CLI flag --disable-session-rate-limit should override BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false")
 }
 
+func TestParse_RequireSyncedApproverGroups(t *testing.T) {
+	for _, tt := range []struct {
+		env  string
+		args []string
+		want bool
+	}{
+		{want: false},
+		{args: []string{"--require-synced-approver-groups"}, want: true},
+		{env: "true", want: true},
+		{env: "true", args: []string{"--require-synced-approver-groups=false"}, want: false},
+	} {
+		t.Setenv("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", tt.env)
+		assert.Equal(t, tt.want, parseWithArgs(t, tt.args).RequireSyncedApproverGroups, "env %q args %v", tt.env, tt.args)
+	}
+}
+
 func TestParse_EnableControllers_Default(t *testing.T) {
 	t.Setenv("ENABLE_CONTROLLERS", "")
 
@@ -441,6 +462,92 @@ func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
 				cfg.BreakglassNamespace = "breakglass-system"
 				assert.NoError(t, cfg.Validate())
 			}
+		})
+	}
+}
+
+func TestParse_DebugSessionCleanupOptOuts(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "")
+	t.Setenv("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", "")
+	cfg := parseWithArgs(t, []string{})
+	assert.False(t, cfg.AllowLegacyIdentityCleanupAcknowledgement, "incomplete identities fail closed by default")
+	assert.False(t, cfg.DisableDebugSessionUnservedKindHandling, "unserved-kind handling is on by default")
+	assert.False(t, cfg.DisableDebugSessionCleanupBackoff, "cleanup backoff is on by default")
+
+	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff", "--allow-legacy-identity-cleanup-acknowledgement"})
+	assert.True(t, cfg.AllowLegacyIdentityCleanupAcknowledgement)
+	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
+	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
+
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "true")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "true")
+	cfg = parseWithArgs(t, []string{})
+	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
+	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
+}
+
+func TestParse_Logging(t *testing.T) {
+	tests := []struct {
+		name                  string
+		args                  []string
+		env                   map[string]string
+		wantLevel, wantFormat string
+		wantErr               string
+	}{
+		{name: "defaults", wantLevel: "info", wantFormat: "json"},
+		{name: "flags", args: []string{"--log-level=debug", "--log-format=json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "env", env: map[string]string{"LOG_LEVEL": "warn", "LOG_FORMAT": "console"}, wantLevel: "warn", wantFormat: "console"},
+		{name: "flag overrides env", args: []string{"--log-level=error"}, env: map[string]string{"LOG_LEVEL": "warn"}, wantLevel: "error", wantFormat: "json"},
+		{name: "deprecated --debug keeps console", args: []string{"--debug"}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug with json", args: []string{"--debug", "--log-format=json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "--debug with LOG_FORMAT", args: []string{"--debug"}, env: map[string]string{"LOG_FORMAT": "json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "--debug with --log-level=debug", args: []string{"--debug", "--log-level=debug"}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug conflicts with info", args: []string{"--debug", "--log-level=info"}, wantErr: "--debug conflicts with --log-level=info"},
+		{name: "--debug conflicts with LOG_LEVEL", args: []string{"--debug"}, env: map[string]string{"LOG_LEVEL": "error"}, wantErr: "--debug conflicts with --log-level=error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LOG_LEVEL", "")
+			t.Setenv("LOG_FORMAT", "")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			cfg := parseWithArgs(t, append([]string{"--breakglass-namespace=ns"}, tt.args...))
+			err := cfg.Validate()
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			level, format := cfg.Logging()
+			assert.Equal(t, tt.wantLevel, level)
+			assert.Equal(t, tt.wantFormat, format)
+		})
+	}
+}
+
+// TestConfig_PrintLogsEffectiveLogging proves that the startup line reports
+// the level and format in effect, not the raw (possibly empty) flag values.
+func TestConfig_PrintLogsEffectiveLogging(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cfg                   Config
+		wantLevel, wantFormat string
+	}{
+		{name: "defaults", wantLevel: "info", wantFormat: "json"},
+		{name: "deprecated --debug", cfg: Config{Debug: true}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug with json", cfg: Config{Debug: true, Log: logging.Options{Format: "json"}}, wantLevel: "debug", wantFormat: "json"},
+		{name: "explicit", cfg: Config{Log: logging.Options{Level: "warn", Format: "console"}}, wantLevel: "warn", wantFormat: "console"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zapcore.InfoLevel)
+			tt.cfg.Print(zap.New(core).Sugar())
+			require.Equal(t, 1, logs.Len())
+			fields := logs.All()[0].ContextMap()
+			assert.Equal(t, tt.wantLevel, fields["log_level"])
+			assert.Equal(t, tt.wantFormat, fields["log_format"])
 		})
 	}
 }

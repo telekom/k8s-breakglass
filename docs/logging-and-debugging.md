@@ -173,6 +173,77 @@ The Go backend uses structured logging (see `pkg/logging/`) with consistent form
 - **Webhooks** (`pkg/webhook/`): Authorization decisions, admission validation
 - **Cluster Clients** (`pkg/cluster/`): Cluster connectivity, kubeconfig updates
 
+### Log Level and Format
+
+For what each program logs at which level, with the fields, see the
+[Logging Reference](logging-reference.md).
+
+The controller writes its logs to stderr through zap. Two flags, each with an
+environment variable, choose the level and the format:
+
+| Flag | Environment | Values | Default |
+|------|-------------|--------|---------|
+| `--log-level` | `LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
+| `--log-format` | `LOG_FORMAT` | `json`, `console` | `json` |
+
+A flag overrides its environment variable. An unknown value stops the
+controller at startup. The defaults produce the same format as earlier
+releases. Neither format samples: every log call at or above the level is
+written. Earlier releases kept only the first 100 identical `json` lines per
+second and then every 100th.
+
+- `json` is zap's production encoding: one JSON object per line.
+- `console` is zap's development profile: tab-separated, human-readable lines.
+  A log call at DPanic level panics. It also puts the HTTP
+  server (Gin) into debug mode when the level is `debug`, which writes extra
+  plain-text lines to stdout. Do not use `console` for log collection.
+
+`--debug` is deprecated. It is an alias for `--log-level=debug`, and without
+`--log-format`/`LOG_FORMAT` it also selects `console`, so `--debug` alone gives
+exactly the output it always gave. `--debug` together with a `--log-level`
+other than `debug` is rejected. The controller logs a warning when `--debug`
+is set. Replace it with `--log-level=debug --log-format=console` to keep the
+output, or `--log-level=debug` for JSON.
+
+#### JSON fields
+
+Every line the controller logger writes in the `json` format is a JSON object
+with the fields below. The controller routes controller-runtime, client-go
+(klog), the OpenTelemetry SDK, gRPC (OTLP gRPC exporter) and the Go standard
+`log` package (for example
+the `http: TLS handshake error` lines of `net/http` servers) through this
+logger, so their lines use the same format. Exceptions,
+which a log collector must tolerate:
+
+- If startup fails, or the logger cannot be built, the process writes one
+  plain-text line `fatal: <error>` to stderr and exits with code 1.
+- Output written before the logger exists, such as a failure to parse the
+  built-in mail templates at package initialization, is plain text.
+- `--otel-exporter=stdout` writes trace spans as multi-line, indented JSON to
+  stdout. Use it only for local debugging.
+
+
+| Field | Type | Content |
+|-------|------|---------|
+| `level` | string | `debug`, `info`, `warn`, `error`, `dpanic`, `panic` or `fatal` |
+| `ts` | number | Unix time in seconds, with fractions |
+| `caller` | string | Source file and line, for example `breakglass/session_manager.go:120` |
+| `msg` | string | The message |
+| `logger` | string | Name of the logger; present only for named loggers (for example controller-runtime components) |
+| `error` | string | Error text; present when the line carries an error |
+
+All other keys are the structured fields of the log call (for example
+`cluster`, `escalation`, `controller`, `reconcileID`). There is no
+`stacktrace` field. Example:
+
+```json
+{"level":"debug","ts":1763030400.123,"caller":"cmd/main.go:191","msg":"Debug logging enabled","logLevel":"debug","logFormat":"json"}
+```
+
+The `console` format writes `time<TAB>LEVEL<TAB>logger<TAB>caller<TAB>msg<TAB>{fields}`
+with an ISO 8601 time and an upper-case level; its layout is not a stable
+interface.
+
 ### Build Information Endpoint
 
 The backend exposes build metadata via `/api/debug/buildinfo`:
@@ -283,12 +354,12 @@ RUN go build -ldflags="\
    kubectl logs -n breakglass-system deploy/breakglass-manager -c breakglass --follow
    ```
 
-3. **Enable verbose logging:**
+3. **Enable verbose logging** (see [Log level and format](#log-level-and-format)):
    ```yaml
    # In deployment
    args:
-     - --zap-log-level=debug
-     - --zap-development=true
+     - --log-level=debug
+     - --log-format=json      # or console for human-readable output
    ```
 
 4. **Check metrics:**

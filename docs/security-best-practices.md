@@ -363,7 +363,7 @@ the clients that need a certificate under `require`.
 
 ### Network Policies
 
-Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port.
+Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port. Alternatively, serve it on the [dedicated mTLS listener](webhook-setup.md#dedicated-mtls-listener) (`server.webhook`), which requires a per-cluster kube-apiserver client certificate.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -532,6 +532,25 @@ Every lookup failure is observable, so the fallback is never silent:
 2. **Alert on `breakglass_approval_group_lookup_failures_total`** as an availability signal — it is the leading indicator for the above.
 3. **Review the `session.approval_unverified_groups` audit trail** after any spoke outage.
 4. **Keep spoke credentials healthy** — the fallback is a safety net for incidents, not a supported steady state.
+
+### Approval Before the First Approver Group Sync
+
+Approver group members are synced from the identity provider into
+`status.approverGroupMembers` every `--escalation-status-update-interval`
+(default 10m). Until a group's first successful sync, approval falls back to
+the approver's cluster or token groups. With the recommended Keycloak mapper
+setting `full.path=false`, a member of a nested group such as `/x/admins`
+carries the same `admins` claim as a member of the top-level `admins`, so
+during that window anyone who can create a same-named subgroup can approve.
+After the sync, such ambiguous groups are denied.
+
+Enable `--require-synced-approver-groups` to deny approval through a group
+until it has been synced (HTTP `403`, logged as
+`Approval by an unsynced approver group denied (--require-synced-approver-groups)`). This closes the
+window at the cost of possible lockout until the first sync succeeds, so only
+enable it when group sync is configured and healthy for every approver
+identity provider. Also restrict who can create groups in the identity
+provider. See [Approval before the first group sync](breakglass-escalation.md#approval-before-the-first-group-sync).
 
 ## Cross-Site Request Forgery (CSRF) Protection
 

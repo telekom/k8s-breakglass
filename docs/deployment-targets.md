@@ -55,7 +55,7 @@ kustomize build config/debug | kubectl apply --server-side --force-conflicts -f 
 ```
 
 **Adds to base:**
-- `--debug` flag for verbose logging
+- `--log-level=debug --log-format=console` for verbose, human-readable logging
 
 **When to use:**
 - Troubleshooting authorization issues
@@ -176,7 +176,7 @@ Each target includes a `config.yaml` file in `configMapGenerator`. To customize:
     ┌─────────────┐     ┌─────────────┐      ┌─────────────┐
     │config/debug │     │ config/dev  │      │ (your       │
     │             │     │             │      │  overlay)   │
-    │ + --debug   │     │ + --debug   │      │             │
+    │ + debug log │     │ + debug log │      │             │
     │             │     │ + keycloak  │      │ + custom    │
     │             │     │ + mailhog   │      │   patches   │
     │             │     │ + kafka     │      │             │

@@ -42,6 +42,8 @@ const (
 	EventEscalationRevoked   EventType = "escalation.revoked"
 	EventEscalationUpdated   EventType = "escalation.updated"
 	EventEscalationValidated EventType = "escalation.validated"
+	// EventEscalationDeleted records that a BreakglassEscalation was deleted.
+	EventEscalationDeleted EventType = "escalation.deleted"
 
 	// === Access decision events (per-request granularity) ===
 	EventAccessAllowed      EventType = "access.allowed"
@@ -111,21 +113,24 @@ const (
 	EventPodSecurityOverride  EventType = "pod_security.override"
 
 	// === Debug session events ===
-	EventDebugSessionCreated           EventType = "debug_session.created"
-	EventDebugSessionStarted           EventType = "debug_session.started"
-	EventDebugSessionApproved          EventType = "debug_session.approved"
-	EventDebugSessionRejected          EventType = "debug_session.rejected"
-	EventDebugSessionRenewed           EventType = "debug_session.renewed"
-	EventDebugSessionValidated         EventType = "debug_session.validated"
-	EventDebugSessionValidationFailed  EventType = "debug_session.validation_failed"
-	EventDebugSessionTerminated        EventType = "debug_session.terminated"
-	EventDebugSessionFailed            EventType = "debug_session.failed"
-	EventDebugSessionExpired           EventType = "debug_session.expired"
-	EventDebugSessionApprovalTimeout   EventType = "debug_session.approval_timeout"
-	EventDebugSessionCleanupFailed     EventType = "debug_session.cleanup_failed"
-	EventDebugSessionCleanupRecovered  EventType = "debug_session.cleanup_recovered"
-	EventDebugSessionMaintenanceIntent EventType = "debug_session.node_maintenance.execution_intent"
-	EventDebugSessionMaintenanceResult EventType = "debug_session.node_maintenance.result"
+	EventDebugSessionCreated          EventType = "debug_session.created"
+	EventDebugSessionStarted          EventType = "debug_session.started"
+	EventDebugSessionApproved         EventType = "debug_session.approved"
+	EventDebugSessionRejected         EventType = "debug_session.rejected"
+	EventDebugSessionRenewed          EventType = "debug_session.renewed"
+	EventDebugSessionValidated        EventType = "debug_session.validated"
+	EventDebugSessionValidationFailed EventType = "debug_session.validation_failed"
+	EventDebugSessionTerminated       EventType = "debug_session.terminated"
+	EventDebugSessionFailed           EventType = "debug_session.failed"
+	EventDebugSessionExpired          EventType = "debug_session.expired"
+	EventDebugSessionApprovalTimeout  EventType = "debug_session.approval_timeout"
+	EventDebugSessionCleanupFailed    EventType = "debug_session.cleanup_failed"
+	EventDebugSessionCleanupRecovered EventType = "debug_session.cleanup_recovered"
+	// EventDebugSessionCleanupAcknowledged records residuals retired by an
+	// operator acknowledgement rather than observed gone.
+	EventDebugSessionCleanupAcknowledged EventType = "debug_session.cleanup_acknowledged"
+	EventDebugSessionMaintenanceIntent   EventType = "debug_session.node_maintenance.execution_intent"
+	EventDebugSessionMaintenanceResult   EventType = "debug_session.node_maintenance.result"
 	// Admission recipe receipts (applied before the first target write,
 	// drift when another writer changed a target, reverted after the last revert).
 	EventDebugSessionAdmissionRecipeApplied  EventType = "debug_session.admission_recipe.applied"
@@ -271,10 +276,20 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// SchemaVersion is the major version of the audit event schema
+// (api/audit/v1/audit-event.schema.json). Within a version only additive
+// changes are made; see docs/audit-event-schema.md.
+const SchemaVersion = "v1"
+
 // Event represents a single audit event
 type Event struct {
-	// ID is a unique identifier for this event
+	// ID is a unique identifier for this event. It is stable across delivery
+	// retries, so consumers deduplicate on it.
 	ID string `json:"id"`
+
+	// SchemaVersion is the envelope schema version; the Manager sets it to
+	// SchemaVersion.
+	SchemaVersion string `json:"schemaVersion,omitempty"`
 
 	// Type is the type of event
 	Type EventType `json:"type"`
@@ -384,8 +399,8 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
 		EventDebugSessionValidationFailed,
-		EventDebugSessionCleanupFailed, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
-		EventDebugSessionBindingUnresolved:
+		EventDebugSessionCleanupFailed, EventDebugSessionCleanupAcknowledged, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
+		EventDebugSessionBindingUnresolved, EventEscalationDeleted:
 		return SeverityWarning
 
 	// Info events - normal operation
@@ -530,7 +545,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionValidated, EventDebugSessionValidationFailed,
 		EventDebugSessionTerminated, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
-		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
+		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered, EventDebugSessionCleanupAcknowledged,
 		EventDebugSessionMaintenanceIntent, EventDebugSessionMaintenanceResult,
 		EventDebugSessionAdmissionRecipeApplied, EventDebugSessionAdmissionRecipeDrift,
 		EventDebugSessionAdmissionRecipeReverted,
@@ -539,6 +554,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionBindingUnresolved,
 		EventDebugSessionTerminalRecordingStarted, EventDebugSessionTerminalRecordingFinalized,
 		EventDebugSessionTerminalRecordingFailed, EventDebugSessionTerminalRecordingAccessed,
+		EventDebugSessionAttached, EventEscalationCreated, EventEscalationUpdated, EventEscalationDeleted,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

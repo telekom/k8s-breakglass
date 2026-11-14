@@ -53,27 +53,48 @@ breakglass-controller \
 
 ### Debug and Logging
 
-#### `--debug`
+#### `--log-level`
 
-Enable debug level logging (verbose output)
+Minimum level of the log lines the controller writes
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` (`debug`, `info`, `warn`, `error`) |
+| **Default** | `info` (`debug` with `--debug`) |
+| **Environment** | `LOG_LEVEL` |
+| **Example** | `--log-level=debug` |
+
+#### `--log-format`
+
+Log output format
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` (`json`, `console`) |
+| **Default** | `json` (`console` with `--debug`) |
+| **Environment** | `LOG_FORMAT` |
+| **Example** | `--log-format=json` |
+
+`json` writes one JSON object per line with the fields documented in
+[Logging and Debugging](logging-and-debugging.md#json-fields). `console` writes
+human-readable development output and is not meant for log collection.
+
+```bash
+breakglass-controller --log-level=debug --log-format=json
+```
+
+#### `--debug` (deprecated)
+
+Alias for `--log-level=debug`. Without `--log-format` or `LOG_FORMAT` it also
+selects `--log-format=console`, so it produces the same output as before.
+It cannot be combined with a `--log-level` other than `debug`.
 
 | Property | Value |
 |----------|-------|
 | **Type** | `bool` |
 | **Default** | `false` |
-| **Environment** | `DEBUG` |
-| **Example** | `--debug` |
-
-```bash
-breakglass-controller --debug
-```
-
-When enabled:
-- Logs are output in development format (more readable)
-- Additional diagnostic information included
-- Performance may be impacted (not for production)
-
----
+| **Environment** | none |
+| **Example** | `--debug` (use `--log-level=debug --log-format=console`) |
 
 ### Webhook Server Configuration
 
@@ -794,6 +815,81 @@ When **enabled** (default):
 - Per-user rate limit of 10 requests/minute with burst of 1
 - Requests over the limit receive `429 Too Many Requests`
 - Keyed on authenticated user's email identity
+
+
+---
+
+#### `--disable-debug-session-unserved-kind-handling`
+
+Transitional escape hatch. Skips the DebugSession activation preflight that fails a session before any target write when a required auxiliary resource kind is not served by the target cluster; the session then fails at the first create instead. See [DebugSession cleanup recovery](debug-session-cleanup.md#kinds-the-target-cluster-does-not-serve).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` |
+
+---
+
+#### `--disable-debug-session-cleanup-backoff`
+
+Transitional escape hatch. Restores fixed 5-second retries of failed DebugSession cleanup and one `debug_session.cleanup_failed` audit event per failed attempt. By default, retries back off exponentially up to 5 minutes and the event is emitted once per distinct residual set.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` |
+
+---
+
+#### `--allow-legacy-identity-cleanup-acknowledgement`
+
+Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's identities (`spec.requestedByIdentities`, `status.participants[].identities`, empty without a verified token subject), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT` |
+
+---
+
+#### `--require-synced-approver-groups`
+
+Deny approval through an approver group until the escalation status updater has
+synced that group's members, instead of falling back to the approver's cluster
+or token groups.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS` |
+| **Example** | `--require-synced-approver-groups` |
+
+```bash
+breakglass-controller --require-synced-approver-groups
+
+# Use env variable instead
+BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS=true breakglass-controller
+```
+
+When **enabled**:
+- An approver group without a `status.approverGroupMembers` entry (before the
+  escalation's first successful sync, or a newly added group until the next
+  sync) cannot approve; the API answers HTTP `403` (`FORBIDDEN`) with a message
+  that the approver group members have not been synced yet, and the controller
+  logs the warning `Approval by an unsynced approver group denied (--require-synced-approver-groups)`
+- Closes the pre-sync window described in
+  [Approval before the first group sync](breakglass-escalation.md#approval-before-the-first-group-sync)
+- Group-based approval is unavailable until the first sync succeeds; enable it
+  only when group sync is configured for every approver identity provider.
+  Direct user approvers (`approvers.users`) are not affected
+
+When **disabled** (default):
+- Approval falls back to the approver's cluster or token groups for groups
+  without a synced entry (unchanged behaviour)
 
 ---
 

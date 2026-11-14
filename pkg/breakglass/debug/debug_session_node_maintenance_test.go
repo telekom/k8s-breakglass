@@ -28,6 +28,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
@@ -124,7 +125,7 @@ func maintenanceFixture(t *testing.T) (*DebugSessionController, *breakglassv1alp
 	ds.Status.AuthenticatedUserGroupsCaptured = true
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: true, ApprovedBy: "approver", ApprovedByIdentityProvider: "keycloak", ApprovedAt: &now}
 	require.NoError(t, controller.client.Status().Update(t.Context(), ds))
-	spoke := fake.NewClientBuilder().WithScheme(Scheme).
+	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(servedKinds(Scheme, schema.GroupVersionKind{Group: "kyverno.io", Version: "v2", Kind: "PolicyException"})).
 		WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid"},
 			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: breakglassv1alpha1.NodeMaintenanceNamespace, UID: "namespace-uid"}}).

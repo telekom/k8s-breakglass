@@ -93,6 +93,7 @@ rules:
   - clusterconfigs/status
   - debugpodtemplates/status
   - debugsessionartifacts/status
+  - debugsessioncleanupacknowledgements/status
   - debugsessionclusterbindings/status
   - debugsessions/status
   - debugsessiontemplates/status
@@ -122,6 +123,7 @@ rules:
   - breakglass.t-caas.telekom.com
   resources:
   - clusterconfigs
+  - debugsessioncleanupacknowledgements
   verbs:
   - get
   - list

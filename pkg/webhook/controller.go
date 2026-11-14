@@ -2,11 +2,15 @@ package webhook
 
 import (
 	"context"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
@@ -314,8 +319,21 @@ type WebhookController struct {
 	namespaceLabelsFetchFn  NamespaceLabelsFetchFunction                                          // optional override for testing
 	approverResolverFetchFn func(context.Context, string) (breakglass.GroupMemberResolver, error) // optional override for tests
 	auditService            *audit.Service                                                        // optional audit service for access decision events
-	rateLimiter             *ratelimit.IPRateLimiter                                              // per-IP rate limiter for SAR requests
-	activityTracker         *ActivityTracker                                                      // optional buffered session activity tracker (#314)
+	// attachedAudit hands debug_session.attached to a background worker so
+	// a saturated audit queue cannot delay the SubjectAccessReview response.
+	attachedAuditOnce sync.Once
+	attachedAuditMu   sync.RWMutex // guards closing attachedAudit
+	attachedAudit     chan attachedAuditItem
+	attachedStopped   bool
+	attachedDone      chan struct{}
+	// attachedAbandoned is set when the shutdown drain missed its deadline:
+	// the worker then counts every event it cannot hand on.
+	attachedAbandoned atomic.Bool
+	// attachedEmit delivers a handed-off event (audit.Service.TryEmitResult;
+	// tests).
+	attachedEmit    func(context.Context, *audit.Event) audit.EmitResult
+	rateLimiter     *ratelimit.IPRateLimiter // per-IP rate limiter for SAR requests
+	activityTracker *ActivityTracker         // optional buffered session activity tracker (#314)
 }
 
 const (
@@ -840,6 +858,63 @@ func (wc *WebhookController) Register(rg *gin.RouterGroup) error {
 	return nil
 }
 
+// RequireClusterIdentity returns middleware for the dedicated webhook
+// listener (server.webhook). When the TLS handshake verified a client
+// certificate, the certificate must name the :cluster_name of the request,
+// otherwise the request is rejected with 403 before the SubjectAccessReview
+// is evaluated. A request without a verified certificate passes; the
+// listener's clientAuth decides whether one is required.
+func RequireClusterIdentity(log *zap.SugaredLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		state := c.Request.TLS
+		if state == nil || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 {
+			c.Next()
+			return
+		}
+		cluster := c.Param("cluster_name")
+		leaf := state.VerifiedChains[0][0]
+		if !CertificateNamesCluster(leaf, cluster) {
+			log.Warnw("Webhook client certificate does not name the requested cluster",
+				"cluster", cluster, "subjectCN", leaf.Subject.CommonName, "dnsNames", leaf.DNSNames)
+			apiresponses.RespondForbidden(c, fmt.Sprintf("client certificate is not issued for cluster %q", cluster))
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// CertificateNamesCluster reports whether cert identifies cluster: one of
+// its DNS SANs equals cluster exactly, or, only when the certificate has no
+// subjectAltName extension at all (no DNS, IP, URI, email or other SAN), its
+// subject common name equals cluster exactly. A certificate with SANs is matched by
+// its DNS SANs alone, so it cannot claim a cluster through its common name.
+func CertificateNamesCluster(cert *x509.Certificate, cluster string) bool {
+	if cluster == "" {
+		return false
+	}
+	if len(cert.DNSNames) > 0 {
+		return slices.Contains(cert.DNSNames, cluster)
+	}
+	if hasSubjectAltNames(cert) {
+		return false
+	}
+	return cert.Subject.CommonName == cluster
+}
+
+// oidSubjectAltName is the subjectAltName extension (RFC 5280, 4.2.1.6).
+var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
+
+// hasSubjectAltNames reports whether cert has a subjectAltName extension,
+// including SAN types that crypto/x509 does not parse (for example
+// registeredID or otherName), or any parsed SAN.
+func hasSubjectAltNames(cert *x509.Certificate) bool {
+	if len(cert.DNSNames) > 0 || len(cert.IPAddresses) > 0 || len(cert.URIs) > 0 || len(cert.EmailAddresses) > 0 {
+		return true
+	}
+	return slices.ContainsFunc(cert.Extensions, func(ext pkix.Extension) bool { return ext.Id.Equal(oidSubjectAltName) })
+}
+
 func (b *WebhookController) Handlers() []gin.HandlerFunc {
 	// Return per-IP rate limiting middleware for SAR endpoints
 	if b.rateLimiter != nil {
@@ -1083,6 +1158,120 @@ func (wc *WebhookController) auditTargetFromSARWithoutEnrichment(sar *authorizat
 		verb = nra.Verb
 	}
 	return target, verb, subresource, apiGroup
+}
+
+// emitDebugSessionAttachedAudit emits debug_session.attached when a
+// DebugSession authorized exec, attach or port-forward into one of its pods,
+// correlated by the DebugSession name and UID.
+func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, username string, groups []string, cluster string,
+	sar *authorizationv1.SubjectAccessReview, target audit.Target, sessionNamespace, sessionName, sessionUID string) {
+	// Audit that is intentionally disabled at decision time records nothing;
+	// a later re-enable must not emit traffic authorized while it was off.
+	if wc.auditService == nil || sar == nil || wc.auditService.ConfigurationState() == audit.ConfigurationDisabled {
+		return
+	}
+	event := audit.DebugSessionAttachedEvent(username, groups, cluster, sar.Spec.ResourceAttributes, target,
+		sessionNamespace, sessionName, sessionUID)
+	if event == nil {
+		return
+	}
+	// The authorization time, not the time the worker hands the event on.
+	event.Timestamp = time.Now().UTC()
+	wc.attachedAuditOnce.Do(wc.startAttachedAudit)
+	wc.attachedAuditMu.RLock()
+	defer wc.attachedAuditMu.RUnlock()
+	if wc.attachedStopped {
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+		return
+	}
+	select {
+	case wc.attachedAudit <- attachedAuditItem{ctx: context.WithoutCancel(ctx), event: event}:
+	default:
+		// The audit pipeline is saturated far beyond its own queue; count the
+		// loss like a full audit queue instead of delaying authorization.
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "queue_full").Inc()
+		if wc.log != nil {
+			wc.log.Warnw("Dropping debug_session.attached audit event: handoff buffer is full", "session", sessionName)
+		}
+	}
+}
+
+func (wc *WebhookController) startAttachedAudit() {
+	emit := wc.attachedEmit
+	if emit == nil {
+		emit = wc.auditService.TryEmitResult
+	}
+	wc.attachedAudit = make(chan attachedAuditItem, attachedAuditBuffer)
+	wc.attachedDone = make(chan struct{})
+	go func() {
+		defer close(wc.attachedDone)
+		for item := range wc.attachedAudit {
+			if wc.attachedAbandoned.Load() {
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+				continue
+			}
+			// A running pipeline counts its own drops (EmitDropped). An event
+			// that no pipeline took is counted here, unless audit is
+			// intentionally disabled.
+			if emit(item.ctx, item.event) != audit.EmitNoPipeline {
+				continue
+			}
+			switch {
+			case wc.attachedAbandoned.Load():
+				// In flight when the drain gave up; the service closed meanwhile.
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+			case wc.auditService == nil || wc.auditService.ConfigurationState() != audit.ConfigurationDisabled:
+				// Not running yet, or between two pipelines during a reload.
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "unavailable").Inc()
+				if wc.log != nil {
+					wc.log.Warnw("Dropping debug_session.attached audit event: the audit pipeline is unavailable", "session", item.event.RequestContext.DebugSessionName)
+				}
+			}
+		}
+	}()
+}
+
+// StopAttachedAudit stops accepting debug_session.attached events and drains
+// the handoff into the audit service until ctx ends. Call it after the HTTP
+// server stopped and before the audit service is closed. Events that cannot
+// be drained in time are counted as dropped with reason "shutdown".
+func (wc *WebhookController) StopAttachedAudit(ctx context.Context) {
+	wc.attachedAuditOnce.Do(func() {}) // nothing was ever handed off
+	wc.attachedAuditMu.Lock()
+	if wc.attachedStopped || wc.attachedAudit == nil {
+		wc.attachedStopped = true
+		wc.attachedAuditMu.Unlock()
+		return
+	}
+	wc.attachedStopped = true
+	close(wc.attachedAudit)
+	wc.attachedAuditMu.Unlock()
+	select {
+	case <-wc.attachedDone:
+	case <-ctx.Done():
+		wc.attachedAbandoned.Store(true)
+		// Take the buffered items here (the channel is closed, so this does
+		// not block); each item is counted by whoever receives it.
+		pending := 0
+		for range wc.attachedAudit {
+			pending++
+		}
+		metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Add(float64(pending))
+		if wc.log != nil {
+			wc.log.Warnw("debug_session.attached handoff not drained before shutdown deadline", "pending", pending)
+		}
+	}
+}
+
+// attachedHandoffSink labels losses of the debug_session.attached handoff.
+const attachedHandoffSink = "webhook-attached-handoff"
+
+// attachedAuditBuffer bounds the debug_session.attached handoff.
+const attachedAuditBuffer = 1024
+
+type attachedAuditItem struct {
+	ctx   context.Context
+	event *audit.Event
 }
 
 // emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.

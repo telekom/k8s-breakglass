@@ -5,7 +5,8 @@ kind: Kustomization
 resources:
   - ../base
 
-# Add --debug flag to the deployment
+# Debug logging in the human-readable console format (what the deprecated
+# --debug flag selects). Use --log-format=json to keep machine-readable logs.
 patches:
   - target:
       group: apps
@@ -15,7 +16,10 @@ patches:
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --debug
+        value: --log-level=debug
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --log-format=console
 
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations

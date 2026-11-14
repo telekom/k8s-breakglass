@@ -19,6 +19,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/cluster-validator ./cmd/cluster-validator
 COPY pkg/clustervalidator ./pkg/clustervalidator
+COPY pkg/logging ./pkg/logging
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -a -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /out/cluster-validator ./cmd/cluster-validator

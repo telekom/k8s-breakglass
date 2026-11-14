@@ -3,12 +3,16 @@ package cmd
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
+	"go.uber.org/zap"
 )
 
 const helpOnlyGroupAnnotation = "bgctl.telekom.com/help-only-group"
@@ -30,6 +34,9 @@ type runtimeState struct {
 	nonInteractive       bool
 	verbose              bool
 	writer               io.Writer
+	log                  logging.Options
+	// logger writes diagnostics to stderr, never to the data output (writer).
+	logger *zap.Logger
 }
 
 type runtimeKey struct{}
@@ -76,6 +83,9 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			if !rt.verbose {
 				rt.verbose = strings.EqualFold(os.Getenv("BGCTL_VERBOSE"), "true")
 			}
+			if err := rt.setupLogger(cmd.Flags().Changed, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 
 			// Skip config loading for commands that don't need it
 			if cmd.Name() == "init" && cmd.Parent() != nil && cmd.Parent().Name() == "config" {
@@ -117,7 +127,10 @@ func NewRootCommand(cfg Config) *cobra.Command {
 	root.PersistentFlags().StringVar(&rt.tokenOverride, "token", "", "Bearer token override")
 	root.PersistentFlags().StringVar(&rt.tokenStorageOverride, "token-storage", "", "Token storage backend: keychain or file")
 	root.PersistentFlags().BoolVar(&rt.nonInteractive, "non-interactive", false, "Fail instead of prompting")
-	root.PersistentFlags().BoolVarP(&rt.verbose, "verbose", "v", false, "Enable verbose output with correlation IDs")
+	root.PersistentFlags().BoolVarP(&rt.verbose, "verbose", "v", false, "Log each API request with its correlation ID (same as --log-level=debug)")
+	logFlags := flag.NewFlagSet("bgctl", flag.ContinueOnError)
+	rt.log.AddFlags(logFlags, "", "")
+	root.PersistentFlags().AddGoFlagSet(logFlags)
 
 	root.SetContext(context.WithValue(context.Background(), runtimeKey{}, rt))
 
@@ -259,4 +272,51 @@ func (rt *runtimeState) configPathValue() string {
 		return config.DefaultConfigPath()
 	}
 	return rt.configPath
+}
+
+// setupLogger builds the stderr logger. Level precedence: --log-level, then
+// --verbose, then LOG_LEVEL, then BGCTL_VERBOSE, then warn. Format: --log-format
+// or LOG_FORMAT, else console.
+func (rt *runtimeState) setupLogger(changed func(flag string) bool, stderr io.Writer) error {
+	level, format := rt.log.Level, rt.log.Format
+	switch {
+	case changed("log-level"):
+	case changed("verbose") && rt.verbose:
+		level = "debug"
+	case level == "" && rt.verbose:
+		level = "debug"
+	case level == "":
+		level = "warn"
+	}
+	if format == "" {
+		format = logging.FormatConsole
+	}
+	logger, err := logging.NewWriter(stderr, level, format)
+	if err != nil {
+		return err
+	}
+	rt.logger = logger.Named("bgctl")
+	return nil
+}
+
+// warnf reports a warning through the logger, so that it follows
+// --log-format and --log-level.
+func (rt *runtimeState) warnf(format string, args ...any) {
+	if rt.logger == nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...)
+		return
+	}
+	rt.logger.WithOptions(zap.AddCallerSkip(1)).Sugar().Warnf(format, args...)
+}
+
+// requestLogger returns the client option that logs API requests at debug
+// level, or nil when debug logging is off.
+func (rt *runtimeState) requestLogger() func(format string, args ...any) {
+	if rt.logger == nil || !rt.logger.Core().Enabled(zap.DebugLevel) {
+		return nil
+	}
+	log := rt.logger.WithOptions(zap.AddCallerSkip(1)).Sugar()
+	return func(format string, args ...any) {
+		log.Debugf(strings.TrimSpace(strings.TrimPrefix(format, "[bgctl] ")), args...)
+	}
 }

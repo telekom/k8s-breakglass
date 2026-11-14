@@ -352,14 +352,18 @@ func newMTLSCA(t *testing.T, name string) mtlsCA {
 	return mtlsCA{cert: cert, key: key, certPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
 
-func (ca mtlsCA) issue(t *testing.T, usage x509.ExtKeyUsage, notAfter time.Time) mtlsLeaf {
+// issue signs a leaf certificate for usage. dnsNames default to localhost.
+func (ca mtlsCA) issue(t *testing.T, usage x509.ExtKeyUsage, notAfter time.Time, dnsNames ...string) mtlsLeaf {
 	t.Helper()
+	if len(dnsNames) == 0 {
+		dnsNames = []string{"localhost"}
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: "e2e-mtls"},
-		DNSNames:     []string{"localhost"},
+		DNSNames:     dnsNames,
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
 		NotBefore:    time.Now().Add(-2 * time.Hour),
 		NotAfter:     notAfter,

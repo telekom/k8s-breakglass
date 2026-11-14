@@ -263,7 +263,7 @@ func TestLoadTLSConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tlsConfig, err := loadTLSConfig(tt.caFile, tt.insecure)
+			tlsConfig, err := loadTLSConfig(tt.caFile, tt.insecure, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

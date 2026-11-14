@@ -402,6 +402,8 @@ func TestIdleExpiryDuringEphemeralTargetUpdatePreservesOutcome(t *testing.T) {
 			require.Equal(t, ExpiredSessionRequeue, result.RequeueAfter, "fresh Prepared evidence stays queued during recovery grace")
 			// Model the later recovery candidate without changing the persisted immutable intent.
 			live.Status.KubectlDebugStatus.Operations[0].PreparedAt = stalePreparedAt()
+			// The cleanup backoff deadline has passed by the time grace expires.
+			controller.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(live))
 			result, err = controller.handleCleanup(context.Background(), live)
 			require.NoError(t, err)
 			require.Zero(t, result.RequeueAfter)

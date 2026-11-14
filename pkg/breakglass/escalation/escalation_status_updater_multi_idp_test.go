@@ -49,6 +49,7 @@ const (
 	keycloakFixtureTransient        keycloakFixtureMode = "transient"
 	keycloakFixturePrivateEmpty     keycloakFixtureMode = "private-empty"
 	keycloakFixturePrivateTransient keycloakFixtureMode = "private-transient"
+	keycloakFixtureAmbiguous        keycloakFixtureMode = "ambiguous"
 )
 
 func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string) {
@@ -72,6 +73,11 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 			}
 			if mode == keycloakFixtureMalformed {
 				writeJSON(`[{"name":"approvers"}]`)
+				return
+			}
+			if mode == keycloakFixtureAmbiguous {
+				// A top-level group and a same-named nested subgroup (/x/approvers).
+				writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"x-id","name":"x","subGroups":[{"id":"nested-approvers-id","name":"approvers"}]}]`)
 				return
 			}
 			writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"private-group-id","name":"private"}]`)

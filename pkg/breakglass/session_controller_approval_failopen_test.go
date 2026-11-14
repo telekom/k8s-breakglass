@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -307,4 +308,181 @@ func TestApprovalUnverifiedGroupsEventTypeClassification(t *testing.T) {
 
 func init() {
 	gin.SetMode(gin.TestMode)
+}
+
+// An ambiguous approver group (for example a top-level group plus a same-named
+// nested subgroup, whose members carry the same short group claim) is stored
+// as an empty entry, so a token carrying the group claim cannot approve.
+// A group another provider resolved stays authoritative.
+func TestAmbiguousApproverGroupDoesNotApproveByTokenGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		members map[string][]string
+	}{
+		{name: "ambiguous everywhere: empty entry", members: map[string][]string{"cluster-approvers": {}}},
+		{name: "another provider resolved other members", members: map[string][]string{"cluster-approvers": {"b-user@example.com"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.members
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{"cluster-approvers"}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "")
+			c.Set("groups", []string{"cluster-approvers"})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.False(t, result.Allowed)
+			require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+		})
+	}
+}
+
+// --require-synced-approver-groups closes the window before an approver
+// group's first sync, when approval would otherwise fall back to cluster or
+// token groups (which members of a same-named nested group also carry).
+func TestRequireSyncedApproverGroups(t *testing.T) {
+	tests := []struct {
+		name          string
+		require       bool
+		members       map[string][]string // nil: not synced yet
+		clusterLookup error               // non-nil: cluster lookup fails, token groups are used
+		want          ApprovalDenialReason
+	}{
+		{name: "flag off, not synced: cluster-group fallback approves"},
+		{name: "flag off, not synced: token-group fallback approves", clusterLookup: errors.New("spoke down")},
+		{name: "flag on, not synced: cluster group denied", require: true, want: ApprovalDenialApproverGroupsNotSynced},
+		{name: "flag on, not synced: token group denied", require: true, clusterLookup: errors.New("spoke down"), want: ApprovalDenialApproverGroupsNotSynced},
+		{name: "flag on, synced with the approver: approves", require: true, members: map[string][]string{"cluster-approvers": {"approver@example.com"}}},
+		{name: "flag on, synced without the approver: not an approver", require: true, members: map[string][]string{"cluster-approvers": {"other@example.com"}}, want: ApprovalDenialNotAnApprover},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.members
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation).WithRequireSyncedApproverGroups(tt.require)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				if tt.clusterLookup != nil {
+					return nil, tt.clusterLookup
+				}
+				return []string{"cluster-approvers"}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "")
+			c.Set("groups", []string{"cluster-approvers"})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.Equal(t, tt.want == ApprovalDenialNone, result.Allowed, "reason %s", result.Reason)
+			require.Equal(t, tt.want, result.Reason)
+		})
+	}
+}
+
+// Per-IdP memberships authorize approval only while they are part of the
+// group's current resolution (an ApproverGroupMembers entry that contains the
+// member). Stale snapshots, for example left behind after a fallback to legacy
+// mode, must not approve.
+func TestStaleProviderGroupMembershipDoesNotApprove(t *testing.T) {
+	tests := []struct {
+		name      string
+		aggregate map[string][]string
+		perIDP    []string
+		allowed   bool
+	}{
+		{
+			name:      "no current entry for the group, token without the group",
+			aggregate: map[string][]string{"other-group": {"someone@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+		},
+		{
+			name:      "member removed upstream after a resync",
+			aggregate: map[string][]string{"cluster-approvers": {"current@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+		},
+		{
+			name:      "current member of the current resolution",
+			aggregate: map[string][]string{"cluster-approvers": {"approver@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+			allowed:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.aggregate
+			escalation.Status.IDPGroupMemberships = map[string]map[string][]string{
+				"idp-a": {"cluster-approvers": tt.perIDP},
+			}
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "idp-a")
+			c.Set("groups", []string{})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
+			if !tt.allowed {
+				// The denial must come from group membership, not from an
+				// unrelated check such as the identity provider allow-list.
+				require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+			}
+		})
+	}
+}
+
+func largeProviderGroupEscalation(size int, stale string) *breakglassv1alpha1.BreakglassEscalation {
+	members := make([]string, 0, size)
+	for i := 0; i < size; i++ {
+		members = append(members, fmt.Sprintf("member-%04d@example.com", i))
+	}
+	escalation := failOpenEscalation()
+	escalation.Status.ApproverGroupMembers = map[string][]string{"cluster-approvers": members}
+	escalation.Status.IDPGroupMemberships = map[string]map[string][]string{
+		"idp-a": {"cluster-approvers": append(append([]string(nil), members...), stale)},
+	}
+	return escalation
+}
+
+// With a 1,000-member group the stale-membership guard still denies a member
+// that is only in the per-IdP snapshot, a current member still approves, and
+// an unrelated caller is denied.
+func TestLargeProviderGroupMembershipCheck(t *testing.T) {
+	escalation := largeProviderGroupEscalation(1000, "stale@example.com")
+	for caller, allowed := range map[string]bool{
+		"member-0999@example.com": true,
+		"stale@example.com":       false,
+		"unrelated@example.com":   false,
+	} {
+		t.Run(caller, func(t *testing.T) {
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) { return []string{}, nil }
+			c := newApprovalAuthorizationTestContext(caller, "idp-a")
+			c.Set("groups", []string{})
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+			require.Equal(t, allowed, result.Allowed)
+			if !allowed {
+				require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+			}
+		})
+	}
+}
+
+// BenchmarkLargeProviderGroupUnrelatedCaller measures an approval check for a
+// caller outside a 1,000-member group; the aggregate is scanned only for a
+// per-IdP member that matches the caller, so the cost stays linear.
+func BenchmarkLargeProviderGroupUnrelatedCaller(b *testing.B) {
+	escalation := largeProviderGroupEscalation(1000, "stale@example.com")
+	ctrl := newApprovalAuthorizationTestController(b, failOpenSession(), escalation)
+	ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) { return []string{}, nil }
+	c := newApprovalAuthorizationTestContext("unrelated@example.com", "idp-a")
+	c.Set("groups", []string{})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ctrl.checkApprovalAuthorization(c, *failOpenSession())
+	}
 }

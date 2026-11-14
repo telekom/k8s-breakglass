@@ -35,13 +35,18 @@ const (
 )
 
 func main() {
-	request, err := parseRequest(os.Args[1:])
+	log, err := newLogger(os.Stderr, "network-action", "network-action")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "network-action: %v\n", err)
 		os.Exit(2)
 	}
+	request, err := parseRequest(os.Args[1:])
+	if err != nil {
+		log.Error(err.Error())
+		os.Exit(2)
+	}
 	if err := execute(request); err != nil {
-		fmt.Fprintf(os.Stderr, "network-action: %v\n", err)
+		log.Error(err.Error())
 		os.Exit(1)
 	}
 }

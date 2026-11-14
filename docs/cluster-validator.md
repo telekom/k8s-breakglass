@@ -93,6 +93,22 @@ Equivalent environment variables are `VALIDATOR_MODE`,
 `VALIDATOR_TIMEOUT`, `VALIDATOR_INCLUDE_TIMESTAMP`, and
 `VALIDATOR_SKIP_PODS`. CLI flags take precedence over environment variables.
 
+Errors go to stderr. `--log-level` (`LOG_LEVEL`: `debug`, `info`, `warn`,
+`error`; default `info`) and `--log-format` (`LOG_FORMAT`: `text`, `json`,
+`console`; default `text`) control them. `text` writes the historical
+`cluster-validator: <error>` lines; `json` writes one JSON object per line
+with `level`, `ts`, `logger` (`cluster-validator`), `caller` and `msg`.
+Option errors, such as an invalid `--mode` or `--timeout`, use the same
+format. Flags are parsed in order, so an error in a flag before
+`--log-level` or `--log-format` (for example `--bogus --log-format=json`)
+uses `LOG_LEVEL` and `LOG_FORMAT` or the defaults. An invalid `--log-level` or
+`--log-format` is printed as a plain `cluster-validator: <error>` line, after
+any other option error, because no logger can be built. The
+report on stdout and in the report file is not affected. client-go and Go standard-library log lines go
+through the same logger and use the same format. In the
+`debug-session-catalogue` chart, add the flags to the `args` of the cluster
+validation profile.
+
 The identity needs read access to `nodes`, `namespaces`, and `pods`, plus
 discovery access. A minimal starting point is:
 

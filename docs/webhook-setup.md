@@ -250,7 +250,8 @@ with a trusted CA, TLS server verification protects the API server's connection
 to its configured webhook endpoint. Setting `insecure-skip-tls-verify: true`
 disables that server verification.
 
-If mutual TLS or bearer authentication is required, configure a gateway,
+If mutual TLS or bearer authentication is required, use the
+[dedicated mTLS listener](#dedicated-mtls-listener), or configure a gateway,
 reverse proxy, or dedicated listener that actually validates those credentials
 before forwarding to Breakglass. Restrict direct access so callers cannot
 bypass that component. Protect both the `/breakglass/webhook/authorize/` and
@@ -258,6 +259,83 @@ bypass that component. Protect both the `/breakglass/webhook/authorize/` and
 The supplied SAR identities are trusted only within that caller/network
 boundary; rate limiting is not authentication. See the
 [SAR security model](security-best-practices.md#sar-authorization-webhook-design-decision).
+
+### Dedicated mTLS listener
+
+Instead of a proxy, Breakglass can authenticate the kube-apiservers itself on a
+dedicated listener (`server.webhook`, see the
+[configuration reference](configuration-reference.md#webhook-optional)):
+
+```yaml
+# Breakglass config.yaml
+server:
+  tlsCertFile: /etc/breakglass/tls.crt
+  tlsKeyFile: /etc/breakglass/tls.key
+  webhook:
+    listenAddress: :8443
+    clientAuth: require
+    clientCAFile: /etc/breakglass/apiserver-ca/ca.crt
+    disableOnMainListener: true
+```
+
+Under `clientAuth: require` every connection must present a certificate signed
+by `clientCAFile`, and the certificate must name the cluster in the request
+path: a DNS SAN equal to the `ClusterConfig` name or, only for a certificate
+without a subjectAltName extension, a matching common name. A spoke apiserver therefore cannot
+query the webhook for another cluster (HTTP 403). `disableOnMainListener`
+removes the routes from the main listener, so the unauthenticated path is
+closed. Expose port 8443 through its own Service and a TLS-passthrough route
+(a TLS-terminating ingress would replace the client certificate).
+
+Issue one client certificate per spoke cluster, for example with cert-manager
+and a dedicated CA `Issuer` that signs nothing else:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apiserver-webhook-my-cluster-name
+spec:
+  secretName: apiserver-webhook-my-cluster-name
+  commonName: my-cluster-name
+  dnsNames: [my-cluster-name] # must equal the ClusterConfig name
+  usages: [client auth, digital signature]
+  issuerRef: {name: breakglass-apiserver-ca, kind: Issuer}
+```
+
+Then use it in that cluster's webhook kubeconfig:
+
+```yaml
+# /etc/kubernetes/breakglass-webhook-kubeconfig.yaml
+apiVersion: v1
+kind: Config
+clusters:
+  - name: breakglass
+    cluster:
+      server: https://breakglass-webhook.example.com:8443/api/breakglass/webhook/authorize/my-cluster-name
+      certificate-authority-data: LS0tLS1CRUdJTi... # CA of server.tlsCertFile
+users:
+  - name: kube-apiserver
+    user:
+      client-certificate: /etc/kubernetes/pki/breakglass-webhook.crt # tls.crt of the Secret
+      client-key: /etc/kubernetes/pki/breakglass-webhook.key         # tls.key of the Secret
+contexts:
+  - name: webhook
+    context: {cluster: breakglass, user: kube-apiserver}
+current-context: webhook
+```
+
+The kube-apiserver re-reads `client-certificate`/`client-key` files when they
+change; the `-data` variants need a restart to rotate. Breakglass reloads its
+server certificate and `clientCAFile` without a restart (see
+[`tlsReloadDisabled`](configuration-reference.md#tlsreloaddisabled-optional)).
+
+Rollout: enable the listener with `clientAuth: verifyIfGiven` and
+`requireCommonNameMatch: true`, move each cluster's kubeconfig to port 8443 with
+its client certificate, switch to `require`, then set
+`disableOnMainListener: true`. `requireCommonNameMatch: false` is a
+transitional escape for a shared apiserver certificate and will be removed in
+a future release.
 
 ## Hub Cluster Configuration
 

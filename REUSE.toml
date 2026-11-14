@@ -144,3 +144,10 @@ precedence = "aggregate"
 path = ["hack/tools/**/go.mod", "hack/tools/**/go.sum"]
 SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Versioned audit event JSON Schema
+[[annotations]]
+precedence = "aggregate"
+path = ["api/audit/**.json"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"

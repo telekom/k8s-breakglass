@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -50,6 +51,23 @@ type EscalationReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
+	// auditor emits escalation.created/updated/deleted events (optional)
+	auditor *escalationAuditor
+}
+
+// DrainAudit delivers retained escalation audit events, bounded by
+// escalationAuditDrainTimeout. Register it with audit.Service.BeforeClose.
+func (r *EscalationReconciler) DrainAudit() {
+	ctx, cancel := context.WithTimeout(context.Background(), escalationAuditDrainTimeout)
+	defer cancel()
+	r.auditor.drain(ctx)
+}
+
+// WithAuditEmitter emits escalation.created, escalation.updated and
+// escalation.deleted audit events for observed BreakglassEscalation changes.
+func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) *EscalationReconciler {
+	r.auditor = newEscalationAuditor(emitter, r.logger)
+	return r
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
@@ -136,6 +154,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
+	r.auditor.specChange(escalation)
 
 	// Validate escalation configuration and references
 	now := metav1.Now()
@@ -390,15 +409,35 @@ func (r *EscalationReconciler) GetCachedEscalationIDPMapping() map[string][]stri
 func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Predicate filters status-only updates while still reconciling spec generation
 	// changes from apply tools and deletion timestamp transitions.
+	// The audit hooks record every generation the informer delivers, so
+	// work-queue coalescing cannot skip an intermediate or short-lived change;
+	// they only take a lock and never block the informer.
 	specChangePredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
+			r.auditor.observe(e.ObjectNew)
 			return shouldReconcileEscalationUpdate(e.ObjectOld, e.ObjectNew)
 		},
-		CreateFunc: func(e event.CreateEvent) bool { return true },
-		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+		CreateFunc: func(e event.CreateEvent) bool {
+			r.auditor.observe(e.Object)
+			return true
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			r.auditor.deletion(e.Object)
+			return true
+		},
 	}
 
 	dependencyPredicate := dependencyChangePredicate()
+
+	if r.auditor != nil {
+		// Delivers escalation audit events; stops with the manager.
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			r.auditor.run(ctx)
+			return nil
+		})); err != nil {
+			return fmt.Errorf("add escalation audit retry loop: %w", err)
+		}
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.BreakglassEscalation{}, builder.WithPredicates(specChangePredicate)).

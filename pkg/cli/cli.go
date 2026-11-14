@@ -11,12 +11,15 @@ import (
 
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
 	"go.uber.org/zap"
 )
 
 type Config struct {
-	// Application flags
+	// Logging flags. Debug is the deprecated alias for Log.Level "debug";
+	// use Logging for the effective level and format.
 	Debug bool
+	Log   logging.Options
 
 	// Metrics server flags
 	MetricsAddr     string
@@ -48,6 +51,15 @@ type Config struct {
 	BreakglassNamespace     string
 	DisableEmail            bool
 	DisableSessionRateLimit bool
+	// RequireSyncedApproverGroups denies approval by approver groups that have
+	// not been synced yet instead of falling back to token groups.
+	RequireSyncedApproverGroups bool
+
+	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
+	DisableDebugSessionUnservedKindHandling bool
+	DisableDebugSessionCleanupBackoff       bool
+	// Transitional opt-out: compare legacy approvals by approvedBy alone.
+	AllowLegacyIdentityCleanupAcknowledgement bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -87,7 +99,10 @@ func Parse() *Config {
 	config := &Config{}
 	// Define command-line flags with environment variable fallbacks.
 	// The pattern: flag.XxxVar(&variable, "flag-name", defaultValueOrEnvValue, "help text")
-	flag.BoolVar(&config.Debug, "debug", false, "Enable debug level logging")
+	flag.BoolVar(&config.Debug, "debug", false,
+		"Deprecated: use --log-level=debug. Without --log-format it also selects console output, as before")
+	// Empty defaults: Logging resolves them, taking --debug into account.
+	config.Log.AddFlags(flag.CommandLine, "", "")
 
 	// Webhook server configuration
 	flag.StringVar(&config.Webhook.BindAddr, "webhook-bind-address", getEnvString("WEBHOOK_BIND_ADDRESS", "0.0.0.0:9443"),
@@ -190,6 +205,17 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.DisableDebugSessionUnservedKindHandling, "disable-debug-session-unserved-kind-handling",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", false),
+		"Transitional escape hatch: skip the DebugSession activation preflight that fails a session early when a required auxiliary resource kind is not served by the target cluster")
+	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
+		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")
+	flag.BoolVar(&config.AllowLegacyIdentityCleanupAcknowledgement, "allow-legacy-identity-cleanup-acknowledgement",
+		getEnvBool("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", false),
+		"Transitional escape hatch: accept DebugSessionCleanupAcknowledgements for sessions whose requester, participant or approver identities were recorded incompletely (for example before an upgrade), comparing only the recorded identities")
+	flag.BoolVar(&config.RequireSyncedApproverGroups, "require-synced-approver-groups", getEnvBool("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", false),
+		"Deny approval by an approver group until its members have been synced, instead of falling back to token groups")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -197,8 +223,31 @@ func Parse() *Config {
 	return config
 }
 
+// Logging returns the effective log level and format. An unset level or
+// format defaults to info and json; the deprecated --debug flag changes these
+// defaults to debug and console, which is the output --debug always produced.
+func (c *Config) Logging() (level, format string) {
+	level, format = c.Log.Level, c.Log.Format
+	if level == "" {
+		level = "info"
+		if c.Debug {
+			level = "debug"
+		}
+	}
+	if format == "" {
+		format = "json"
+		if c.Debug {
+			format = "console"
+		}
+	}
+	return level, format
+}
+
 // Validate checks settings required by the enabled runtime roles.
 func (c *Config) Validate() error {
+	if c.Debug && c.Log.Level != "" && c.Log.Level != "debug" {
+		return fmt.Errorf("--debug conflicts with --log-level=%s (LOG_LEVEL); drop the deprecated --debug", c.Log.Level)
+	}
 	if (c.EnableAPI || c.EnableControllers || c.EnableCleanup) && strings.TrimSpace(c.BreakglassNamespace) == "" {
 		return fmt.Errorf("--breakglass-namespace (BREAKGLASS_NAMESPACE) is required when API, controllers, or cleanup is enabled")
 	}
@@ -206,9 +255,13 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) Print(log *zap.SugaredLogger) {
+	// The effective values, after --debug and the defaults are applied.
+	logLevel, logFormat := c.Logging()
 	log.Infow("CLI Configuration",
 		// Debug and logging
 		"debug", c.Debug,
+		"log_level", logLevel,
+		"log_format", logFormat,
 		// Webhook server configuration
 		"webhook_bind_address", c.Webhook.BindAddr,
 		"webhook_cert_path", c.Webhook.CertPath,
@@ -247,6 +300,10 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
+		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
+		"allow_legacy_identity_cleanup_acknowledgement", c.AllowLegacyIdentityCleanupAcknowledgement,
+		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,

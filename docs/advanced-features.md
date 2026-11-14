@@ -420,8 +420,9 @@ Configure behavior via environment variables:
 # Controller configuration file path
 BREAKGLASS_CONFIG_PATH=/etc/breakglass/config.yaml
 
-# Debug logging
-DEBUG=true
+# Log level and format (defaults: info, json)
+LOG_LEVEL=debug
+LOG_FORMAT=json
 
 # OIDC certificate authority (base64-encoded PEM)
 BREAKGLASS_OIDC_CA_CERT=LS0tLS1CRUdJTi...

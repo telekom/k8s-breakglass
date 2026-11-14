@@ -231,6 +231,9 @@ sinks:
 
 ## Event Types
 
+The versioned consumer contract (JSON Schema, Kafka key and headers, delivery
+semantics, per-type details) is in [Audit event schema](audit-event-schema.md).
+
 The audit system captures 120+ event types organized by category:
 
 ### Session Events
@@ -291,7 +294,7 @@ These capture access to non-API endpoints:
 - `debug_session.created` / `debug_session.started`
 - `debug_session.approved` / `debug_session.rejected`
 - `debug_session.renewed` / `debug_session.validation_failed`
-- `debug_session.cleanup_failed` / `debug_session.cleanup_recovered`
+- `debug_session.cleanup_failed` / `debug_session.cleanup_recovered` / `debug_session.cleanup_acknowledged` (from a DebugSessionCleanupAcknowledgement) (`cleanup_failed` is emitted once per distinct residual set, not per retry; see [DebugSession cleanup recovery](debug-session-cleanup.md))
 - `debug_session.attached` / `debug_session.terminated`
 - `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
 - `debug_session.binding_unresolved`

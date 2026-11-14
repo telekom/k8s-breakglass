@@ -308,3 +308,11 @@ Release automation must sign and attest only an immutable registry digest via
 not push images. Package versions follow the digest-pinned Alpine base, which
 Dependabot updates; the build upgrades the inherited packages and records the
 installed versions in `/usr/share/breakglass/installed-packages` and the SBOM.
+
+## Logging
+
+The Go helpers write their error line to stderr. `LOG_FORMAT=json` writes it as
+a JSON object (`level`, `ts`, `logger`, `msg`); the default `text` keeps the
+`<name>: <message>` line. `LOG_LEVEL` (`debug`, `info`, `warn`, `error`)
+filters the lines. An invalid value exits with code 2. See
+`docs/logging-reference.md` in the repository.

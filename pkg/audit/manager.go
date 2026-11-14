@@ -235,6 +235,29 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	return m
 }
 
+// emittedHook observes every event that a Manager accepts.
+var emittedHook atomic.Pointer[func(*Event)]
+
+// ObserveEmitted registers fn to observe every event that a Manager accepted:
+// queued, or written by EmitSync. It runs after the event's defaults (ID,
+// timestamp, severity, schema version) are applied and never for an event
+// that was filtered, sampled, dropped or rejected; nil removes it. fn must
+// only read the event. Contract tests (pkg/audit/audittest) use it to validate
+// emitted events against the published schema.
+func ObserveEmitted(fn func(*Event)) {
+	if fn == nil {
+		emittedHook.Store(nil)
+		return
+	}
+	emittedHook.Store(&fn)
+}
+
+func observeEmitted(event *Event) {
+	if fn := emittedHook.Load(); fn != nil {
+		(*fn)(event)
+	}
+}
+
 // Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
 // waits for capacity up to WriteTimeout or the caller's context deadline.
 // With DropOnFull=true a full queue drops the event at once, sensitive or
@@ -242,16 +265,44 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 // to a sink itself; use EmitSync when the caller needs a delivery receipt.
 // Emit reports false only when the Manager is closed and nothing was accepted.
 func (m *Manager) Emit(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, true) != emitClosed
+}
+
+// TryEmit is Emit that also reports whether the event was accepted: queued,
+// or intentionally filtered or sampled. It returns false when the event was
+// dropped (full queue, enqueue timeout, shutdown) or the Manager is closed,
+// so the caller can keep the event and retry it.
+func (m *Manager) TryEmit(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, true) == emitAccepted
+}
+
+// TryEmitRetryable is TryEmit for callers that retry an event they could not
+// hand over: a full queue or enqueue timeout is not counted as a drop.
+func (m *Manager) TryEmitRetryable(ctx context.Context, event *Event) bool {
+	return m.emit(ctx, event, false) == emitAccepted
+}
+
+type emitResult int
+
+const (
+	emitAccepted emitResult = iota
+	emitDropped
+	emitClosed
+)
+
+// emit enqueues event. With countDrops false a full queue or enqueue timeout
+// is not counted as a drop: the caller keeps and retries the event.
+func (m *Manager) emit(ctx context.Context, event *Event, countDrops bool) emitResult {
 	if m.closed.Load() {
-		return false
+		return emitClosed
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return true
+		return emitAccepted
 	}
 	// Apply sampling for high-volume event types
 	if m.shouldSample(event.Type) {
 		m.droppedEvents.Add(1)
-		return true
+		return emitAccepted
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
@@ -265,6 +316,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
@@ -279,7 +331,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	// Re-check closed under the lock: Close sets closed=true then acquires
 	// closeMu.Lock, so if we see closed=true here the channel is already closed.
 	if m.closed.Load() {
-		return false
+		return emitClosed
 	}
 	if !m.config.DropOnFull {
 		writeCtx, cancel := context.WithTimeout(ctx, m.config.WriteTimeout)
@@ -287,28 +339,38 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 		select {
 		case m.asyncQueue <- event:
 			m.queuedEvents.Add(1)
+			observeEmitted(event)
+			return emitAccepted
 		case <-m.workerCtx.Done():
-			m.recordShutdownDrops(1)
+			if countDrops {
+				m.recordShutdownDrops(1)
+			}
 		case <-writeCtx.Done():
-			m.droppedEvents.Add(1)
-			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
-			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			if countDrops {
+				m.droppedEvents.Add(1)
+				metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
+				m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+			}
 		}
-		return true
+		return emitDropped
 	}
 
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
+		observeEmitted(event)
+		return emitAccepted
 	default:
 		// Queue is full. Emit never writes synchronously: its callers include the
 		// authorization webhook, and a synchronous write to a stalled sink would
 		// hold the SubjectAccessReview answer. Callers that need a delivery
 		// receipt use EmitSync.
-		m.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		if countDrops {
+			m.droppedEvents.Add(1)
+			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
+		}
+		return emitDropped
 	}
-	return true
 }
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
@@ -506,13 +568,17 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
-
-	return m.syncWriteDirect(ctx, event)
+	if err := m.syncWriteDirect(ctx, event); err != nil {
+		return err
+	}
+	observeEmitted(event)
+	return nil
 }
 
 // shouldSample returns true if the event should be sampled (dropped).
@@ -1072,6 +1138,47 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 			"cluster":   cluster,
 			"residuals": identities,
 		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionCleanupAcknowledged records an operator acknowledgement of
+// cleanup residuals as absent. Applied is false when the controller rejected
+// it; message then says why. The acknowledging user is the actor only when
+// actorVerified: the admission webhook verified it. Otherwise the actor is
+// the controller and the unverified name is kept as claimedAcknowledgedBy.
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, acknowledgement, user string, actorVerified bool, reason string, applied bool, identities []string, message string) {
+	details := map[string]interface{}{
+		"cluster":         cluster,
+		"source":          "DebugSessionCleanupAcknowledgement",
+		"acknowledgement": acknowledgement,
+		"applied":         applied,
+		"actorVerified":   actorVerified,
+	}
+	actor := Actor{User: user}
+	if !actorVerified {
+		actor = Actor{User: "system"}
+		details["claimedAcknowledgedBy"] = user
+	}
+	if len(identities) > 0 {
+		details["retired"] = append([]string(nil), identities...)
+	}
+	if reason != "" {
+		details["reason"] = reason
+	}
+	if message != "" {
+		details["message"] = message
+	}
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupAcknowledged,
+		Severity: SeverityWarning,
+		Actor:    actor,
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details:        details,
 		RequestContext: &RequestContext{DebugSessionName: sessionName},
 	})
 }

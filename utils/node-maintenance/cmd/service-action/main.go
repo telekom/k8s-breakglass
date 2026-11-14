@@ -85,13 +85,18 @@ func (r request) argv() []string {
 }
 
 func main() {
-	r, err := parseRequest(os.Args[1:])
+	log, err := newLogger(os.Stderr, "service-action", "service-action")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "service-action: %v\n", err)
 		os.Exit(2)
 	}
+	r, err := parseRequest(os.Args[1:])
+	if err != nil {
+		log.Error(err.Error())
+		os.Exit(2)
+	}
 	if err := run(r, systemdPrivateSocket); err != nil {
-		fmt.Fprintf(os.Stderr, "service-action: %v\n", err)
+		log.Error(err.Error())
 		os.Exit(1)
 	}
 }
