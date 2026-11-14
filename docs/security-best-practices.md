@@ -599,6 +599,13 @@ sends the Pod's own period, up to `--max-graceful-termination-sec`) are
 denied for Pods with a longer `terminationGracePeriodSeconds` while the policy
 is installed; evictions without a grace period are unaffected.
 
+For the same reason, a Binding (which since Kubernetes 1.35 copies its labels
+onto the Pod) may carry only the `topology.kubernetes.io/` and
+`topology.k8s.io/` labels that the PodTopologyLabelsAdmission plugin adds;
+otherwise a binding creator could, for example, overwrite a pending debug
+Pod's `pod-template-hash` so its ReplicaSet releases it. Custom schedulers
+that set other Binding labels are denied while the policy is installed.
+
 Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
 created by the kube-controller-manager, not by the controller. The policy therefore also
 exempts the kube-controller-manager users that copy a template into Pods

@@ -197,6 +197,20 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "to-bind"}, bound))
 		assert.Equal(t, "node-1", bound.Spec.NodeName)
 		assert.NotContains(t, bound.Annotations, DebugSessionUIDAnnotationKey)
+
+		// Since Kubernetes 1.35 Binding labels are copied onto the Pod; a new
+		// pod-template-hash would release a pending debug Pod from its ReplicaSet.
+		require.NoError(t, forger.Create(ctx, pod("to-bind-labels", nil, nil)))
+		bindLabels := func(labels map[string]string) error {
+			return forgerKube.CoreV1().Pods(ns).Bind(ctx, &corev1.Binding{
+				ObjectMeta: metav1.ObjectMeta{Name: "to-bind-labels", Namespace: ns, Labels: labels},
+				Target:     corev1.ObjectReference{Kind: "Node", Name: "node-1"}}, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		}
+		err := bindLabels(map[string]string{"pod-template-hash": "attacker"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "bindings may only carry topology.kubernetes.io/ and topology.k8s.io/ labels")
+		assert.NoError(t, bindLabels(map[string]string{"topology.kubernetes.io/zone": "a", "topology.k8s.io/rack": "r1"}),
+			"the topology labels PodTopologyLabelsAdmission adds stay allowed")
 	})
 
 	t.Run("workload pod templates are reserved", func(t *testing.T) {

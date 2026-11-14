@@ -35,7 +35,8 @@
 # and ReplicationControllers orphan their Pods by default. They may not delete
 # a marked ControllerRevision at all, nor delete a marked Pod with a grace
 # period longer than its own; evictions (which carry no Pod labels) may not
-# set a grace period above 30 seconds for any Pod. Other requests are
+# set a grace period above 30 seconds for any Pod, and Bindings may carry
+# only topology labels. Other requests are
 # allowed, so kubelet status updates, scaling and annotation edits keep
 # working.
 #
@@ -283,6 +284,19 @@ spec:
     messageExpression: >-
       'evictions may not set a grace period above 30 seconds while breakglass debug-session labels are reserved; '
       + request.userInfo.username + ' may not extend it'
+    reason: Forbidden
+  # Since Kubernetes 1.35 (PodTopologyLabelsAdmission) the API server also
+  # copies Binding labels onto the Pod. A Binding does not carry the Pod's
+  # labels, so for every Pod only the topology labels that admission plugin
+  # adds are allowed; anything else, such as pod-template-hash, could release
+  # a pending debug Pod from its ReplicaSet and out of the session cleanup.
+  - expression: >-
+      request.operation == 'DELETE' || variables.exempt || object.kind != 'Binding' ||
+      !has(object.metadata.labels) ||
+      object.metadata.labels.all(k, k.startsWith('topology.kubernetes.io/') || k.startsWith('topology.k8s.io/'))
+    messageExpression: >-
+      'bindings may only carry topology.kubernetes.io/ and topology.k8s.io/ labels while breakglass debug-session labels are reserved; '
+      + request.userInfo.username + ' may not set others'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
