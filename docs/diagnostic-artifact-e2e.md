@@ -77,7 +77,9 @@ error before fixture cleanup removes the object.
 
 `TestFreshKubectlDebugSessionActivatesWithRealAPI` runs the production reconciler
 with quota admission, a persisted template, and a real connection Lease against
-an envtest API server. Set `KUBEBUILDER_ASSETS` to run it. This is complementary
+an envtest API server. Its ClusterConfig fixture is marked Ready because
+activation requires it. `make test-platform` runs it in the CI job "CRD Schema &
+API Server Validation"; elsewhere set `KUBEBUILDER_ASSETS` to run it. This is complementary
 to the Kind lane; it does not reproduce manager-cache timing or spoke transport.
 Completed ephemeral-operation replay records its existing reference once while
 preserving the separate Active-only allowed-Pod update.
