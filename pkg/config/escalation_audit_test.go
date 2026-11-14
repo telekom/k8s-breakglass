@@ -299,6 +299,26 @@ func TestEscalationAuditRecordsCoalescedChanges(t *testing.T) {
 	require.ElementsMatch(t, []string{"escalation/esc-uid/1", "escalation/esc-uid/2", "escalation/esc-uid/3", "escalation/esc-uid/deleted"}, ids)
 }
 
+// A reconcile that reads a newer generation before the informer delivers an
+// older one does not discard the older one.
+func TestEscalationAuditOutOfOrderGenerations(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	a.specChange(auditedEscalation(3)) // reconcile reads generation 3 from the cache
+	a.observe(auditedEscalation(2))    // queued informer callback for generation 2
+	a.observe(auditedEscalation(3))    // and for generation 3: deduplicated
+	require.Zero(t, a.flush(context.Background()))
+	byID := map[string]*audit.Event{}
+	for _, e := range capture.take() {
+		byID[e.ID] = e
+	}
+	require.Len(t, byID, 2)
+	require.Contains(t, byID, "escalation/esc-uid/2")
+	require.Contains(t, byID, "escalation/esc-uid/3")
+	require.NotContains(t, byID["escalation/esc-uid/3"].Details, "previousGeneration", "unknown when generation 3 was recorded")
+	require.NoError(t, audittest.Check(byID["escalation/esc-uid/2"]))
+}
+
 type blockingEmitter struct {
 	release chan struct{}
 	entered chan struct{}
@@ -338,6 +358,17 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 
 	now = now.Add(escalationAuditTTL + time.Minute)
 	require.Zero(t, a.flush(context.Background()), "expired events are dropped")
+
+	// The dedup set is bounded too, evicting the oldest entries.
+	for i := range escalationAuditSeenLimit + 10 {
+		esc := auditedEscalation(int64(i + 2))
+		now = now.Add(time.Millisecond)
+		a.specChange(esc)
+	}
+	require.Len(t, a.seen, escalationAuditSeenLimit)
+	a.specChange(auditedEscalation(escalationAuditSeenLimit + 11))
+	_, kept := a.seen[escalationAuditKey{uid: "esc-uid", generation: escalationAuditSeenLimit + 11}]
+	require.True(t, kept, "the newest generation is kept")
 }
 
 func TestEscalationReconcilerAuditsDeletion(t *testing.T) {

@@ -34,6 +34,10 @@ const (
 	escalationAuditTTL = time.Hour
 	// escalationAuditLimit bounds the number of retained events.
 	escalationAuditLimit = 2000
+	// escalationAuditSeenLimit bounds the dedup set of recorded generations.
+	// Only its oldest entries are evicted, so the current generation of up to
+	// this many escalations is not re-emitted by the periodic resync.
+	escalationAuditSeenLimit = 10000
 )
 
 // escalationAuditKey identifies one event: a generation of an escalation, or
@@ -71,9 +75,12 @@ type escalationAuditor struct {
 	wake chan struct{}
 
 	mu sync.Mutex
-	// recorded is the newest generation per escalation that has a snapshot.
-	recorded map[types.UID]int64
-	pending  map[escalationAuditKey]*pendingEscalationAudit
+	// seen holds every recorded generation and deletion with its time, so
+	// each exact UID/generation pair is recorded once regardless of the order
+	// in which the informer and reconciles observe them. It is bounded by
+	// escalationAuditSeenLimit; the oldest entries are evicted.
+	seen    map[escalationAuditKey]time.Time
+	pending map[escalationAuditKey]*pendingEscalationAudit
 }
 
 func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLogger) *escalationAuditor {
@@ -81,7 +88,7 @@ func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLog
 		return nil
 	}
 	return &escalationAuditor{emitter: emitter, logger: logger, retry: escalationAuditRetry, now: time.Now, wake: make(chan struct{}, 1),
-		recorded: map[types.UID]int64{}, pending: map[escalationAuditKey]*pendingEscalationAudit{}}
+		seen: map[escalationAuditKey]time.Time{}, pending: map[escalationAuditKey]*pendingEscalationAudit{}}
 }
 
 func (a *escalationAuditor) backoff(attempts int) time.Duration {
@@ -94,6 +101,8 @@ func (a *escalationAuditor) backoff(attempts int) time.Duration {
 
 // record adds a snapshot under a.mu, evicting the oldest beyond the limit.
 func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
+	a.seen[key] = event.Timestamp
+	a.pruneSeen()
 	a.pending[key] = &pendingEscalationAudit{event: event, since: event.Timestamp}
 	if len(a.pending) <= escalationAuditLimit {
 		return
@@ -109,6 +118,32 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)
 }
 
+// pruneSeen evicts the oldest dedup entries beyond the bound.
+func (a *escalationAuditor) pruneSeen() {
+	for len(a.seen) > escalationAuditSeenLimit {
+		var oldest escalationAuditKey
+		var oldestAt time.Time
+		for key, at := range a.seen {
+			if oldestAt.IsZero() || at.Before(oldestAt) {
+				oldest, oldestAt = key, at
+			}
+		}
+		delete(a.seen, oldest)
+	}
+}
+
+// previousGeneration returns the newest recorded generation of uid below
+// generation, or 0.
+func (a *escalationAuditor) previousGeneration(uid types.UID, generation int64) int64 {
+	var previous int64
+	for key := range a.seen {
+		if key.uid == uid && !key.deleted && key.generation < generation && key.generation > previous {
+			previous = key.generation
+		}
+	}
+	return previous
+}
+
 // notify wakes run without blocking.
 func (a *escalationAuditor) notify() {
 	select {
@@ -118,7 +153,8 @@ func (a *escalationAuditor) notify() {
 }
 
 // specChange records escalation.created (generation 1) or escalation.updated
-// for a generation that has no snapshot yet; run delivers it. It never
+// once per exact UID/generation pair, in whatever order the informer and
+// reconciles observe generations; run delivers it. It never
 // enqueues itself, so a full audit queue cannot hold the reconcile worker. It
 // is independent of status.observedGeneration, which other status writers
 // also advance. Disabled auditing is a cheap no-op.
@@ -126,9 +162,9 @@ func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalat
 	if a == nil || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
 		return
 	}
+	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation}
 	a.mu.Lock()
-	previous, seen := a.recorded[esc.UID]
-	if seen && previous >= esc.Generation {
+	if _, seen := a.seen[key]; seen {
 		a.mu.Unlock()
 		return
 	}
@@ -136,10 +172,9 @@ func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalat
 	if esc.Generation <= 1 {
 		eventType = audit.EventEscalationCreated
 	}
-	event := audit.EscalationChangeEvent(eventType, esc, previous)
+	event := audit.EscalationChangeEvent(eventType, esc, a.previousGeneration(esc.UID, esc.Generation))
 	event.Timestamp = a.now().UTC()
-	a.recorded[esc.UID] = esc.Generation
-	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation}, event)
+	a.record(key, event)
 	a.mu.Unlock()
 	a.notify()
 }
@@ -161,9 +196,11 @@ func (a *escalationAuditor) deletion(obj client.Object) {
 	}
 	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
 	event.Timestamp = a.now().UTC()
+	key := escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}
 	a.mu.Lock()
-	delete(a.recorded, esc.UID)
-	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}, event)
+	if _, seen := a.seen[key]; !seen {
+		a.record(key, event)
+	}
 	a.mu.Unlock()
 	a.notify()
 }
