@@ -6,7 +6,7 @@ FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2c
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src
-COPY uploader/main.go .
+COPY uploader/main.go uploader/logging.go ./
 RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-upload .
 COPY copier/ /src/copier/
 RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-safe-copy ./copier

@@ -664,6 +664,23 @@ The `status` section includes **cached group memberships** for performance and a
 - **approverGroupMembers**: Deduplicated approvers across all IDPs (used for notifications)
 - **Conditions**: Kubernetes-standard conditions tracking validation, references, and health
 
+**Freshness of cached memberships.** Both maps are rewritten on every group
+sync (`--escalation-status-update-interval`, default 10m); there is no separate
+TTL. A per-IDP membership authorizes approval only while the group has an
+`approverGroupMembers` entry that also contains the member, so a snapshot that
+is no longer part of the current resolution cannot approve. When IDP discovery
+fails, the updater keeps the last synced, provider-scoped status and sets
+`ApprovalGroupMembersResolved=False` (`GroupSyncFailed`); it does not switch to
+the legacy resolver, whose results carry no provider provenance. When discovery
+finds no enabled IDP, the updater falls back to the legacy single resolver and
+removes all per-IDP memberships, because legacy mode does not refresh them. The
+`approverGroupMembers` entries built from them are reset too: only groups the
+legacy resolver resolves regain members, and a failed lookup leaves the group
+empty (deny). A transient lookup failure keeps the last resolved members until
+the next successful sync and sets `ApprovalGroupMembersResolved=False`; remove an
+approver from a group by fixing the identity provider, and the next successful
+sync drops them.
+
 ### Conditions
 
 All status information is tracked via **Kubernetes conditions**. Use `kubectl describe` to view them:
@@ -723,6 +740,61 @@ condition is `False` with reason `GroupNotFound`; mixed failures retain
 `GroupSyncPartialFailure` or `GroupSyncFailed` and name the missing group in
 the condition message. In all cases, stale cached members are removed and a
 warning event identifies the missing group.
+
+#### Ambiguous approver groups
+
+Approver groups resolve by exact, case-sensitive name. Nested subgroups count
+as matches: with `full.path=false` (see
+[Keycloak configuration](keycloak-configuration.md)) a member of `/x/admins`
+also gets the `admins` token claim. When more than one identity-provider group
+matches a configured name (two exact matches, a top-level group and a
+same-named subgroup such as `admins` and `/x/admins`, or two case variants
+with the transitional
+[`approverGroupCaseInsensitiveFallback`](configuration-reference.md#approvergroupcaseinsensitivefallback-optional-transitional)
+enabled), the lookup fails closed:
+
+- the controller emits a `Warning` event with reason `ApproverGroupAmbiguous`
+  on the escalation (and on the IdentityProvider in multi-IDP mode) and the
+  `ApprovalGroupMembersResolved` condition is `False` with the group listed as
+  ambiguous;
+- cached members of that group are removed and, when every queried identity
+  provider reports the group as ambiguous, it is stored as an empty list in
+  `status.approverGroupMembers`. Approval through the group is denied, also
+  for approvers whose token `groups` claim contains the group name: that claim
+  cannot tell the groups apart, so falling back to it would let anyone who can
+  create a same-named subgroup grant approver rights;
+- in multi-IDP mode, when another provider resolved the group (with members or
+  as empty) or reported it missing, that result stays authoritative: the entry
+  keeps that provider's members (or `[]`), and approvers from the ambiguous
+  provider are denied until the ambiguity is fixed;
+- pending and new sessions send no approval notifications to that group,
+  because no members can be resolved for it.
+
+A group that exists only as a nested subgroup (for example `/x/admins` with no
+top-level `admins`) does not resolve: it is reported as not found, like a
+missing group. A not-found group is stored as an empty list, which blocks
+token-group approval and notifications for that group.
+
+#### Approval before the first group sync
+
+Until the status updater has synced an approver group (after an escalation is
+created, or after a group is added, until the next sync), the group has no
+`status.approverGroupMembers` entry and the `ApprovalGroupMembersResolved`
+condition is missing or does not cover it. During that window approval falls
+back to the approver's cluster or token groups. With `full.path=false`, members
+of a same-named nested group such as `/x/admins` carry the same `admins` claim,
+so they can approve during the window even though the first sync will deny
+them as ambiguous.
+
+Set `--require-synced-approver-groups` (`BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS=true`)
+to close the window: approval through a group without a synced entry is denied
+with HTTP `403` (`FORBIDDEN`) and a message that the approver group members
+have not been synced yet; the controller logs the warning
+`Approval by an unsynced approver group denied (--require-synced-approver-groups)` with the escalation and group. The cost is a possible lockout until
+the first sync succeeds (bounded by `--escalation-status-update-interval` while
+the identity provider is reachable), and group-based approval never works for
+providers without group sync. Direct user approvers are not affected. The flag
+is off by default.
 
 #### Condition Reasons
 

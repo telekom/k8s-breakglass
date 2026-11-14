@@ -1416,7 +1416,7 @@ func TestApprovalAuthorization_AllowedIdentityProvidersForApprovers_PrefersNotAp
 	require.Contains(t, result.Message, "not in an approver group")
 }
 
-func newApprovalAuthorizationTestController(t *testing.T, objects ...client.Object) *BreakglassSessionController {
+func newApprovalAuthorizationTestController(t testing.TB, objects ...client.Object) *BreakglassSessionController {
 	t.Helper()
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(objects...)

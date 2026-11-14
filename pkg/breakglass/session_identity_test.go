@@ -166,7 +166,9 @@ func TestApprovalMappedUsernameGroupMembershipIsCaseSensitive(t *testing.T) {
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"approvers"}},
 		},
 		Status: breakglassv1alpha1.BreakglassEscalationStatus{
-			ApproverGroupMembers: map[string][]string{"approvers": nil},
+			// The aggregate is the normalized (lowercase) dedup of the per-IdP
+			// snapshot; the per-IdP entry keeps the mapped username's case.
+			ApproverGroupMembers: map[string][]string{"approvers": {"alice"}},
 			IDPGroupMemberships:  map[string]map[string][]string{"idp-a": {"approvers": {"Alice"}}},
 		},
 	}
