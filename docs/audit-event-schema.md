@@ -89,7 +89,8 @@ IDs, so a re-emission after a controller restart is also detectable:
 | `actor.groups` | string[] | no | **yes** | Verified group claims. |
 | `actor.sourceIP` | string | no | **yes** | Request origin. |
 | `actor.userAgent` | string | no | | Request user agent. |
-| `target.kind`, `target.name` | string | yes | | Affected resource. |
+| `target.kind` | string | yes | | Affected resource kind or resource. |
+| `target.name` | string | yes | **yes** (identity targets) | Affected resource name. It is a user, group or service account identity for `resource.impersonate` (the impersonated identity) and for `access.*`, `access.denied.policy` and `pod_security.*` decisions on `users`, `groups`, `serviceaccounts`, `uids` or `userextras`. |
 | `target.uid` | string | no | | Immutable UID of the affected object, when known. |
 | `target.namespace`, `target.cluster`, `target.apiGroup` | string | no | | Location of the resource. |
 | `target.clusterUID` | string | no | | UID of the ClusterConfig, only when the emitter observed it. |
