@@ -315,7 +315,13 @@ leading is not observed.
 port-forward into a debug-session pod. The actor is the requester, the target
 is the Pod, and `requestContext.debugSessionUID` names the session. The API
 server caches allow decisions of the authorization webhook, so repeated
-connections within that cache TTL can produce one event.
+connections within that cache TTL can produce one event. The webhook hands
+the event to a bounded background queue so audit delivery never delays the
+authorization answer. Events it cannot hand on are counted in
+`breakglass_audit_events_dropped_total{sink="webhook-attached-handoff"}` with
+reason `queue_full` (handoff buffer full), `unavailable` (audit configured
+but its pipeline not running) or `shutdown`; with audit disabled nothing is
+emitted or counted.
 
 | Field | Type | Description |
 |---|---|---|

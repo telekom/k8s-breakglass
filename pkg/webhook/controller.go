@@ -1208,10 +1208,22 @@ func (wc *WebhookController) startAttachedAudit() {
 				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
 				continue
 			}
-			// An item in flight when the drain gave up counts itself: after
-			// the audit service closed, TryEmit no longer accepts it.
-			if !emit(item.ctx, item.event) && wc.attachedAbandoned.Load() {
+			if emit(item.ctx, item.event) {
+				continue
+			}
+			switch {
+			case wc.attachedAbandoned.Load():
+				// An item in flight when the drain gave up counts itself:
+				// after the audit service closed, TryEmit no longer accepts it.
 				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "shutdown").Inc()
+			case wc.auditService != nil && wc.auditService.ConfigurationState() == audit.ConfigurationUnavailable:
+				// No pipeline to count the loss: audit is configured but not
+				// (yet) running. Intentionally disabled audit stays a no-op;
+				// a running pipeline counts its own queue drops.
+				metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "unavailable").Inc()
+				if wc.log != nil {
+					wc.log.Warnw("Dropping debug_session.attached audit event: the audit pipeline is unavailable", "session", item.event.RequestContext.DebugSessionName)
+				}
 			}
 		}
 	}()

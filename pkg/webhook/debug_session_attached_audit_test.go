@@ -277,3 +277,57 @@ func TestDebugSessionAttachedShutdownCountsInFlightAndBuffered(t *testing.T) {
 	buffered.StopAttachedAudit(ctx2)
 	require.GreaterOrEqual(t, drops(), before+3, "the buffered items are counted at the deadline")
 }
+
+// With the real audit.Service: an attach event while audit is configured but
+// not running is counted as lost; once the pipeline is ready it is delivered;
+// intentionally disabled audit counts nothing.
+func TestDebugSessionAttachedAuditPipelineStates(t *testing.T) {
+	unavailable := func() float64 {
+		return testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(attachedHandoffSink, "unavailable"))
+	}
+	var mu sync.Mutex
+	var seen []*audit.Event
+	audit.ObserveEmitted(func(event *audit.Event) {
+		audittest.Record(event)
+		if event.Type == audit.EventDebugSessionAttached {
+			mu.Lock()
+			seen = append(seen, event)
+			mu.Unlock()
+		}
+	})
+	t.Cleanup(func() { audit.ObserveEmitted(audittest.Record) })
+	delivered := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(seen)
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	svc := audit.NewService(cli, nil, zap.NewNop(), "controller") // unavailable until the first reload
+	t.Cleanup(func() { _ = svc.Close() })
+	wc := &WebhookController{log: zap.NewNop().Sugar(), auditService: svc}
+	emit := func() {
+		wc.emitDebugSessionAttachedAudit(context.Background(), "requester", nil, "cluster", attachedSAR(), audit.Target{Kind: "pods", Name: "own-pod"}, "controller", "debug", "uid")
+	}
+
+	before := unavailable()
+	emit()
+	require.Eventually(t, func() bool { return unavailable() == before+1 }, 5*time.Second, 10*time.Millisecond, "counted while unavailable")
+	require.Zero(t, delivered())
+
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "attached"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	emit()
+	require.Eventually(t, func() bool { return delivered() == 1 }, 5*time.Second, 10*time.Millisecond, "delivered once ready")
+
+	require.NoError(t, svc.ReloadMultipleWithAvailability(context.Background(), nil, false)) // disabled
+	before = unavailable()
+	emit()
+	require.Never(t, func() bool { return unavailable() != before || delivered() != 1 }, 200*time.Millisecond, 10*time.Millisecond,
+		"disabled audit neither delivers nor counts")
+	wc.StopAttachedAudit(context.Background())
+}

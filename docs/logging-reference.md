@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 346 | 364 | 270 | 0 | 0 | 0 |
+| controller | 468 | 346 | 365 | 270 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -1809,6 +1809,7 @@ variable part of a concatenated message.
 | warn | `ActivityTracker at capacity, evicting oldest entry to make room` | `evicted`, `maxEntries`, `newSession` | activity_tracker.go |
 | warn | `Cluster not registered for Breakglass` | `cluster` | authorize_helpers.go |
 | warn | `Dropping debug_session.attached audit event: handoff buffer is full` | `session` | controller.go |
+| warn | `Dropping debug_session.attached audit event: the audit pipeline is unavailable` | `session` | controller.go |
 | warn | `Effective issuer index unavailable; using compatibility lookup` | `error` | controller.go |
 | warn | `Failed to fetch pod for security evaluation` | `error`, `namespace`, `pod` | authorize_helpers.go |
 | warn | `Failed to list IdentityProviders for IDP hint` | `error` | controller.go |
