@@ -1172,6 +1172,13 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		"username", username, "cluster", s.clusterName,
 		"allowed", s.allowed, "reason", s.reason, "response", respLogForInfo)
 
+	// Hand off debug_session.attached first: it never blocks and is stamped
+	// with the decision time, before the access-decision enqueue below can
+	// wait for a full audit queue.
+	if s.allowed && s.allowSource == "debug-session" {
+		wc.emitDebugSessionAttachedAudit(s.ctx, username, s.sar.Spec.Groups, s.clusterName, &s.sar, s.auditTarget,
+			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID)
+	}
 	// Emit the already-enriched audit event without another spoke lookup after
 	// the final live fence.
 	wc.emitAccessDecisionAuditWithTarget(s.ctx, username, s.sar.Spec.Groups,
