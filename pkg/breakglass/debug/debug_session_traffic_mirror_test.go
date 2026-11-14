@@ -461,6 +461,24 @@ func TestTrafficMirrorCleanupRefusesRedirectedCluster(t *testing.T) {
 	require.False(t, f.ds.Status.TrafficMirror.Released)
 }
 
+func TestTrafficMirrorDeployRefusesRedirectedCluster(t *testing.T) {
+	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	// Rewind to "inventory written, nothing created yet", then resume while
+	// the ClusterConfig points at another cluster.
+	name := f.ds.Status.TrafficMirror.OperationID
+	require.NoError(t, f.spoke.Delete(t.Context(), f.pod(t, name+trafficMirrorCaptureSuffix)))
+	require.NoError(t, f.spoke.DeleteAllOf(t.Context(), &networkingv1.NetworkPolicy{}, client.InNamespace(breakglassv1alpha1.NodeMaintenanceNamespace)))
+	require.NoError(t, f.c.patchTrafficMirrorStatus(t.Context(), f.ds, func(status *breakglassv1alpha1.TrafficMirrorStatus) {
+		status.CapturePodUID, status.NamespaceUID = "", "original-cluster-ns-uid"
+	}))
+	require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "now points at another cluster")
+	require.Nil(t, f.pod(t, name+trafficMirrorCaptureSuffix), "no capture Pod in another cluster")
+	policies := &networkingv1.NetworkPolicyList{}
+	require.NoError(t, f.spoke.List(t.Context(), policies))
+	require.Empty(t, policies.Items, "no NetworkPolicy in another cluster")
+}
+
 func TestTrafficMirrorCapturePayloadOptIn(t *testing.T) {
 	mirror := &breakglassv1alpha1.DebugSessionTrafficMirror{SnapLength: 1500}
 	require.Equal(t, int32(96), mirror.EffectiveCaptureSnapLength())

@@ -198,7 +198,8 @@ keys_at_pref() {
 }
 
 # detach scans every link, not only MIRROR_INTERFACE, so the filters of a
-# renamed interface are removed as well.
+# renamed interface are removed as well. "detach keep-device" leaves the
+# mirror device to the teardown.
 detach() {
 	devs=$(links) || exit 1
 	for dev in $devs; do
@@ -214,7 +215,7 @@ detach() {
 			fi
 		done
 	done
-	if ! link_absent "$MIRROR_VETH"; then
+	if [ "${1:-}" != keep-device ] && ! link_absent "$MIRROR_VETH"; then
 		in_target ip link del "$MIRROR_VETH" || fail teardown-failed "cannot delete $MIRROR_VETH"
 	fi
 	# The clsact qdisc is left in place: another tool may own it or be about
@@ -303,7 +304,13 @@ attach() {
 	# the expiry: the filters follow a renamed interface and vanish with a
 	# re-created one.
 	while :; do
-		[ "$(link_id)" = "$ifid" ] || fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created; the mirror is lost"
+		if [ "$(link_id)" != "$ifid" ]; then
+			# Deleting the device would fail the capture first and hide this
+			# cause; the teardown removes it.
+			trap - EXIT
+			detach keep-device
+			fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created; the mirror is lost"
+		fi
 		left=$(remaining)
 		[ "$left" -gt 0 ] || break
 		[ "$left" -le 30 ] || left=30

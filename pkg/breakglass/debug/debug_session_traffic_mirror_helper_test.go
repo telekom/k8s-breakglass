@@ -304,6 +304,7 @@ func TestTrafficMirrorHelperAttachDetectsRecreatedInterface(t *testing.T) {
 	require.Equal(t, 1, code, output)
 	require.Contains(t, output, "interface-changed")
 	require.NotContains(t, output, "mirror-expired")
+	require.NotContains(t, h.calls(), "ip link del "+helperVeth, "the capture keeps its device, so the cause is reported first")
 }
 
 func TestTrafficMirrorHelperAttachRefusesUnreadableInterfaceIdentity(t *testing.T) {

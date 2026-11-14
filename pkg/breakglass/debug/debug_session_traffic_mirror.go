@@ -394,14 +394,19 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if ds.Status.TrafficMirror != nil && ds.Status.TrafficMirror.ClusterConfigUID != clusterConfigUID {
 		return fmt.Errorf("trafficMirror ClusterConfig %s was replaced", ds.Spec.Cluster)
 	}
+	namespace := &corev1.Namespace{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace); err != nil {
+		return fmt.Errorf("operator must provision the common maintenance namespace: %w", err)
+	}
+	if namespace.UID == "" || !namespace.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("trafficMirror requires a live maintenance namespace UID")
+	}
+	// A resumed activation creates nothing in a cluster the edited
+	// ClusterConfig points at now; cleanup refuses that cluster as well.
+	if ds.Status.TrafficMirror != nil && string(namespace.UID) != ds.Status.TrafficMirror.NamespaceUID {
+		return fmt.Errorf("trafficMirror ClusterConfig %s now points at another cluster", ds.Spec.Cluster)
+	}
 	if ds.Status.TrafficMirror == nil {
-		namespace := &corev1.Namespace{}
-		if err := target.Get(ctx, ctrlclient.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace); err != nil {
-			return fmt.Errorf("operator must provision the common maintenance namespace: %w", err)
-		}
-		if namespace.UID == "" || !namespace.DeletionTimestamp.IsZero() {
-			return fmt.Errorf("trafficMirror requires a live maintenance namespace UID")
-		}
 		inventory := &breakglassv1alpha1.TrafficMirrorStatus{OperationID: breakglassv1alpha1.TrafficMirrorOperationID(string(ds.UID)),
 			State: breakglassv1alpha1.TrafficMirrorStatePending, ClusterConfigUID: clusterConfigUID, NamespaceUID: string(namespace.UID)}
 		receipt := ds.DeepCopy()

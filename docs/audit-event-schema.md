@@ -73,6 +73,7 @@ IDs, so a re-emission after a controller restart is also detectable:
 | `debug_session.hotfix.*` | `<operationID>-intent`, `<operationID>-result`, or the node operation name with `-intent` or `-result` |
 | `debug_session.admission_recipe.*` | `<operationID>-intent`, `<operationID>-drift-<digest>`, `<operationID>-reverted` |
 | `debug_session.node_maintenance.*` | `<operationID>-intent`, `<operationID>-result` |
+| `debug_session.traffic_mirror.*` | `<operationID>-start`, `<operationID>-failed`, `<operationID>-stopped` |
 | Duplicate-session cleanup (`session.termination_intent` and its legacy `session.expired` or `session.withdrawn`) | `duplicate-cleanup/<session UID>` |
 
 ## Envelope
@@ -133,6 +134,7 @@ structured details definition.
 | `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `debug_session.node_maintenance.result` | none |
 | `debugSessionAdmissionRecipe` | `debug_session.admission_recipe.applied`, `debug_session.admission_recipe.drift`, `debug_session.admission_recipe.reverted` | none |
 | `debugSessionHotfix` | `debug_session.hotfix.intent`, `debug_session.hotfix.node_intent`, `debug_session.hotfix.node_result`, `debug_session.hotfix.result` | none |
+| `debugSessionTrafficMirror` | `debug_session.traffic_mirror.started`, `debug_session.traffic_mirror.stopped`, `debug_session.traffic_mirror.failed` | none |
 | `terminalRecording` | `debug_session.terminal_recording_started`, `debug_session.terminal_recording_finalized`, `debug_session.terminal_recording_failed` | none |
 | `terminalRecordingAccess` | `debug_session.terminal_recording_accessed` | none |
 | `accessDecision` | `access.granted`, `access.denied` | `access.allowed`, `access.checked` |
@@ -205,7 +207,7 @@ failed. Fields: `message`, `cluster`, `grantedGroup`, `matchedGroup`,
 Fields: `debug_session`, `session_ns`, `cluster`, `failure_reason`, `message`,
 `restart_count` (integer), `last_termination_reason`.
 
-### Node maintenance, admission recipes and hotfixes
+### Node maintenance, admission recipes, hotfixes and traffic mirrors
 
 These receipts are delivered synchronously: the operation fails closed when the
 event cannot be delivered. `approvedBy` is personal data.
@@ -215,6 +217,7 @@ event cannot be delivered. `approvedBy` is personal data.
 | `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `.result` | `sessionUID`*, `operationID`*, `approvalID`, `approvedBy`, `approvedAt`, `nodeUID`, `tuple`, `image`, `dryRun`, `podUID`, `jobUID`, `leaseUID`, `result`, `bootID`, `restartPods` (`namespace`, `matchLabels`), `restartedPodUIDs`, `hostUnchanged` |
 | `debugSessionAdmissionRecipe` | `debug_session.admission_recipe.applied`, `.drift`, `.reverted` | `sessionUID`*, `operationID`*, `action`*, `approvedBy`, `approvedAt`, `targets[]` (`target`, `state`, `original`, `applied`, `message`) |
 | `debugSessionHotfix` | `debug_session.hotfix.intent`, `.node_intent`, `.node_result`, `.result` | `sessionUID`*, `stage`*, `approvedBy`, `operationID`, `recordName`, `planHash`, `payloadSHA256`, `executorImage`, `payload` (intent only: the approved `spec.hotfix.payload` with `type`, `file`, `debs`, `rollbackDebs`, `image`, `restart`; a `node-file` replacement includes its `content`), `nodes` (count, or counts per result), `nodeUID`, `beforeSHA256`, `afterSHA256`, `podUID`, `result`, `message`, `phase`, `reason`, `state` |
+| `debugSessionTrafficMirror` | `debug_session.traffic_mirror.started`, `.stopped`, `.failed` | `sessionUID`*, `operationID`*, `approvedBy`, `approvedAt`, `node`, `nodeUID`, `podUID`, `interface`, `direction`, `filter`, `image`, `message` |
 
 \* always present.
 

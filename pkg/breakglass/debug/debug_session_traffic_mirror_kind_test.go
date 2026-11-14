@@ -80,11 +80,20 @@ const kindKillAgent = `for dir in /proc/[0-9]*; do
 done
 exit 1`
 
+// kindInNetns runs a shell script in the network namespace of a Pod on the
+// Kind node, as root on the node: it stands in for a foreign tool or an
+// operator changing the source namespace while a mirror runs.
+const kindInNetns = `uid=$1 script=$2
+alt=$(printf '%s' "$uid" | tr - _)
+pid=$(grep -l -e "pod$uid" -e "pod$alt" /proc/[0-9]*/cgroup 2>/dev/null | head -1 | cut -d/ -f3)
+[ -n "$pid" ] || { echo NETNS-GONE; exit 1; }
+exec nsenter -t "$pid" -n sh -ec "$script"`
+
 // TestTrafficMirrorKind is a composed proof on a real Kind cluster: HTTP
 // request, independent approval, controller-created mirror Pod, real tc
 // mirred mirroring into the session capture container, controller restart,
-// expiry, a crashed agent, and verified removal of every tc filter and mirror
-// device. Run it with hack/traffic-mirror-kind.sh.
+// expiry, a crashed agent, a foreign filter behind the mirror, a renamed
+// interface, and verified removal of every tc filter and mirror device. Run it with hack/traffic-mirror-kind.sh.
 func TestTrafficMirrorKind(t *testing.T) {
 	kubeconfig := os.Getenv("TRAFFIC_MIRROR_KIND_KUBECONFIG")
 	if kubeconfig == "" {
@@ -115,7 +124,10 @@ func TestTrafficMirrorKind(t *testing.T) {
 				Containers: []corev1.Container{{Name: "main", Image: image, Command: []string{"/bin/sh", "-c", script}}}}}
 	}
 	server := "serve() { while true; do printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\n\\r\\n' | nc -l -p $1 -q 1 >/dev/null 2>&1; done; }; serve 8081 & serve 8080"
-	for _, pod := range []*corev1.Pod{shell("target", "target", server), shell("decoy", "decoy", server)} {
+	// The victims carry the target label: the rename subtests break their
+	// networking, so they never serve the other subtests.
+	for _, pod := range []*corev1.Pod{shell("target", "target", server), shell("decoy", "decoy", server),
+		shell("victim-a", "target", server), shell("victim-b", "target", server)} {
 		require.NoError(t, hub.Create(ctx, pod))
 	}
 	podIP := func(name string) string {
@@ -131,8 +143,13 @@ func TestTrafficMirrorKind(t *testing.T) {
 	traffic := "while true; do for url in " + targetIP + ":8080 " + targetIP + ":8081 " + decoyIP + ":8080; do curl -s -m 1 http://$url/ >/dev/null; done; sleep 0.2; done"
 	require.NoError(t, hub.Create(ctx, shell("client", "client", traffic)))
 	podIP("client")
-	target := &corev1.Pod{}
-	require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: workloads, Name: "target"}, target))
+	podOf := func(name string) *corev1.Pod {
+		podIP(name)
+		pod := &corev1.Pod{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: workloads, Name: name}, pod))
+		return pod
+	}
+	target, victimA, victimB := podOf("target"), podOf("victim-a"), podOf("victim-b")
 
 	raw, err := os.ReadFile(kubeconfig)
 	require.NoError(t, err)
@@ -260,6 +277,24 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.Contains(t, state, "cookie "+cookie)
 		require.Contains(t, state, veth)
 	}
+	inNetns := func(pod *corev1.Pod, script string) string {
+		t.Helper()
+		output, err := exec.CommandContext(ctx, "docker", "exec", nodeID, "sh", "-c", kindInNetns, "netns", string(pod.UID), script).CombinedOutput()
+		require.NoError(t, err, string(output))
+		return string(output)
+	}
+	// renameEth0 renames the source interface; a link must be down for that.
+	renameEth0 := func(pod *corev1.Pod) {
+		t.Helper()
+		inNetns(pod, "ip link set eth0 down; ip link set eth0 name bgren0; ip link set bgren0 up")
+	}
+	requireRenamedClean := func(session *breakglassv1alpha1.DebugSession, pod *corev1.Pod) {
+		t.Helper()
+		cookie, _, _ := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
+		state := inNetns(pod, "tc filter show dev bgren0 ingress; tc filter show dev bgren0 egress")
+		require.NotContains(t, state, cookie, "no filter of the session remains on the renamed interface")
+		require.NotContains(t, state, "mirred")
+	}
 	eventCount := func(session *breakglassv1alpha1.DebugSession, eventType audit.EventType) int {
 		count := 0
 		for _, event := range sink.Events() {
@@ -367,5 +402,67 @@ func TestTrafficMirrorKind(t *testing.T) {
 		requireCleaned(session, string(target.UID))
 		require.Equal(t, 1, eventCount(session, audit.EventDebugSessionTrafficMirrorFailed))
 		require.Equal(t, 1, eventCount(session, audit.EventDebugSessionTrafficMirrorStopped))
+	})
+
+	t.Run("a foreign filter at a higher preference keeps classifying", func(t *testing.T) {
+		session := request("mirror-pod", "10m", podSource, http.StatusCreated)
+		requireMirrored(session, targetIP+".8080")
+		_, pref, _ := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
+		// The mirror preference is 0xC000-0xFFFF; 65535 is above it except
+		// for one session in 16384.
+		mirrorPref, err := strconv.Atoi(pref)
+		require.NoError(t, err)
+		require.Less(t, mirrorPref, 65535, "the foreign filter needs a higher preference than the mirror")
+		inNetns(target, "tc filter add dev eth0 egress pref 65535 protocol all basic action gact pass")
+		packets := func() int {
+			value, _ := strconv.Atoi(strings.TrimSpace(inNetns(target,
+				"tc -s filter show dev eth0 egress pref 65535 | sed -n 's/.*Sent [0-9]* bytes \\([0-9]*\\) pkt.*/\\1/p' | head -1")))
+			return value
+		}
+		// The target answers the client's requests on egress; with mirred's
+		// default pipe the foreign filter would never see a packet.
+		require.Eventually(t, func() bool { return packets() > 0 }, time.Minute, time.Second,
+			"the foreign filter behind the mirror never matched")
+		inNetns(target, "tc filter del dev eth0 egress pref 65535")
+		call("requester@example.com", http.MethodPost, "/debugSessions/"+session.Name+"/terminate?namespace="+session.Namespace, nil, http.StatusOK)
+		requireCleaned(session, string(target.UID))
+	})
+
+	t.Run("a renamed interface fails the session and loses no filter", func(t *testing.T) {
+		session := request("mirror-pod", "10m", breakglassv1alpha1.TrafficMirrorRequest{PodNamespace: workloads, PodName: victimA.Name, Interface: "eth0"}, http.StatusCreated)
+		requireActiveState(session, string(victimA.UID))
+		renameEth0(victimA)
+		// The agent re-checks the interface at least every 30 seconds.
+		require.Eventually(t, func() bool {
+			reconcile(session)
+			return session.Status.State == breakglassv1alpha1.DebugSessionStateFailed
+		}, 2*time.Minute, 2*time.Second, "the renamed interface never failed the session")
+		require.Contains(t, session.Status.TrafficMirror.Message, "interface-changed", session.Status.TrafficMirror.Message)
+		requireCleaned(session, string(victimA.UID))
+		requireRenamedClean(session, victimA)
+	})
+
+	t.Run("teardown removes the filters of a renamed interface", func(t *testing.T) {
+		session := request("mirror-pod", "10m", breakglassv1alpha1.TrafficMirrorRequest{PodNamespace: workloads, PodName: victimB.Name, Interface: "eth0"}, http.StatusCreated)
+		requireActiveState(session, string(victimB.UID))
+		// A killed agent cannot detach, so only the teardown can find the
+		// filters once eth0 has another name.
+		output, err := exec.CommandContext(ctx, "docker", "exec", nodeID, "sh", "-c", kindKillAgent).CombinedOutput()
+		require.NoError(t, err, string(output))
+		require.Eventually(t, func() bool {
+			pod := &corev1.Pod{}
+			if hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.TrafficMirror.OperationID}, pod) != nil {
+				return false
+			}
+			return trafficMirrorFailure(pod) != ""
+		}, time.Minute, time.Second)
+		renameEth0(victimB)
+		cookie, _, _ := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
+		require.Contains(t, inNetns(victimB, "tc filter show dev bgren0 ingress"), "cookie "+cookie, "the filters moved with the interface")
+		controller = newController()
+		reconcile(session)
+		require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, session.Status.State, session.Status.Message)
+		requireCleaned(session, string(victimB.UID))
+		requireRenamedClean(session, victimB)
 	})
 }
