@@ -138,9 +138,11 @@ condition can also list kubectl-debug copied Pods and prepared
 `True` while node-maintenance or hotfix state is not released. Acknowledgements
 cannot retire these: an acknowledgement listing one is rejected and retires
 nothing. Their kinds are always served, so they clear as soon as a retry
-reaches the target cluster (restore the ClusterConfig or connectivity), or
+reaches the target cluster (restore the ClusterConfig or connectivity).
+Copied Pods, `KubectlDebugOperation`s and admission-recipe targets also clear
 after you delete the object on the target yourself, because cleanup treats
-`NotFound` as done.
+`NotFound` as done; node-maintenance and hotfix state is released only by a
+successful retry.
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
