@@ -67,6 +67,9 @@ type escalationAuditor struct {
 	retry   time.Duration
 	now     func() time.Time
 
+	// wake asks run to flush now instead of at the next tick.
+	wake chan struct{}
+
 	mu sync.Mutex
 	// recorded is the newest generation per escalation that has a snapshot.
 	recorded map[types.UID]int64
@@ -77,7 +80,7 @@ func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLog
 	if emitter == nil {
 		return nil
 	}
-	return &escalationAuditor{emitter: emitter, logger: logger, retry: escalationAuditRetry, now: time.Now,
+	return &escalationAuditor{emitter: emitter, logger: logger, retry: escalationAuditRetry, now: time.Now, wake: make(chan struct{}, 1),
 		recorded: map[types.UID]int64{}, pending: map[escalationAuditKey]*pendingEscalationAudit{}}
 }
 
@@ -106,12 +109,20 @@ func (a *escalationAuditor) record(key escalationAuditKey, event *audit.Event) {
 	a.logger.Warnw("Dropping unaudited escalation event: too many events wait for the audit pipeline", "event", oldestEntry.event.ID)
 }
 
+// notify wakes run without blocking.
+func (a *escalationAuditor) notify() {
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
+}
+
 // specChange records escalation.created (generation 1) or escalation.updated
-// for a generation that has no snapshot yet and tries to emit it. It is
-// independent of status.observedGeneration, which other status writers also
-// advance. Disabled auditing is a cheap no-op. Unaccepted events are retried
-// by run.
-func (a *escalationAuditor) specChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) {
+// for a generation that has no snapshot yet; run delivers it. It never
+// enqueues itself, so a full audit queue cannot hold the reconcile worker. It
+// is independent of status.observedGeneration, which other status writers
+// also advance. Disabled auditing is a cheap no-op.
+func (a *escalationAuditor) specChange(esc *breakglassv1alpha1.BreakglassEscalation) {
 	if a == nil || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
 		return
 	}
@@ -130,12 +141,12 @@ func (a *escalationAuditor) specChange(ctx context.Context, esc *breakglassv1alp
 	a.recorded[esc.UID] = esc.Generation
 	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation}, event)
 	a.mu.Unlock()
-	a.flush(ctx)
+	a.notify()
 }
 
-// deletion records escalation.deleted for an observed delete. It does not
-// emit: it runs in the informer's event handler and must not block, so run
-// delivers it. Earlier snapshots of the escalation stay pending.
+// deletion records escalation.deleted for an observed delete; run delivers
+// it. It runs in the informer's event handler and never blocks. Earlier
+// snapshots of the escalation stay pending.
 func (a *escalationAuditor) deletion(obj client.Object) {
 	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
 	if a == nil || !ok || a.emitter.ConfigurationState() == audit.ConfigurationDisabled {
@@ -147,6 +158,7 @@ func (a *escalationAuditor) deletion(obj client.Object) {
 	delete(a.recorded, esc.UID)
 	a.record(escalationAuditKey{uid: esc.UID, generation: esc.Generation, deleted: true}, event)
 	a.mu.Unlock()
+	a.notify()
 }
 
 // flush tries to emit every due snapshot. It drops all snapshots while
@@ -202,7 +214,7 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 	return len(a.pending)
 }
 
-// run retries retained snapshots until ctx ends.
+// run delivers recorded snapshots and retries unaccepted ones until ctx ends.
 func (a *escalationAuditor) run(ctx context.Context) {
 	if a == nil {
 		return
@@ -214,6 +226,8 @@ func (a *escalationAuditor) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			a.flush(ctx)
+		case <-a.wake:
 			a.flush(ctx)
 		}
 	}

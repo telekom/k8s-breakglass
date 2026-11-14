@@ -146,7 +146,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
-	r.auditor.specChange(ctx, escalation)
+	r.auditor.specChange(escalation)
 
 	// Validate escalation configuration and references
 	now := metav1.Now()
@@ -415,7 +415,7 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	dependencyPredicate := dependencyChangePredicate()
 
 	if r.auditor != nil {
-		// Retries unaccepted escalation audit events; stops with the manager.
+		// Delivers escalation audit events; stops with the manager.
 		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 			r.auditor.run(ctx)
 			return nil

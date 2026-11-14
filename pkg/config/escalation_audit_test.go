@@ -99,6 +99,11 @@ func (h *escalationAuditHarness) reconcile() reconcile.Result {
 	return result
 }
 
+// deliver runs one delivery pass, as the audit runnable does.
+func (h *escalationAuditHarness) deliver() {
+	h.r.auditor.flush(context.Background())
+}
+
 func (h *escalationAuditHarness) bumpGeneration(generation int64) {
 	h.t.Helper()
 	esc := &breakglassv1alpha1.BreakglassEscalation{}
@@ -113,6 +118,8 @@ func TestEscalationReconcilerAuditsSpecChanges(t *testing.T) {
 	h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
 
 	require.Equal(t, reconcile.Result{}, h.reconcile())
+	require.Empty(t, capture.take(), "reconcile only records; the runnable delivers")
+	h.deliver()
 	events := capture.take()
 	require.Len(t, events, 1)
 	created := events[0]
@@ -125,10 +132,12 @@ func TestEscalationReconcilerAuditsSpecChanges(t *testing.T) {
 	require.NoError(t, audittest.Check(created))
 
 	h.reconcile()
+	h.deliver()
 	require.Empty(t, capture.take(), "an audited generation is not audited again")
 
 	h.bumpGeneration(2)
 	h.reconcile()
+	h.deliver()
 	events = capture.take()
 	require.Len(t, events, 1)
 	require.Equal(t, audit.EventEscalationUpdated, events[0].Type)
@@ -141,6 +150,7 @@ func TestEscalationReconcilerAuditsSpecChanges(t *testing.T) {
 	restarted := &escalationAuditHarness{t: t, cli: h.cli,
 		r: NewEscalationReconciler(h.cli, zap.NewNop().Sugar(), newEscalationFakeEventRecorder(10), nil, nil, 0).WithAuditEmitter(capture)}
 	restarted.reconcile()
+	restarted.deliver()
 	events = capture.take()
 	require.Len(t, events, 1)
 	require.Equal(t, "escalation/esc-uid/2", events[0].ID)
@@ -242,6 +252,34 @@ func TestEscalationAuditDoesNotHoldLockDuringEnqueue(t *testing.T) {
 	close(blocking.release)
 }
 
+// Reconciliation returns while the audit pipeline blocks enqueueing: it only
+// records the snapshot and wakes the runnable.
+func TestEscalationReconcileDoesNotWaitForAuditDelivery(t *testing.T) {
+	blocking := &blockingEmitter{release: make(chan struct{}), entered: make(chan struct{}, 1)}
+	t.Cleanup(func() { close(blocking.release) })
+	h := newEscalationAuditHarness(t, auditedEscalation(1), blocking)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go h.r.auditor.run(ctx)
+	h.bumpGeneration(2)
+	done := make(chan struct{})
+	go func() {
+		h.reconcile()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconcile waited for audit delivery")
+	}
+	select {
+	case <-blocking.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runnable was not woken to deliver the event")
+	}
+	h.reconcile() // still returns while delivery is blocked
+}
+
 type blockingEmitter struct {
 	release chan struct{}
 	entered chan struct{}
@@ -271,7 +309,7 @@ func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
 		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
 		now = now.Add(time.Millisecond)
 		if i%2 == 0 {
-			a.specChange(context.Background(), esc)
+			a.specChange(esc)
 		} else {
 			a.deletion(esc)
 		}
@@ -325,7 +363,7 @@ func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	// Without an emitter nothing happens.
 	var none *escalationAuditor
 	none.deletion(auditedEscalation(1))
-	none.specChange(context.Background(), auditedEscalation(1))
+	none.specChange(auditedEscalation(1))
 }
 
 // With the real audit.Service: no AuditConfig means disabled after the
@@ -373,6 +411,7 @@ func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
 
 	h := newEscalationAuditHarness(t, auditedEscalation(1), emitter)
 	h.reconcile()
+	h.deliver()
 	require.Contains(t, h.r.auditor.pending, escalationAuditKey{uid: "esc-uid", generation: 1}, "a dropped event stays pending")
 
 	close(block)
