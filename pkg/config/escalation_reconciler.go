@@ -55,6 +55,14 @@ type EscalationReconciler struct {
 	auditor *escalationAuditor
 }
 
+// DrainAudit delivers retained escalation audit events, bounded by
+// escalationAuditDrainTimeout. Register it with audit.Service.BeforeClose.
+func (r *EscalationReconciler) DrainAudit() {
+	ctx, cancel := context.WithTimeout(context.Background(), escalationAuditDrainTimeout)
+	defer cancel()
+	r.auditor.drain(ctx)
+}
+
 // WithAuditEmitter emits escalation.created, escalation.updated and
 // escalation.deleted audit events for observed BreakglassEscalation changes.
 func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) *EscalationReconciler {

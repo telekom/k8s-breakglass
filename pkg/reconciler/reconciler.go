@@ -256,6 +256,7 @@ func Setup(
 
 		if auditService != nil {
 			escalationReconciler.WithAuditEmitter(auditService)
+			auditService.BeforeClose(escalationReconciler.DrainAudit)
 		}
 
 		// Set reconciler in API server so it can use the cached escalation->IDP mapping.

@@ -97,6 +97,8 @@ type Service struct {
 	isolatedMultiSink  *IsolatedMultiSink
 	enabled            bool
 	configurationState ConfigurationState
+	beforeCloseMu      sync.Mutex
+	beforeClose        []func()
 	configNS           string // namespace where secrets are located (controller namespace)
 	frontendBaseURL    string // links in chat (payloadFormat slack) messages
 }
@@ -574,7 +576,23 @@ func (s *Service) GetQueuedSinkHealth() []QueuedSinkHealth {
 }
 
 // Close shuts down the audit service.
+// BeforeClose registers fn to run at the start of Close, while the pipeline
+// still accepts events, so components that hold undelivered events (retry
+// buffers, handoffs) can drain them first. fn must bound its own runtime.
+func (s *Service) BeforeClose(fn func()) {
+	s.beforeCloseMu.Lock()
+	defer s.beforeCloseMu.Unlock()
+	s.beforeClose = append(s.beforeClose, fn)
+}
+
 func (s *Service) Close() error {
+	s.beforeCloseMu.Lock()
+	hooks := s.beforeClose
+	s.beforeClose = nil
+	s.beforeCloseMu.Unlock()
+	for _, fn := range hooks {
+		fn()
+	}
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 	s.stopOnce.Do(func() {

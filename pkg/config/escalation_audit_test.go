@@ -562,3 +562,46 @@ func TestAuditConfigInitialSyncSerializesWithReconcile(t *testing.T) {
 	require.EqualValues(t, 16, calls.Load())
 	require.Zero(t, overlaps.Load(), "list/validate/reload passes must not overlap")
 }
+
+// Shutdown delivers a deletion that waits in retry backoff, and counts what
+// it cannot deliver before its deadline.
+func TestEscalationAuditDrainOnShutdown(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	capture.set(audit.ConfigurationReady, true)
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	a.deletion(auditedEscalation(5))
+	require.Equal(t, 1, a.flush(context.Background()), "rejected once: now in backoff")
+	capture.set(audit.ConfigurationReady, false)
+	r := &EscalationReconciler{auditor: a}
+	r.DrainAudit()
+	events := capture.take()
+	require.Len(t, events, 1, "the drain ignores the retry backoff")
+	require.Equal(t, "escalation/esc-uid/deleted", events[0].ID)
+	require.Empty(t, a.pending)
+
+	capture.set(audit.ConfigurationReady, true)
+	a.deletion(auditedEscalation(6))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	a.drain(ctx)
+	require.Less(t, time.Since(start), 2*time.Second, "the drain is bounded by its context")
+
+	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
+}
+
+// The drain runs from audit.Service.Close while the pipeline still accepts.
+func TestEscalationAuditDrainRunsBeforeAuditClose(t *testing.T) {
+	svc := audit.NewService(nil, nil, zap.NewNop(), "ns")
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "log"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+		}}},
+	}))
+	h := newEscalationAuditHarness(t, auditedEscalation(1), svc)
+	h.r.auditor.deletion(auditedEscalation(1))
+	svc.BeforeClose(h.r.DrainAudit)
+	require.NoError(t, svc.Close())
+	require.Empty(t, h.r.auditor.pending, "delivered before the pipeline closed")
+}

@@ -14,6 +14,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 // EscalationAuditEmitter receives escalation change audit events.
@@ -266,6 +267,40 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 	}
 	return len(a.pending)
 }
+
+// escalationAuditDrainTimeout bounds the shutdown drain of retained events.
+const escalationAuditDrainTimeout = 10 * time.Second
+
+// drain delivers every retained snapshot, ignoring retry backoff, until none
+// is left or ctx ends; it runs at shutdown before the audit service closes,
+// because a deletion cannot be reconstructed by the next process. Snapshots
+// still undelivered are counted as dropped with reason "shutdown".
+func (a *escalationAuditor) drain(ctx context.Context) {
+	if a == nil {
+		return
+	}
+	for {
+		a.mu.Lock()
+		for _, entry := range a.pending {
+			entry.next = time.Time{}
+		}
+		a.mu.Unlock()
+		left := a.flush(ctx)
+		if left == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Add(float64(left))
+			a.logger.Warnw("Escalation audit events not delivered before shutdown", "pending", left)
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// escalationAuditSink labels losses of retained escalation audit events.
+const escalationAuditSink = "escalation-audit"
 
 // run delivers recorded snapshots and retries unaccepted ones until ctx ends.
 func (a *escalationAuditor) run(ctx context.Context) {
