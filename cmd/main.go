@@ -206,6 +206,10 @@ func run() error {
 	}
 
 	system.SetLogRedaction(cfg.Server.RedactLogs)
+	escalation.SetApproverGroupCaseInsensitiveFallback(cfg.Kubernetes.ApproverGroupCaseInsensitiveFallback)
+	if cfg.Kubernetes.ApproverGroupCaseInsensitiveFallback {
+		log.Warnw("Transitional kubernetes.approverGroupCaseInsensitiveFallback is enabled: approver groups may resolve by a unique case-insensitive Keycloak match")
+	}
 	if cfg.Server.RedactLogs {
 		log.Infow("Log redaction enabled via config")
 	}
@@ -520,7 +524,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Uses combined auth + rate limiting middleware
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, sessionManager, escalationManager,
 		authMiddleware, cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).
-		WithMailService(mailService).WithAuditService(auditService)
+		WithMailService(mailService).WithAuditService(auditService).
+		WithRequireSyncedApproverGroups(cliConfig.RequireSyncedApproverGroups)
 
 	if cliConfig.DisableSessionRateLimit {
 		permissiveLimiter := ratelimit.New(ratelimit.PermissiveSessionCreationConfig())

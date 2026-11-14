@@ -51,6 +51,9 @@ type Config struct {
 	BreakglassNamespace     string
 	DisableEmail            bool
 	DisableSessionRateLimit bool
+	// RequireSyncedApproverGroups denies approval by approver groups that have
+	// not been synced yet instead of falling back to token groups.
+	RequireSyncedApproverGroups bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -196,6 +199,8 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.RequireSyncedApproverGroups, "require-synced-approver-groups", getEnvBool("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", false),
+		"Deny approval by an approver group until its members have been synced, instead of falling back to token groups")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -280,6 +285,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,
