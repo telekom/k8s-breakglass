@@ -291,4 +291,14 @@ func TestObserveEmittedOnlyAccepted(t *testing.T) {
 	require.False(t, m.TryEmitRetryable(context.Background(), event()))
 	require.False(t, m.TryEmit(context.Background(), event()))
 	require.EqualValues(t, 2, observed.Load(), "only the two accepted events are observed")
+
+	// EmitSync: a failed synchronous write is not observed, a successful one is.
+	failing := NewManager(&failingSink{name: "sync-fail"}, ManagerConfig{QueueSize: 1, WorkerCount: 1}, zap.NewNop())
+	t.Cleanup(func() { _ = failing.Close() })
+	require.Error(t, failing.EmitSync(context.Background(), event()))
+	require.EqualValues(t, 2, observed.Load(), "a failed synchronous write is not observed")
+	ok := NewManager(&testSink{name: "sync-ok"}, ManagerConfig{QueueSize: 1, WorkerCount: 1}, zap.NewNop())
+	t.Cleanup(func() { _ = ok.Close() })
+	require.NoError(t, ok.EmitSync(context.Background(), event()))
+	require.EqualValues(t, 3, observed.Load(), "a successful synchronous write is observed")
 }
