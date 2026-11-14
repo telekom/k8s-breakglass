@@ -475,8 +475,17 @@ func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
 	require.Contains(t, h.r.auditor.pending, escalationAuditKey{uid: "esc-uid", generation: 1}, "a dropped event stays pending")
 
 	close(block)
-	h.r.auditor.now = func() time.Time { return time.Now().Add(escalationAuditMaxRetry) }
-	require.Eventually(t, func() bool { return h.r.auditor.flush(context.Background()) == 0 }, 5*time.Second, 10*time.Millisecond)
+	// Make every retry due at once, so a retry that still finds the queue
+	// full while the worker drains it is not held back by the backoff.
+	retryNow := func() int {
+		h.r.auditor.mu.Lock()
+		for _, entry := range h.r.auditor.pending {
+			entry.next = time.Time{}
+		}
+		h.r.auditor.mu.Unlock()
+		return h.r.auditor.flush(context.Background())
+	}
+	require.Eventually(t, func() bool { return retryNow() == 0 }, 10*time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -632,8 +641,53 @@ func TestEscalationAuditDrainOnShutdown(t *testing.T) {
 	require.Equal(t, before+2, shutdownDrops(), "the concurrent deletion and the undelivered snapshot are counted")
 	require.NotContains(t, c.pending, escalationAuditKey{uid: "concurrent", generation: 10, deleted: true})
 
+	// An attempt in flight when the deadline passes is not counted if it is
+	// still accepted, and counted once if it is not.
+	for _, accept := range []bool{true, false} {
+		gate := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		slow := &gatedEmitter{gate: gate, entered: entered, accept: accept}
+		d := newEscalationAuditor(slow, zap.NewNop().Sugar())
+		d.deletion(auditedEscalation(11))
+		go d.flush(context.Background()) // the run loop owns the attempt
+		<-entered
+		before = shutdownDrops()
+		ctx4, cancel4 := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		d.drain(ctx4)
+		cancel4()
+		require.Equal(t, before, shutdownDrops(), "nothing is counted while the attempt is in flight")
+		close(gate)
+		want := before
+		if !accept {
+			want++
+		}
+		require.Eventually(t, func() bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return len(d.pending) == 0
+		}, 5*time.Second, 10*time.Millisecond)
+		require.Equal(t, want, shutdownDrops(), "accepted=%v", accept)
+	}
+
 	(&EscalationReconciler{}).DrainAudit() // without auditing it is a no-op
 }
+
+type gatedEmitter struct {
+	gate    chan struct{}
+	entered chan struct{}
+	accept  bool
+}
+
+func (g *gatedEmitter) TryEmit(context.Context, *audit.Event) bool {
+	select {
+	case g.entered <- struct{}{}:
+	default:
+	}
+	<-g.gate
+	return g.accept
+}
+
+func (*gatedEmitter) ConfigurationState() audit.ConfigurationState { return audit.ConfigurationReady }
 
 // The drain runs from audit.Service.Close while the pipeline still accepts.
 func TestEscalationAuditDrainRunsBeforeAuditClose(t *testing.T) {

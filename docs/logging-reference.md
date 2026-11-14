@@ -1477,7 +1477,7 @@ variable part of a concatenated message.
 | warn | `DenyPolicy validation failed` | `error`, `policy` | deny_policy_reconciler.go |
 | warn | `Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window` | `event` | escalation_audit.go |
 | warn | `Dropping unaudited escalation event: too many events wait for the audit pipeline` | `event` | escalation_audit.go |
-| warn | `Escalation audit events not delivered before shutdown` | `pending` | escalation_audit.go |
+| warn | `Escalation audit events not delivered before shutdown` | `inFlight`, `lost` | escalation_audit.go |
 | warn | `Escalation change observed after the audit shutdown drain is not audited` |  | escalation_audit.go |
 | warn | `Escalation validation failed` | `conditionType`, `error`, `escalation` | escalation_reconciler.go |
 | warn | `Failed to convert IdentityProvider, skipping` | `displayName`, `error`, `name`, `namespace` | identity_provider_loader.go |

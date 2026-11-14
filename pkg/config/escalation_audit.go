@@ -85,6 +85,9 @@ type escalationAuditor struct {
 	// stopped is set by the shutdown drain: the audit service closes next,
 	// so later changes are counted as lost instead of retained silently.
 	stopped bool
+	// abandoned is set when the drain deadline passed: an attempt still in
+	// flight then counts itself as lost if the pipeline does not accept it.
+	abandoned bool
 }
 
 func newEscalationAuditor(emitter EscalationAuditEmitter, logger *zap.SugaredLogger) *escalationAuditor {
@@ -275,6 +278,11 @@ func (a *escalationAuditor) flush(ctx context.Context) int {
 			delete(a.pending, d.key)
 			continue
 		}
+		if a.abandoned {
+			delete(a.pending, d.key)
+			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Inc()
+			continue
+		}
 		d.entry.attempts++
 		d.entry.next = now.Add(a.backoff(d.entry.attempts))
 	}
@@ -309,12 +317,31 @@ func (a *escalationAuditor) drain(ctx context.Context) {
 		}
 		select {
 		case <-ctx.Done():
-			metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Add(float64(left))
-			a.logger.Warnw("Escalation audit events not delivered before shutdown", "pending", left)
+			a.abandon()
 			return
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// abandon ends the drain at its deadline. It counts the retained snapshots
+// that are not being delivered right now; an attempt still in flight (for
+// example in the run loop) counts itself only if it is not accepted, so an
+// event that is still accepted is never counted as lost.
+func (a *escalationAuditor) abandon() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.abandoned = true
+	lost := 0
+	for key, entry := range a.pending {
+		if entry.inflight {
+			continue
+		}
+		delete(a.pending, key)
+		lost++
+	}
+	metrics.AuditEventsDropped.WithLabelValues(escalationAuditSink, "shutdown").Add(float64(lost))
+	a.logger.Warnw("Escalation audit events not delivered before shutdown", "lost", lost, "inFlight", len(a.pending))
 }
 
 // countShutdownLoss counts a change observed after the shutdown drain: the
