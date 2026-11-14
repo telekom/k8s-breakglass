@@ -29,7 +29,7 @@ const (
 
 var errCopyRejected = errors.New("copy rejected")
 
-const sanitizedError = "diagnostic-artifact-safe-copy: copy failed\n"
+const sanitizedMessage = "copy failed"
 
 // copyHook is only used by package tests.  Keeping the hook below the public
 // entry point permits deterministic mutation tests without adding any runtime
@@ -45,14 +45,19 @@ type fileMetadata struct {
 }
 
 func main() {
+	log, err := newLogger(os.Stderr, "diagnostic-artifact-safe-copy", "diagnostic-artifact-safe-copy")
+	if err != nil {
+		_, _ = io.WriteString(os.Stderr, "diagnostic-artifact-safe-copy: "+err.Error()+"\n")
+		os.Exit(2)
+	}
 	if len(os.Args) != 2 || !validRelativePath(os.Args[1]) {
-		_, _ = io.WriteString(os.Stderr, sanitizedError)
+		log.Error(sanitizedMessage)
 		os.Exit(2)
 	}
 	if err := copyFromFixedRoots(os.Args[1]); err != nil {
 		// Do not print the path or an underlying filesystem error.  The caller
 		// gets only the fixed exit status and the collector's generic failure.
-		_, _ = io.WriteString(os.Stderr, sanitizedError)
+		log.Error(sanitizedMessage)
 		os.Exit(2)
 	}
 }

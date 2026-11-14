@@ -6,20 +6,24 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/clustervalidator"
+	"go.uber.org/zap"
 )
 
 func TestParseOptionsUsesModeSpecificDefaultReport(t *testing.T) {
 	t.Setenv("VALIDATOR_MODE", "")
 	t.Setenv("VALIDATOR_REPORT_PATH", "")
 	t.Setenv("VALIDATOR_TIMEOUT", "")
-	opts, err := parseOptions([]string{"--mode", clustervalidator.ModePostUpgrade, "--timeout", "2s"})
+	opts, err := parseOptions([]string{"--mode", clustervalidator.ModePostUpgrade, "--timeout", "2s"}, io.Discard)
 	require.NoError(t, err)
 	require.Equal(t, clustervalidator.ModePostUpgrade, opts.mode)
 	require.Equal(t, "/reports/post-upgrade.json", opts.reportPath)
@@ -28,27 +32,28 @@ func TestParseOptionsUsesModeSpecificDefaultReport(t *testing.T) {
 
 func TestParseOptionsRejectsInvalidValues(t *testing.T) {
 	t.Setenv("VALIDATOR_TIMEOUT", "not-a-duration")
-	_, err := parseOptions(nil)
+	_, err := parseOptions(nil, io.Discard)
 	require.ErrorContains(t, err, "invalid --timeout")
 
 	t.Setenv("VALIDATOR_TIMEOUT", "")
-	_, err = parseOptions([]string{"--mode", "unsupported"})
+	_, err = parseOptions([]string{"--mode", "unsupported"}, io.Discard)
 	require.ErrorContains(t, err, "invalid mode")
 
 	t.Setenv("VALIDATOR_INCLUDE_TIMESTAMP", "maybe")
-	_, err = parseOptions(nil)
+	_, err = parseOptions(nil, io.Discard)
 	require.ErrorContains(t, err, "invalid VALIDATOR_INCLUDE_TIMESTAMP")
 }
 
 func TestRunHelpExitsSuccessfully(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, 0, run([]string{"--help"}, &stdout, &stderr))
+	require.Contains(t, stderr.String(), "-mode")
 }
 
 func TestWriteResultProducesContractAndExitCode(t *testing.T) {
 	var output bytes.Buffer
 	report := failureReport(clustervalidator.ModeOneTime, "configuration", "test failure", false)
-	exitCode := writeResult(report, "-", &output, &output, 1)
+	exitCode := writeResult(report, "-", &output, zap.NewNop(), 1)
 	require.Equal(t, 1, exitCode)
 	require.Contains(t, output.String(), `"apiVersion": "cluster-validator.telekom.com/v1alpha1"`)
 	require.Contains(t, output.String(), `"status": "not-ready"`)
@@ -110,4 +115,63 @@ func TestWriteReportPreservesExistingDestination(t *testing.T) {
 	contents, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, []byte("existing report"), contents)
+}
+
+// TestRunLogFormats proves the error output: plain "cluster-validator: …"
+// lines by default, and one JSON object per line with --log-format=json, also
+// for option errors.
+func TestRunLogFormats(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("LOG_FORMAT", "")
+	args := []string{"--kubeconfig", "/does/not/exist", "--report", filepath.Join(t.TempDir(), "outside", "report.json")}
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 2, run(args, &stdout, &stderr))
+	require.Regexp(t, `^cluster-validator: [^\n{]+\n$`, stderr.String())
+	want := strings.TrimSuffix(strings.TrimPrefix(stderr.String(), "cluster-validator: "), "\n")
+
+	stderr.Reset()
+	require.Equal(t, 2, run(append([]string{"--log-format=json"}, args...), &stdout, &stderr))
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Equal(t, "error", entry["level"])
+	require.Equal(t, "cluster-validator", entry["logger"])
+	require.Equal(t, want, entry["msg"])
+
+	// Option errors use the requested format too.
+	stderr.Reset()
+	require.Equal(t, 2, run([]string{"--log-format=json", "--mode", "unsupported"}, &stdout, &stderr))
+	entry = nil
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Equal(t, "error", entry["level"])
+	require.Contains(t, entry["msg"], `invalid mode "unsupported"`)
+
+	// Flag syntax errors, too: the flag package itself writes nothing.
+	stderr.Reset()
+	realStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	exitCode := run([]string{"--log-format=json", "--skip-pods=invalid"}, &stdout, &stderr)
+	os.Stderr = realStderr
+	require.NoError(t, w.Close())
+	direct, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, 2, exitCode)
+	require.Empty(t, string(direct))
+	entry = nil
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Contains(t, entry["msg"], `invalid boolean value "invalid" for -skip-pods`)
+
+	stderr.Reset()
+	t.Setenv("LOG_LEVEL", "verbose")
+	require.Equal(t, 2, run(args, &stdout, &stderr))
+	require.Contains(t, stderr.String(), `cluster-validator: invalid log level "verbose"`)
+
+	// Without a logger, both the option error and the log option error are
+	// printed.
+	stderr.Reset()
+	require.Equal(t, 2, run([]string{"--mode", "x"}, &stdout, &stderr))
+	require.Equal(t, "cluster-validator: invalid mode \"x\": must be one-time or post-upgrade\n"+
+		"cluster-validator: invalid log level \"verbose\": must be debug, info, warn or error\n", stderr.String())
 }

@@ -107,12 +107,18 @@ type artifactManifest struct {
 }
 
 func main() {
+	// No text prefix: the historical messages start with "artifact upload".
+	log, err := newLogger(os.Stderr, "diagnostic-artifact-upload", "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "artifact upload: "+err.Error())
+		os.Exit(2)
+	}
 	if len(os.Args) != 3 || os.Args[1] != "--archive" || os.Args[2] != archivePath {
-		fmt.Fprintln(os.Stderr, "artifact upload accepts only --archive /output/artifact.tar.gz")
+		log.Error("artifact upload accepts only --archive /output/artifact.tar.gz")
 		os.Exit(2)
 	}
 	if err := upload(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "artifact upload failed: %s\n", safeError(err))
+		log.Error("artifact upload failed: " + safeError(err))
 		os.Exit(1)
 	}
 }

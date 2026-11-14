@@ -851,8 +851,8 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 			// back to the restricted set.
 			session, getErr := apiClient.DebugSessions().Get(context.Background(), args[0], hintNS)
 			if getErr != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read session %s, sending the restricted security context "+
-					"(use --default-security-context=false or flags to change it): %v\n", args[0], getErr)
+				rt.warnf("could not read session %s, sending the restricted security context "+
+					"(use --default-security-context=false or flags to change it): %v", args[0], getErr)
 			}
 			policy := ephemeralPolicy(session)
 			securityContext, err := secCtx.build(cmd, policy)
