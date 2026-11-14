@@ -132,10 +132,10 @@ func acknowledgementProcessed(ds *breakglassv1alpha1.DebugSession, uid string) b
 // an outstanding cleanup residual; nothing else is ever retired. An
 // acknowledgement may retire any subset of the residuals; cleanup finishes
 // once every residual is retired. A non-empty refusal rejects without
-// evaluating. When legacyApprover is set, an approval recorded before
-// approvedByIdentities existed is compared by approvedBy alone instead of
-// being rejected.
-func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string, legacyApprover bool) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+// evaluating. When legacyIdentities is set, a session whose party identities
+// were recorded incompletely is compared by the recorded identities instead
+// of being rejected.
+func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string, legacyIdentities bool) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 	record := breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
 		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason, ProcessedAt: metav1.Now(),
 	}
@@ -148,12 +148,8 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 		return reject("%s", refusal)
 	case sessionPartyMatches(ds, ack.Spec.AcknowledgedBy):
 		return reject("four-eyes: %q is the requester, approver or a participant of this session and cannot acknowledge its cleanup", ack.Spec.AcknowledgedBy)
-	case !legacyApprover && approverIdentitiesMissing(ds):
-		return reject("four-eyes: the approval of this session predates recorded approver identities (status.approval.approvedByIdentities), " +
-			"so the acknowledging user cannot be compared with every identity of the approver")
-	case !legacyApprover && ds.Status.Approval != nil && ds.Status.Approval.ApprovedByIdentitiesIncomplete:
-		return reject("four-eyes: an approver identity (token subject or target-cluster Kubernetes user) could not be recorded at approval time " +
-			"(status.approval.approvedByIdentitiesIncomplete), so the acknowledging user cannot be compared with every identity of the approver")
+	case !legacyIdentities && partyIdentitiesIncomplete(ds) != "":
+		return reject("four-eyes: %s, so the acknowledging user cannot be compared with every identity of the session's parties", partyIdentitiesIncomplete(ds))
 	case ack.Spec.SessionUID != string(ds.UID):
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
@@ -323,26 +319,44 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 	same := func(identity string) bool {
 		return identity != "" && (strings.EqualFold(identity, user) || strings.EqualFold(unprefixed(identity), unprefixed(user)))
 	}
-	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) {
+	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) || same(ds.Spec.RequestedBySubject) {
 		return true
 	}
 	if approval := ds.Status.Approval; approval != nil && (same(approval.ApprovedBy) || slices.ContainsFunc(approval.ApprovedByIdentities, same)) {
 		return true
 	}
 	for _, participant := range ds.Status.Participants {
-		if same(participant.User) || same(participant.KubernetesUser) || same(participant.Email) {
+		if same(participant.User) || same(participant.KubernetesUser) || same(participant.Email) || same(participant.Subject) {
 			return true
 		}
 	}
 	return false
 }
 
-// approverIdentitiesMissing reports whether the session was approved before
-// the approver's identities were recorded, so four-eyes cannot compare the
-// acknowledging user with the approver's email or Kubernetes identity.
-func approverIdentitiesMissing(ds *breakglassv1alpha1.DebugSession) bool {
-	approval := ds.Status.Approval
-	return approval != nil && approval.ApprovedBy != "" && len(approval.ApprovedByIdentities) == 0
+// partyIdentitiesIncomplete names the first session party whose identities
+// were not completely recorded, or returns "". Four-eyes compares the
+// acknowledging user with every recorded identity of the requester,
+// participants and approver; an unrecorded identity (for example the token
+// subject, by which the hub API server may name the user as oidc:<sub>)
+// could otherwise acknowledge unnoticed.
+func partyIdentitiesIncomplete(ds *breakglassv1alpha1.DebugSession) string {
+	if ds.Spec.RequestedBySubject == "" {
+		return "the requester's token subject is not recorded (spec.requestedBySubject)"
+	}
+	for _, participant := range ds.Status.Participants {
+		if participant.Subject == "" {
+			return fmt.Sprintf("the token subject of participant %q is not recorded (status.participants[].subject)", participant.User)
+		}
+	}
+	if approval := ds.Status.Approval; approval != nil && approval.ApprovedBy != "" {
+		if len(approval.ApprovedByIdentities) == 0 {
+			return "the approval of this session predates recorded approver identities (status.approval.approvedByIdentities)"
+		}
+		if approval.ApprovedByIdentitiesIncomplete {
+			return "an approver identity (token subject or target-cluster Kubernetes user) could not be recorded at approval time (status.approval.approvedByIdentitiesIncomplete)"
+		}
+	}
+	return ""
 }
 
 // maxCleanupAcknowledgementRecords bounds the applied records in

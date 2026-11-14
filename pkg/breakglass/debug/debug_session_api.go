@@ -1387,6 +1387,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
 			RequestedByKubernetesUser:     kubernetesUser,
+			RequestedBySubject:            ctx.GetString("user_id"),
 			RequestedByEmail:              userEmail,
 			IdentityProviderName:          ctx.GetString("identity_provider_name"),
 			IdentityProviderIssuer:        ctx.GetString("issuer"),

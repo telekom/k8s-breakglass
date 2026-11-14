@@ -195,20 +195,26 @@ ClusterRole from a RoleBinding in the session's namespace instead.
   server may prefix usernames (for example `oidc:alice@example.com`) while
   session identities are stored unprefixed or with a spoke prefix. Group
   membership is not compared: four-eyes concerns the acting person.
-  The requester and participants are compared by username, email and
-  Kubernetes user. The approver is compared by `approvedBy` and every entry
-  of `status.approval.approvedByIdentities` (username, email, verified token
-  subject and the target-cluster Kubernetes user), which the hub records at
-  approval, because the hub API server may name the approver by any of them
-  (for example `oidc:<sub>` while the target cluster maps by email). The
-  target cluster is resolved like at session creation (ClusterConfig name or
-  tenant alias, in any namespace). A session approved before that field
-  existed, or for which an approver identity could not be recorded (token
-  subject missing or Kubernetes user unresolved,
-  `status.approval.approvedByIdentitiesIncomplete`), cannot be fully
-  compared, so its acknowledgements are rejected (fail closed) unless the
-  controller runs with `--allow-legacy-approver-cleanup-acknowledgement`,
-  which compares only the recorded identities.
+  Every party is compared by every identity the hub API server may name them
+  by, including the verified token subject (for example `oidc:<sub>` while
+  the target cluster maps users by email):
+  - the requester by username, email, Kubernetes user and
+    `spec.requestedBySubject`;
+  - each participant by username, email, Kubernetes user and
+    `status.participants[].subject`;
+  - the approver by `approvedBy` and every entry of
+    `status.approval.approvedByIdentities` (username, email, token subject and
+    the target-cluster Kubernetes user, resolved like at session creation:
+    ClusterConfig name or tenant alias, in any namespace).
+
+  If any of these identities is not recorded (a requester or participant
+  token subject is missing, the approval predates `approvedByIdentities`, or
+  `status.approval.approvedByIdentitiesIncomplete` is set), the session
+  cannot be fully compared, so its acknowledgements are rejected (fail
+  closed) unless the controller runs with
+  `--allow-legacy-identity-cleanup-acknowledgement`, which compares only the
+  recorded identities. Sessions created, joined or approved before an upgrade
+  to this version lack these identities.
 
 **Requirements.**
 
@@ -314,7 +320,7 @@ release:
 |------|-------------|----------|
 | `--disable-debug-session-unserved-kind-handling` | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` | No activation preflight; the session fails at the first create instead. |
 | `--disable-debug-session-cleanup-backoff` | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` | Fixed 5-second cleanup retries and one `debug_session.cleanup_failed` event per failed attempt. |
-| `--allow-legacy-approver-cleanup-acknowledgement` | `BREAKGLASS_ALLOW_LEGACY_APPROVER_CLEANUP_ACKNOWLEDGEMENT` | Acknowledgements for sessions approved before `approvedByIdentities` was recorded compare the approver by `approvedBy` alone instead of being rejected. |
+| `--allow-legacy-identity-cleanup-acknowledgement` | `BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT` | Acknowledgements for sessions whose requester, participant or approver identities were recorded incompletely compare only the recorded identities instead of being rejected. |
 
 The `NoMatch` create classification is not gated: it only records that a
 request which never left the client created nothing.

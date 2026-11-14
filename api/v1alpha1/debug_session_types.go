@@ -116,6 +116,12 @@ type DebugSessionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	RequestedByKubernetesUser string `json:"requestedByKubernetesUser,omitempty"`
 
+	// requestedBySubject is the requester's verified token subject (OIDC
+	// "sub"). Cleanup acknowledgements compare against it for four-eyes,
+	// because the hub API server may name the requester oidc:<sub>.
+	// +optional
+	RequestedBySubject string `json:"requestedBySubject,omitempty"`
+
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
 	// +optional
@@ -498,7 +504,7 @@ type DebugSessionApproval struct {
 	// not be recorded at approval time: the verified token subject was
 	// missing or the Kubernetes user on the target cluster could not be
 	// resolved. Cleanup acknowledgements for such a session are rejected
-	// (fail closed) unless the controller allows legacy approver comparison.
+	// (fail closed) unless the controller allows legacy identity comparison.
 	// +optional
 	ApprovedByIdentitiesIncomplete bool `json:"approvedByIdentitiesIncomplete,omitempty"`
 
@@ -533,6 +539,11 @@ type DebugSessionParticipant struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	KubernetesUser string `json:"kubernetesUser,omitempty"`
+
+	// subject is the participant's verified token subject (OIDC "sub"),
+	// compared by cleanup acknowledgement four-eyes checks.
+	// +optional
+	Subject string `json:"subject,omitempty"`
 
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.

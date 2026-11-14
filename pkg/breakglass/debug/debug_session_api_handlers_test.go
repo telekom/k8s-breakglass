@@ -5255,7 +5255,7 @@ func TestHandleApproveDebugSession_ResolvesApproverKubernetesUserLikeSessionCrea
 		t.Run(name, func(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default", Labels: map[string]string{DebugSessionLabelKey: "pending-session"}},
-				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster, RequestedBy: "requester@example.com", TemplateRef: "test-template"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster, RequestedBy: "requester@example.com", RequestedBySubject: "requester-sub", TemplateRef: "test-template"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
 					State:            breakglassv1alpha1.DebugSessionStatePendingApproval,
 					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"alice"}}},

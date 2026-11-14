@@ -652,6 +652,12 @@ spec:
                   API ownership continues to use requestedBy and its provider identity.
                 minLength: 1
                 type: string
+              requestedBySubject:
+                description: |-
+                  requestedBySubject is the requester's verified token subject (OIDC
+                  "sub"). Cleanup acknowledgements compare against it for four-eyes,
+                  because the hub API server may name the requester oidc:<sub>.
+                type: string
               requestedDuration:
                 description: |-
                   requestedDuration is the desired session duration (e.g., "2h").
@@ -1666,7 +1672,7 @@ spec:
                       not be recorded at approval time: the verified token subject was
                       missing or the Kubernetes user on the target cluster could not be
                       resolved. Cleanup acknowledgements for such a session are rejected
-                      (fail closed) unless the controller allows legacy approver comparison.
+                      (fail closed) unless the controller allows legacy identity comparison.
                     type: boolean
                   approvedByIdentityProvider:
                     description: approvedByIdentityProvider identifies the provider
@@ -2907,6 +2913,11 @@ spec:
                       - owner
                       - participant
                       - viewer
+                      type: string
+                    subject:
+                      description: |-
+                        subject is the participant's verified token subject (OIDC "sub"),
+                        compared by cleanup acknowledgement four-eyes checks.
                       type: string
                     user:
                       description: user is the username/identifier of the participant.

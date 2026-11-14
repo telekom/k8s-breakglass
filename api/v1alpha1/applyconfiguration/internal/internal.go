@@ -2322,6 +2322,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: role
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ParticipantRole
+    - name: subject
+      type:
+        scalar: string
     - name: user
       type:
         scalar: string
@@ -2384,6 +2387,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: requestedByKubernetesUser
+      type:
+        scalar: string
+    - name: requestedBySubject
       type:
         scalar: string
     - name: requestedDuration

@@ -33,7 +33,7 @@ type DebugSessionApprovalApplyConfiguration struct {
 	// not be recorded at approval time: the verified token subject was
 	// missing or the Kubernetes user on the target cluster could not be
 	// resolved. Cleanup acknowledgements for such a session are rejected
-	// (fail closed) unless the controller allows legacy approver comparison.
+	// (fail closed) unless the controller allows legacy identity comparison.
 	ApprovedByIdentitiesIncomplete *bool `json:"approvedByIdentitiesIncomplete,omitempty"`
 	// approvedAt is when the session was approved.
 	ApprovedAt *v1.Time `json:"approvedAt,omitempty"`

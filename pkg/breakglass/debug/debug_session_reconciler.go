@@ -124,8 +124,8 @@ type DebugSessionController struct {
 	recordingConnections   TerminalRecordingConnectionProvider
 	// Transitional opt-out for #1663; see WithCleanupBackoff.
 	disableCleanupBackoff bool
-	// Transitional opt-out; see WithLegacyApproverFourEyes.
-	legacyApproverFourEyes bool
+	// Transitional opt-out; see WithLegacyIdentityFourEyes.
+	legacyIdentityFourEyes bool
 	// cleanupNotBefore maps a session's namespaced name to its
 	// cleanupDeadline, the earliest next cleanup attempt,
 	// so watch events cannot bypass the requeue backoff.
@@ -158,12 +158,13 @@ func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionC
 	return c
 }
 
-// WithLegacyApproverFourEyes lets cleanup acknowledgements for sessions
-// approved before approver identities were recorded compare the approver by
-// approvedBy alone. Disabled by default: such acknowledgements are rejected
-// because the approver's email and Kubernetes identity cannot be compared.
-func (c *DebugSessionController) WithLegacyApproverFourEyes(enabled bool) *DebugSessionController {
-	c.legacyApproverFourEyes = enabled
+// WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose
+// party identities were recorded incompletely (sessions created, joined or
+// approved before every identity was recorded) compare the identities that
+// were recorded. Disabled by default: such acknowledgements are rejected
+// because the acknowledging user cannot be compared with every identity.
+func (c *DebugSessionController) WithLegacyIdentityFourEyes(enabled bool) *DebugSessionController {
+	c.legacyIdentityFourEyes = enabled
 	return c
 }
 
@@ -1424,6 +1425,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
 		User:                   ds.Spec.RequestedBy,
 		KubernetesUser:         ds.Spec.RequestedByKubernetesUser,
+		Subject:                ds.Spec.RequestedBySubject,
 		Email:                  ds.Spec.RequestedByEmail,
 		DisplayName:            ds.Spec.RequestedByDisplayName,
 		IdentityProviderName:   ds.Spec.IdentityProviderName,

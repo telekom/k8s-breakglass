@@ -78,6 +78,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			session := detail.DebugSession
 			require.Equal(t, "alice", session.Spec.RequestedBy, "API ownership identity must remain unchanged")
 			require.Equal(t, tc.want, session.Spec.RequestedByKubernetesUser)
+			require.Equal(t, "alice-sub", session.Spec.RequestedBySubject, "the requester's token subject is recorded for four-eyes")
 			// The existing API owner can still read the canonicalized session.
 			read := httptest.NewRecorder()
 			router.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/debugSessions/"+session.Name, nil))
@@ -98,6 +99,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			require.Len(t, session.Status.Participants, 1)
 			require.Equal(t, "bob", session.Status.Participants[0].User)
 			require.Equal(t, strings.Replace(tc.want, "alice", "bob", 1), session.Status.Participants[0].KubernetesUser)
+			require.Equal(t, "bob-sub", session.Status.Participants[0].Subject, "a participant's token subject is recorded for four-eyes")
 		})
 	}
 }
@@ -106,12 +108,14 @@ func TestActivationCopiesCanonicalKubernetesOwner(t *testing.T) {
 	controller, session, template, _ := newDeploymentFenceFixture(t)
 	controller.connectionLeases = nil
 	session.Spec.RequestedByKubernetesUser = "canonical-subject"
+	session.Spec.RequestedBySubject = "tester-sub"
 	require.NoError(t, controller.client.Update(context.Background(), session))
 	_, err := controller.activateSession(context.Background(), session, template, nil)
 	require.NoError(t, err)
 	require.Len(t, session.Status.Participants, 1)
 	require.Equal(t, "tester", session.Status.Participants[0].User)
 	require.Equal(t, "canonical-subject", session.Status.Participants[0].KubernetesUser)
+	require.Equal(t, "tester-sub", session.Status.Participants[0].Subject)
 }
 
 func TestActivationStartedAuditCarriesActivatedSessionUID(t *testing.T) {

@@ -123,6 +123,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	participant := breakglassv1alpha1.DebugSessionParticipant{
 		User:                   username,
 		KubernetesUser:         kubernetesUser,
+		Subject:                ctx.GetString("user_id"),
 		Email:                  userEmail,
 		IdentityProviderName:   ctx.GetString("identity_provider_name"),
 		IdentityProviderIssuer: ctx.GetString("issuer"),

@@ -687,7 +687,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
 				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			record = decideCleanupAcknowledgement(live, ack, acknowledgementActorRefusal(ack, webhookActive, webhookSince), c.legacyApproverFourEyes)
+			record = decideCleanupAcknowledgement(live, ack, acknowledgementActorRefusal(ack, webhookActive, webhookSince), c.legacyIdentityFourEyes)
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
 				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
 			}
