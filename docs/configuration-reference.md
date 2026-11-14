@@ -768,6 +768,33 @@ kubernetes:
 - After prefix stripping: `site-reliability-engineers`
 - Matched against: BreakglassEscalation `allowed.groups: ["site-reliability-engineers"]`
 
+#### `approverGroupCaseInsensitiveFallback` (Optional, transitional)
+
+Keycloak approver group sync resolves a configured approver group only by its
+exact, case-sensitive name (Keycloak exact search). Group names such as ZAM
+roles (`dttcaas-<tenant>_<scope>_<privilege>`) are distinct identities when
+they differ only in case.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+
+Setting it to `true` is a transitional opt-out for deployments whose escalations
+spell a group in a different case than Keycloak: group sync then searches
+case-insensitively and accepts a case-insensitive match when no exact match
+exists and exactly one group matches. It never restores "first match wins":
+two or more candidates always fail closed with the `ApproverGroupAmbiguous`
+event. Token-group approval (the approver's own `groups` claim) stays exact in
+both modes. Read at startup; restart the controller after changing it. Fix the
+escalation spelling and remove the setting; it will be removed in a future
+release.
+
+```yaml
+kubernetes:
+  approverGroupCaseInsensitiveFallback: false
+```
+
 #### `clusterConfigCheckInterval` (Optional)
 
 Interval for checking ClusterConfig resource validity.

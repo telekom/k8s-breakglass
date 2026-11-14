@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -125,8 +126,8 @@ func (c *Cleanup) Run() {
 func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client, namespace, cluster, userEmail, group string) error {
 	matchingLabels := client.MatchingLabels{
 		"breakglass.t-caas.telekom.com/user":    naming.ToRFC1123Label(userEmail),
-		"breakglass.t-caas.telekom.com/cluster": cluster,
-		"breakglass.t-caas.telekom.com/group":   group,
+		"breakglass.t-caas.telekom.com/cluster": naming.ToRFC1123Label(cluster),
+		"breakglass.t-caas.telekom.com/group":   naming.ToRFC1123Label(group),
 	}
 
 	sessions := &breakglassv1alpha1.BreakglassSessionList{}
@@ -140,6 +141,10 @@ func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client,
 	deletedSessions := []string{}
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
+		// Label values are lossy (lowercased, truncated); confirm the exact identity.
+		if session.Spec.Cluster != cluster || session.Spec.GrantedGroup != group {
+			continue
+		}
 		// Delete active sessions (Pending or Approved)
 		if session.Status.State == breakglassv1alpha1.SessionStatePending ||
 			session.Status.State == breakglassv1alpha1.SessionStateApproved {
@@ -154,13 +159,15 @@ func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client,
 
 	// If we deleted any sessions, wait for them to actually be gone
 	if len(deletedSessions) > 0 {
-		return waitForSessionsDeleted(ctx, cli, namespace, matchingLabels, 5*time.Second)
+		return waitForSessionsDeleted(ctx, cli, namespace, matchingLabels, deletedSessions, 5*time.Second)
 	}
 	return nil
 }
 
-// waitForSessionsDeleted polls until no active sessions exist for the given labels
-func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace string, labels client.MatchingLabels, timeout time.Duration) error {
+// waitForSessionsDeleted waits until none of the named sessions is still active.
+// Only the named sessions count: sanitized label values may also select
+// unrelated sessions whose group or cluster maps to the same label.
+func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace string, labels client.MatchingLabels, names []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	pollInterval := 100 * time.Millisecond
 
@@ -173,6 +180,9 @@ func waitForSessionsDeleted(ctx context.Context, cli client.Client, namespace st
 		// Check if any active sessions remain
 		activeCount := 0
 		for i := range sessions.Items {
+			if !slices.Contains(names, sessions.Items[i].Name) {
+				continue
+			}
 			if sessions.Items[i].Status.State == breakglassv1alpha1.SessionStatePending ||
 				sessions.Items[i].Status.State == breakglassv1alpha1.SessionStateApproved {
 				activeCount++

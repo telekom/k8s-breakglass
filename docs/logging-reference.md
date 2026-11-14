@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 346 | 354 | 270 | 0 | 0 | 0 |
+| controller | 468 | 346 | 365 | 270 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -326,6 +326,7 @@ variable part of a concatenated message.
 | warn | `OpenTelemetry initialization failed, tracing disabled` | `error` | main.go |
 | warn | `OpenTelemetry shutdown error` | `error` | main.go |
 | warn | `Session creation rate limiter disabled via --disable-session-rate-limit flag; do not use in production` |  | main.go |
+| warn | `Transitional kubernetes.approverGroupCaseInsensitiveFallback is enabled: approver groups may resolve by a unique case-insensitive Keycloak match` |  | main.go |
 | warn | `artifact storage shutdown error` | `error` | main.go |
 | error | `background component failed, shutting down: %s` |  | main.go |
 
@@ -696,6 +697,7 @@ variable part of a concatenated message.
 | info | `stopping pending session expiry because context is cancelled` | `error` | expire_pending_sessions.go |
 | info | `stopping scheduled session activation because context is cancelled` | `error` | scheduled_activation.go |
 | warn | `Approval authorized on UNVERIFIED groups: cluster group lookup failed and the JWT-claim group fallback was load-bearing for this decision` | `approver`†, `cluster`, `identityProvider`†, `matchedGroup`†, `remediation`, `session` | session_controller_approval_utils.go |
+| warn | `Approval by an unsynced approver group denied (--require-synced-approver-groups)` | `escalation`, `group`†, `session` | session_controller_approval_utils.go |
 | warn | `Approver authenticated with disallowed identity provider` | `allowedIdentityProviderCount`, `approver`†, `escalation`, `identityProvider`† | session_controller_approval_utils.go |
 | warn | `Approver email does not match allowed domains for escalation` | `allowedDomains`, `approver`†, `escalation` | session_controller_approval_utils.go |
 | warn | `Approver group has too many members, truncating` | `escalation`, `group`†, `limit`, `originalCount` | session_request_helpers.go |
@@ -1262,11 +1264,12 @@ variable part of a concatenated message.
 | info | `Updating escalation status with resolved group members` | `escalation`, `groupCount` | escalation_status_updater.go |
 | warn | `Configured Keycloak group disappeared during lookup` | `error`, `group`† | escalation_status_updater.go |
 | warn | `Configured Keycloak group was not found` | `group`† | escalation_status_updater.go |
+| warn | `Configured approver group is ambiguous; removed cached members from escalation status` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `Configured approver group resolved but has no members` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `Configured approver group was not found; removed stale members from escalation status` | `escalation`, `group`† | escalation_status_updater.go |
 | warn | `EscalationManager: configLoader not set, falling back to disk read (performance impact)` |  | escalation_manager.go |
 | warn | `Failed to create resolver for IDP` | `escalation`, `idp` | escalation_status_updater.go |
-| warn | `Failed to load IDPs for auto-detection, falling back to legacy mode` | `error`, `escalation` | escalation_status_updater.go |
+| warn | `Failed to load IDPs for auto-detection; keeping the last synced approver status` | `error`, `escalation` | escalation_status_updater.go |
 | warn | `Failed to load system cert pool; only the custom CA will be trusted` | `error` | escalation_status_updater.go |
 | warn | `Failed to parse CA certificate PEM; falling back to system certificates` | `baseURL`, `realm` | escalation_status_updater.go |
 | warn | `Failed to resolve group members from IDP` | `error`, `escalation`, `group`†, `idp` | escalation_status_updater.go |
@@ -1292,7 +1295,7 @@ variable part of a concatenated message.
 | error | `Failed updating escalation group sync condition` | `error`, `escalation` | escalation_status_updater.go |
 | error | `Failed updating escalation status` | `error`, `escalation` | escalation_status_updater.go |
 | error | `Keycloak client rejected InsecureSkipVerify=true; configure CertificateAuthority instead` | `baseURL`, `realm` | escalation_status_updater.go |
-| error | `Keycloak group search returned a group without an ID` | `error`, `group`† | escalation_status_updater.go |
+| error | `Keycloak group search returned an unusable match` | `error`, `group`† | escalation_status_updater.go |
 | error | `Keycloak group sync disabled because InsecureSkipVerify=true is not supported` | `baseURL`, `realm` | escalation_status_updater.go |
 | error | `Keycloak groups search failed` | `endpoint`, `error`, `errorType`, `group`†, `params`, `tokenLen` | escalation_status_updater.go |
 | error | `Keycloak members fetch failed` | `endpoint`, `error`, `errorType`, `group`†, `groupID`†, `tokenLen` | escalation_status_updater.go |
@@ -1325,7 +1328,7 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `CLI Configuration` | `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_email`†, `disable_session_rate_limit`, `disable_traffic_mirror`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
+| info | `CLI Configuration` | `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_email`†, `disable_session_rate_limit`, `disable_traffic_mirror`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
 | warn | (dynamic) |  | cli.go |
 
 #### `pkg/cluster`
@@ -1475,6 +1478,10 @@ variable part of a concatenated message.
 | warn | `BreakglassEscalation failed structural validation` | `errors`, `name` | escalation_reconciler.go |
 | warn | `DebugPodTemplate validation failed` | `errors`, `template` | debug_pod_template_reconciler.go |
 | warn | `DenyPolicy validation failed` | `error`, `policy` | deny_policy_reconciler.go |
+| warn | `Dropping unaudited escalation event: the audit pipeline did not accept it within the retention window` | `event` | escalation_audit.go |
+| warn | `Dropping unaudited escalation event: too many events wait for the audit pipeline` | `event` | escalation_audit.go |
+| warn | `Escalation audit events not delivered before shutdown` | `inFlight`, `lost` | escalation_audit.go |
+| warn | `Escalation change observed after the audit shutdown drain is not audited` |  | escalation_audit.go |
 | warn | `Escalation validation failed` | `conditionType`, `error`, `escalation` | escalation_reconciler.go |
 | warn | `Failed to convert IdentityProvider, skipping` | `displayName`, `error`, `name`, `namespace` | identity_provider_loader.go |
 | warn | `Failed to fetch BreakglassEscalation for validation` | `error` | escalation_reconciler.go |
@@ -1505,6 +1512,7 @@ variable part of a concatenated message.
 | warn | `Health check timeout` |  | mail_provider_reconciler.go |
 | warn | `IdentityProvider failed structural validation, skipping reconciliation` | `errors`, `name` | identity_provider_reconciler.go |
 | warn | `IdentityProvider not found - controller will start with limited functionality` | `error`, `note` | identity_provider_loader.go |
+| warn | `Initial AuditConfig sync failed; retrying` | `error`, `retryIn` | audit_config_reconciler.go |
 | warn | `MailProvider failed structural validation, skipping reconciliation` | `errors` | mail_provider_reconciler.go |
 | warn | `MailProvider has DisableTLS enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
 | warn | `MailProvider has InsecureSkipVerify enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
@@ -1800,6 +1808,8 @@ variable part of a concatenated message.
 | info | `webhook server exited normally (this should not happen during normal operation)` |  | manager.go |
 | warn | `ActivityTracker at capacity, evicting oldest entry to make room` | `evicted`, `maxEntries`, `newSession` | activity_tracker.go |
 | warn | `Cluster not registered for Breakglass` | `cluster` | authorize_helpers.go |
+| warn | `Dropping debug_session.attached audit event: handoff buffer is full` | `session` | controller.go |
+| warn | `Dropping debug_session.attached audit event: the audit pipeline is unavailable` | `session` | controller.go |
 | warn | `Effective issuer index unavailable; using compatibility lookup` | `error` | controller.go |
 | warn | `Failed to fetch pod for security evaluation` | `error`, `namespace`, `pod` | authorize_helpers.go |
 | warn | `Failed to list IdentityProviders for IDP hint` | `error` | controller.go |
@@ -1814,6 +1824,7 @@ variable part of a concatenated message.
 | warn | `Unable to load target cluster rest.Config for SAR; skipping session SAR checks` | `error` | authorize_helpers.go |
 | warn | `Unrecognised impersonation verb allowed to proceed because denyUnrecognisedVerbs is disabled on this ClusterConfig; constrained impersonation may be granted without breakglass evaluation` | `cluster`, `verb` | authorize_impersonation.go |
 | warn | `Webhook client certificate does not name the requested cluster` | `cluster`, `dnsNames`, `subjectCN`† | controller.go |
+| warn | `debug_session.attached handoff not drained before shutdown deadline` | `pending` | controller.go |
 | warn | `session SAR error` | `error`, `group`† | controller.go |
 | error | `Discarding activity entry after max retries` | `count`, `retries`, `session` | activity_tracker.go |
 | error | `Failed to count escalations for deny response` | `error` | authorize_helpers.go |

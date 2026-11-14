@@ -121,6 +121,21 @@ func declaredEventTypes(t *testing.T) []string {
 	return types
 }
 
+func collectEmittingHelpers(file *ast.File, consts map[string]string, helpers map[string][]string) {
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || fn.Name.Name == "Emit" || fn.Name.Name == "EmitSync" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && consts[id.Name] != "" {
+				helpers[fn.Name.Name] = append(helpers[fn.Name.Name], consts[id.Name])
+			}
+			return true
+		})
+	}
+}
+
 const auditImportPath = "github.com/telekom/k8s-breakglass/pkg/audit"
 
 // emittedEventTypes returns the event types that production code can emit:
@@ -130,20 +145,13 @@ func emittedEventTypes(t *testing.T) map[string]bool {
 	t.Helper()
 	consts := declaredEventConsts(t)
 	fset := token.NewFileSet()
-	manager, err := parser.ParseFile(fset, "manager.go", nil, 0)
-	require.NoError(t, err)
+	// Emitting helpers: Manager methods and the event builders. Classifier
+	// functions (types.go) name every type and are not emitters.
 	helpers := map[string][]string{}
-	for _, decl := range manager.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv == nil || fn.Body == nil || fn.Name.Name == "Emit" || fn.Name.Name == "EmitSync" {
-			continue
-		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && consts[id.Name] != "" {
-				helpers[fn.Name.Name] = append(helpers[fn.Name.Name], consts[id.Name])
-			}
-			return true
-		})
+	for _, name := range []string{"manager.go", "security_events.go"} {
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+		collectEmittingHelpers(file, consts, helpers)
 	}
 	emitted := map[string]bool{}
 	for _, root := range []string{"../../cmd", "../../internal", "../../pkg", "../../api"} {

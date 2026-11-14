@@ -97,6 +97,9 @@ type Service struct {
 	isolatedMultiSink  *IsolatedMultiSink
 	enabled            bool
 	configurationState ConfigurationState
+	beforeCloseMu      sync.Mutex
+	beforeClose        []func()
+	beforeCloseOnce    sync.Once
 	configNS           string // namespace where secrets are located (controller namespace)
 	frontendBaseURL    string // links in chat (payloadFormat slack) messages
 }
@@ -386,15 +389,67 @@ func managerEventTypeFilters(configs []*breakglassv1alpha1.AuditConfig) ([]strin
 
 // Emit sends an audit event asynchronously.
 func (s *Service) Emit(ctx context.Context, event *Event) {
+	s.TryEmit(ctx, event)
+}
+
+// EmitResult is the outcome of TryEmitResult.
+type EmitResult int
+
+const (
+	// EmitAccepted: queued, or intentionally filtered or sampled.
+	EmitAccepted EmitResult = iota
+	// EmitDropped: the running pipeline dropped the event and counted it in
+	// breakglass_audit_events_dropped_total.
+	EmitDropped
+	// EmitNoPipeline: no pipeline took the event (not configured yet,
+	// disabled, closed, or between two pipelines during a reload). Nothing
+	// counted the loss; a caller that does not retry should.
+	EmitNoPipeline
+)
+
+// TryEmit is Emit that reports whether the event was accepted (queued, or
+// intentionally filtered or sampled). It returns false when no pipeline is
+// running or the event was dropped, so the caller can retry it.
+func (s *Service) TryEmit(ctx context.Context, event *Event) bool {
+	return s.TryEmitResult(ctx, event) == EmitAccepted
+}
+
+// TryEmitResult is TryEmit that also tells a counted drop from an uncounted
+// one.
+func (s *Service) TryEmitResult(ctx context.Context, event *Event) EmitResult {
+	return s.tryEmit(ctx, event, true)
+}
+
+// TryEmitRetryable is TryEmit for callers that keep an event they could not
+// hand over and retry it: a full queue or enqueue timeout is not counted in
+// breakglass_audit_events_dropped_total, because the event is not lost yet.
+// Such a caller counts the event itself if it finally gives up.
+func (s *Service) TryEmitRetryable(ctx context.Context, event *Event) bool {
+	return s.tryEmit(ctx, event, false) == EmitAccepted
+}
+
+func (s *Service) tryEmit(ctx context.Context, event *Event, countDrops bool) EmitResult {
 	m := s.currentManager()
-	if m == nil || m.Emit(ctx, event) {
-		return
+	if m == nil {
+		return EmitNoPipeline
+	}
+	switch m.emit(ctx, event, countDrops) {
+	case emitAccepted:
+		return EmitAccepted
+	case emitDropped:
+		return EmitDropped
 	}
 	// A reload replaced the Manager between the read and the enqueue: hand
 	// the event to the new one once instead of losing it.
 	if next := s.currentManager(); next != nil && next != m {
-		next.Emit(ctx, event)
+		switch next.emit(ctx, event, countDrops) {
+		case emitAccepted:
+			return EmitAccepted
+		case emitDropped:
+			return EmitDropped
+		}
 	}
+	return EmitNoPipeline
 }
 
 // currentManager returns the enabled Manager without holding s.mu during the
@@ -561,8 +616,28 @@ func (s *Service) GetQueuedSinkHealth() []QueuedSinkHealth {
 	return s.isolatedMultiSink.Health()
 }
 
+// BeforeClose registers fn to run at the start of Close, while the pipeline
+// still accepts events, so components that hold undelivered events (retry
+// buffers, handoffs) can drain them first. fn must bound its own runtime.
+func (s *Service) BeforeClose(fn func()) {
+	s.beforeCloseMu.Lock()
+	defer s.beforeCloseMu.Unlock()
+	s.beforeClose = append(s.beforeClose, fn)
+}
+
 // Close shuts down the audit service.
 func (s *Service) Close() error {
+	// sync.Once blocks concurrent callers until the hooks finished, so an
+	// overlapping Close cannot tear the pipeline down under a running drain.
+	s.beforeCloseOnce.Do(func() {
+		s.beforeCloseMu.Lock()
+		hooks := s.beforeClose
+		s.beforeClose = nil
+		s.beforeCloseMu.Unlock()
+		for _, fn := range hooks {
+			fn()
+		}
+	})
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 	s.stopOnce.Do(func() {

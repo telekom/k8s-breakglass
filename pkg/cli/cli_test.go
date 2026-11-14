@@ -374,6 +374,22 @@ func TestParse_DisableSessionRateLimit_FlagOverridesEnv(t *testing.T) {
 		"CLI flag --disable-session-rate-limit should override BREAKGLASS_DISABLE_SESSION_RATE_LIMIT=false")
 }
 
+func TestParse_RequireSyncedApproverGroups(t *testing.T) {
+	for _, tt := range []struct {
+		env  string
+		args []string
+		want bool
+	}{
+		{want: false},
+		{args: []string{"--require-synced-approver-groups"}, want: true},
+		{env: "true", want: true},
+		{env: "true", args: []string{"--require-synced-approver-groups=false"}, want: false},
+	} {
+		t.Setenv("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", tt.env)
+		assert.Equal(t, tt.want, parseWithArgs(t, tt.args).RequireSyncedApproverGroups, "env %q args %v", tt.env, tt.args)
+	}
+}
+
 func TestParse_EnableControllers_Default(t *testing.T) {
 	t.Setenv("ENABLE_CONTROLLERS", "")
 

@@ -52,6 +52,9 @@ type Config struct {
 	DisableEmail            bool
 	DisableSessionRateLimit bool
 	DisableTrafficMirror    bool
+	// RequireSyncedApproverGroups denies approval by approver groups that have
+	// not been synced yet instead of falling back to token groups.
+	RequireSyncedApproverGroups bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -199,6 +202,8 @@ func Parse() *Config {
 		"Disable per-user session creation rate limiting (for testing and development only)")
 	flag.BoolVar(&config.DisableTrafficMirror, "disable-traffic-mirror", getEnvBool("BREAKGLASS_DISABLE_TRAFFIC_MIRROR", false),
 		"Refuse new trafficMirror debug sessions; existing mirrors are still removed")
+	flag.BoolVar(&config.RequireSyncedApproverGroups, "require-synced-approver-groups", getEnvBool("BREAKGLASS_REQUIRE_SYNCED_APPROVER_GROUPS", false),
+		"Deny approval by an approver group until its members have been synced, instead of falling back to token groups")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -284,6 +289,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
 		"disable_traffic_mirror", c.DisableTrafficMirror,
+		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,
