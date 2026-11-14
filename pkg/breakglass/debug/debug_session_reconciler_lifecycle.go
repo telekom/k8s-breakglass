@@ -772,10 +772,11 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		ds.ResourceVersion = patched.ResourceVersion
 		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
 		if recorded && !acknowledgementProcessed(ds, record.UID) {
-			// The record was written but is absent: the API server pruned the field: the DebugSession CRD predates
-			// this controller. The retirement persisted and the
-			// acknowledgement keeps its provenance; only the session record
-			// and the CleanupAcknowledged reason are lost.
+			// The record was written but is absent, so the API server pruned
+			// the field because the DebugSession CRD predates this
+			// controller. The retirement persisted and the acknowledgement
+			// keeps its provenance; only the session record and the
+			// CleanupAcknowledged reason are lost.
 			c.crdOutdatedOnce.Do(func() {
 				log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
 			})

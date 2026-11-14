@@ -594,11 +594,11 @@ bgctl debug session terminate <session>
 #    cleanup is not failing.
 #    kubectl wait fails with "no matching resources found" when there are no
 #    sessions, so it runs only if sessions exist. A session whose cleanup
-#    failed (CleanupFailed=True) never becomes CleanupComplete on its own, so
-#    the wait then runs into its timeout; use the check below.
-if [ -n "$(kubectl get debugsessions -A -o name)" ]; then
-  kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
-fi
+#    failed (CleanupFailed=True) does not become CleanupComplete until a retry
+#    succeeds or its residuals are acknowledged, so the wait may run into its
+#    timeout; use the check below.
+sessions=$(kubectl get debugsessions -A -o name)
+[ -z "$sessions" ] || kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
 # If the wait times out, list the sessions that are not done yet:
 kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
 # For a session with CLEANUP_FAILED=True, verify its residual resources are
