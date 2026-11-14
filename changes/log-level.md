@@ -18,6 +18,12 @@ section: Upgrade notes
   `error`, `cid`, `method` and `path`, without the request dump that included
   the request headers. client-go (klog) and Go standard-library log output now
   goes through the controller logger and uses `--log-format`.
+- `bgctl` and `cluster-validator` take `--log-level` and `--log-format`
+  (`LOG_LEVEL`, `LOG_FORMAT`). `bgctl` logs to stderr at `warn` in the
+  `console` format by default; `--verbose` now means `--log-level=debug`, and
+  its request lines use the logger format instead of `[DEBUG] [bgctl] …`.
+  `cluster-validator` keeps its `cluster-validator: <error>` output (format
+  `text`) by default.
 - The controller no longer samples its logs. The `json` format used to keep
   only the first 100 identical lines per second and then every 100th, which
   dropped repeated authorization decisions and `audit_event` lines. Lines of
@@ -29,3 +35,7 @@ section: Upgrade notes
   `http_request` line is also written when a handler panics. The request mail
   subject (requester and group) is logged only as `subjectLength`. gRPC
   warnings and errors go through the controller logger.
+- The node-maintenance `kexec-action`, `network-action` and `service-action`
+  and the artifact collector `copier` and `uploader` read `LOG_LEVEL` and
+  `LOG_FORMAT`. `LOG_FORMAT=json` writes their error line as JSON; the default
+  output is unchanged.

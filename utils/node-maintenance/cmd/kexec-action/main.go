@@ -65,13 +65,18 @@ type system interface {
 }
 
 func main() {
-	req, err := parseRequest(os.Args[1:])
+	log, err := newLogger(os.Stderr, "kexec-action", "kexec-action")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "kexec-action: %v\n", err)
 		os.Exit(2)
 	}
+	req, err := parseRequest(os.Args[1:])
+	if err != nil {
+		log.Error(err.Error())
+		os.Exit(2)
+	}
 	if err := run(hostSystem{}, req, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "kexec-action: %v\n", err)
+		log.Error(err.Error())
 		os.Exit(1)
 	}
 }
