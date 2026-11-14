@@ -883,7 +883,8 @@
         },
         "name": {
           "type": "string",
-          "description": "Resource name."
+          "description": "Resource name. Can be a user, group or service account identity: for resource.impersonate it is the impersonated identity, and for access.*, access.denied.policy and pod_security.* decisions on users, groups, serviceaccounts, uids or userextras it is the requested identity.",
+          "x-pii": true
         },
         "namespace": {
           "type": "string",

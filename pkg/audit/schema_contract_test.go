@@ -255,6 +255,29 @@ func TestAuditSchemaEnvelopeMatchesGoTypes(t *testing.T) {
 	require.Equal(t, jsonFields(reflect.TypeFor[RequestContext]()), schemaFields(doc.Defs["requestContext"].Properties))
 }
 
+// Fields that can carry personal data are marked x-pii, including
+// target.name, which holds the impersonated or requested identity of
+// impersonation and identity-resource decisions.
+func TestAuditSchemaMarksPersonalData(t *testing.T) {
+	var doc struct {
+		Defs map[string]struct {
+			Properties map[string]struct {
+				PII bool `json:"x-pii"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	require.NoError(t, json.Unmarshal(auditv1.Schema, &doc))
+	for def, fields := range map[string][]string{
+		"actor":         {"user", "groups", "sourceIP"},
+		"target":        {"name"},
+		"impersonation": {"identityName", "requestorUID"},
+	} {
+		for _, field := range fields {
+			require.True(t, doc.Defs[def].Properties[field].PII, "%s.%s must be marked x-pii", def, field)
+		}
+	}
+}
+
 // The Manager's helper emitters produce events that validate strictly: every
 // details key they write is declared in the schema.
 func TestAuditSchemaManagerEmittersProduceValidEvents(t *testing.T) {

@@ -1517,6 +1517,125 @@ func TestReloadingTLSConfig(t *testing.T) {
 	})
 }
 
+// stubWebhook stands in for the webhook controller: it echoes the cluster
+// name of /authorize/:cluster_name.
+type stubWebhook struct{}
+
+func (stubWebhook) BasePath() string { return webhookBasePath }
+func (stubWebhook) Register(rg *gin.RouterGroup) error {
+	rg.POST("/authorize/:cluster_name", func(c *gin.Context) { c.String(http.StatusOK, "authorized "+c.Param("cluster_name")) })
+	return nil
+}
+func (stubWebhook) Handlers() []gin.HandlerFunc { return nil }
+
+// TestRegisterAllWebhookListener checks which listener serves the webhook
+// routes for each server.webhook setting.
+func TestRegisterAllWebhookListener(t *testing.T) {
+	paths := []string{"/api/breakglass/webhook/authorize/prod-eu", "/breakglass/webhook/authorize/prod-eu"}
+	post := func(h http.Handler, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}")))
+		return w
+	}
+	tests := []struct {
+		name        string
+		webhook     config.ServerWebhook
+		wantMain    int
+		wantWebhook int // 0: no webhook listener
+	}{
+		{name: "unset keeps today's behaviour", wantMain: http.StatusOK},
+		{name: "both listeners", webhook: config.ServerWebhook{ListenAddress: ":8443"}, wantMain: http.StatusOK, wantWebhook: http.StatusOK},
+		{name: "disabled on main", webhook: config.ServerWebhook{ListenAddress: ":8443", DisableOnMainListener: true}, wantMain: http.StatusNotFound, wantWebhook: http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{ListenAddress: ":8080", AllowedOrigins: []string{"https://breakglass.example.com"}, Webhook: tt.webhook}}, false, &AuthHandler{})
+			t.Cleanup(s.Close)
+			require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+			for _, path := range paths {
+				w := post(s.Handler(), path)
+				assert.Equal(t, tt.wantMain, w.Code, "main listener %s: %s", path, w.Body.String())
+				if tt.wantMain == http.StatusOK {
+					assert.Equal(t, "authorized prod-eu", w.Body.String())
+				}
+			}
+			if tt.wantWebhook == 0 {
+				assert.Nil(t, s.webhookServer)
+				return
+			}
+			require.NotNil(t, s.webhookServer)
+			assert.Equal(t, ":8443", s.webhookServer.Addr)
+			for _, path := range paths {
+				w := post(s.webhookServer.Handler, path)
+				assert.Equal(t, tt.wantWebhook, w.Code, "webhook listener %s", path)
+				assert.Equal(t, "authorized prod-eu", w.Body.String())
+			}
+			// The webhook listener serves nothing else.
+			w := httptest.NewRecorder()
+			s.webhookServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+			assert.Equal(t, http.StatusNotFound, w.Code)
+		})
+	}
+}
+
+// TestWebhookListenerRequiresClusterIdentity checks that the listener puts
+// the client certificate identity check in front of the webhook when
+// requireCommonNameMatch is in effect.
+func TestWebhookListenerRequiresClusterIdentity(t *testing.T) {
+	off := false
+	verified := func(name string) *tls.ConnectionState {
+		leaf := &x509.Certificate{Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}}
+		return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+	}
+	for name, tt := range map[string]struct {
+		webhook   config.ServerWebhook
+		wantOther int
+	}{
+		"require defaults to name match": {webhook: config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire}, wantOther: http.StatusForbidden},
+		"transitional escape":            {webhook: config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire, RequireCommonNameMatch: &off}, wantOther: http.StatusOK},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{ListenAddress: ":8080", AllowedOrigins: []string{"https://breakglass.example.com"}, Webhook: tt.webhook}}, false, &AuthHandler{})
+			t.Cleanup(s.Close)
+			require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+			for cert, want := range map[string]int{"prod-eu": http.StatusOK, "prod-us": tt.wantOther} {
+				req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/prod-eu", strings.NewReader("{}"))
+				req.TLS = verified(cert)
+				w := httptest.NewRecorder()
+				s.webhookServer.Handler.ServeHTTP(w, req)
+				assert.Equal(t, want, w.Code, "certificate for %s", cert)
+			}
+		})
+	}
+}
+
+// TestListenReportsWebhookListenerFailure: a webhook port that cannot be
+// bound must surface from Listen instead of leaving a ready pod without a
+// working webhook endpoint.
+func TestListenReportsWebhookListenerFailure(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+
+	s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{
+		ListenAddress:  "127.0.0.1:0",
+		AllowedOrigins: []string{"https://breakglass.example.com"},
+		Webhook:        config.ServerWebhook{ListenAddress: taken.Addr().String()},
+	}}, false, &AuthHandler{})
+	t.Cleanup(s.Close)
+	require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+
+	done := make(chan error, 1)
+	go func() { done <- s.Listen() }()
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "webhook listener "+taken.Addr().String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("Listen did not report the bind failure")
+	}
+	require.NoError(t, s.Shutdown(context.Background()))
+}
+
 func TestParseCABundle(t *testing.T) {
 	a, b := newTestCA(t, "a"), newTestCA(t, "b")
 	both := append(append([]byte{}, a.pem...), b.pem...)
@@ -1545,4 +1664,47 @@ func TestParseCABundle(t *testing.T) {
 			assert.NotNil(t, pool)
 		})
 	}
+}
+
+// limitedStubWebhook is stubWebhook behind a limiter that admits limit
+// requests and answers 429 after that.
+type limitedStubWebhook struct {
+	stubWebhook
+	limit *int
+}
+
+func (l limitedStubWebhook) Handlers() []gin.HandlerFunc {
+	return []gin.HandlerFunc{func(c *gin.Context) {
+		if *l.limit <= 0 {
+			c.AbortWithStatus(http.StatusTooManyRequests)
+			return
+		}
+		*l.limit--
+		c.Next()
+	}}
+}
+
+// TestWebhookListenerRateLimitsRejectedIdentity: a request whose client
+// certificate names another cluster is rejected only after the SAR rate
+// limiter has counted it, so cross-cluster probing stays rate limited.
+func TestWebhookListenerRateLimitsRejectedIdentity(t *testing.T) {
+	limit := 2
+	s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{
+		ListenAddress:  ":8080",
+		AllowedOrigins: []string{"https://breakglass.example.com"},
+		Webhook:        config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire},
+	}}, false, &AuthHandler{})
+	t.Cleanup(s.Close)
+	require.NoError(t, s.RegisterAll([]APIController{limitedStubWebhook{limit: &limit}}))
+
+	leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "prod-us"}, DNSNames: []string{"prod-us"}}
+	var codes []int
+	for range 3 {
+		req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/prod-eu", strings.NewReader("{}"))
+		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+		w := httptest.NewRecorder()
+		s.webhookServer.Handler.ServeHTTP(w, req)
+		codes = append(codes, w.Code)
+	}
+	assert.Equal(t, []int{http.StatusForbidden, http.StatusForbidden, http.StatusTooManyRequests}, codes)
 }
