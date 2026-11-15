@@ -867,6 +867,23 @@ Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by d
 
 ---
 
+#### `--disable-traffic-mirror`
+
+Refuse new [traffic mirror](traffic-mirroring.md) sessions.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_TRAFFIC_MIRROR` |
+| **Example** | `--disable-traffic-mirror` |
+
+When set, the API rejects requests for `trafficMirror` templates and the
+controller does not start mirrors for already approved sessions. Cleanup and
+the verified teardown of existing mirrors still run.
+
+---
+
 #### `--require-synced-approver-groups`
 
 Deny approval through an approver group until the escalation status updater has

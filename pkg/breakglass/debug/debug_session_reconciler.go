@@ -93,6 +93,8 @@ type accountingLock struct {
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
+	// now is the controller's clock; nil means time.Now. Tests set it.
+	now                      func() time.Time
 	accountingMu             sync.Mutex
 	accountingLast           map[string]time.Time
 	accountingLocks          map[string]*accountingLock
@@ -444,9 +446,13 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		// Record deletion cleanup like any other cleanup: CleanupFailed with
 		// its audit on failure, backoff, and cleanup_recovered once it clears.
-		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupHotfix} {
+		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupTrafficMirror, c.cleanupHotfix} {
 			baseline := ds.Status.DeepCopy()
 			if err := cleanup(ctx, ds); err != nil {
+				// Terminating mirror Pods are progress, not a failed cleanup.
+				if errors.Is(err, errTrafficMirrorTeardownPending) {
+					return ctrl.Result{RequeueAfter: time.Second}, nil
+				}
 				if recordErr := c.recordCleanupOutcome(ctx, ds, baseline); recordErr != nil {
 					return ctrl.Result{}, errors.Join(err, recordErr)
 				}
@@ -642,6 +648,15 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if err := c.validateMaintenancePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		return c.failSession(ctx, ds, fmt.Sprintf("invalid node-maintenance request: %v", err))
 	}
+	if result, deferred := c.deferTrafficMirrorProvenance(ds, effectiveTemplate); deferred {
+		return result, nil
+	}
+	if err := c.validateTrafficMirrorPending(ctx, ds, effectiveTemplate, binding); err != nil {
+		if errors.Is(err, errMaintenanceTargetUnavailable) {
+			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+		}
+		return c.failSession(ctx, ds, fmt.Sprintf("invalid traffic mirror request: %v", err))
+	}
 	if err := c.validateAdmissionRecipePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		if errors.Is(err, errMaintenanceTargetUnavailable) {
 			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
@@ -792,6 +807,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.AdmissionRecipe != nil {
 		return c.handleAdmissionRecipeActive(ctx, ds)
+	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.TrafficMirror != nil {
+		return c.handleTrafficMirrorActive(ctx, ds)
 	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.Hotfix != nil {
 		return c.handleHotfixActive(ctx, ds)
@@ -994,6 +1012,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
+			if errors.Is(err, errTrafficMirrorTeardownPending) {
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
 			retryAfter := c.recordCleanupFailure(ds)
 			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
 				"error", err, "retryAfter", retryAfter)
@@ -1082,6 +1103,9 @@ func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		return true
 	}
+	if ds.Status.TrafficMirror != nil && !ds.Status.TrafficMirror.Released {
+		return true
+	}
 	if (ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted) ||
 		(ds.Status.Hotfix != nil && ds.Status.Hotfix.OperationID != "" && !ds.Status.Hotfix.Released) {
 		return true
@@ -1150,6 +1174,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
+		if errors.Is(err, errTrafficMirrorTeardownPending) {
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		}
 		retryAfter := c.recordCleanupFailure(ds)
 		log.Errorw("Failed to cleanup debug session resources", "error", err, "retryAfter", retryAfter)
 		return ctrl.Result{RequeueAfter: retryAfter}, nil
@@ -1341,7 +1368,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil {
+	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil || template.Spec.TrafficMirror != nil {
 		// Install the cleanup finalizer before acquiring any hub lease: a
 		// deletion in between would otherwise drop the session without running
 		// the finalizer branch that revokes the lease.
@@ -1415,6 +1442,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 				return c.failSession(ctx, ds, err.Error())
 			}
 			deployErr = c.deployMaintenance(ctx, ds)
+		} else if template.Spec.TrafficMirror != nil {
+			if err := maintenanceApprovers(template, binding); err != nil {
+				return c.failSession(ctx, ds, err.Error())
+			}
+			deployErr = c.deployTrafficMirror(ctx, ds)
 		} else if template.Spec.AdmissionRecipe != nil {
 			if err := admissionRecipeApprovers(template, binding); err != nil {
 				return c.failSession(ctx, ds, err.Error())
@@ -1463,6 +1495,12 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 	if template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil {
 		ds.Status.AllowedPodOperations = maintenancePodOperations()
+	}
+	if template.Spec.TrafficMirror != nil {
+		// Participants may read the capture container logs, nothing else.
+		ds.Status.AllowedPodOperations = trafficMirrorPodOperations(template.Spec.AllowedPodOperations, bindingOps)
+		ds.Status.AllowedPods = trafficMirrorAllowedPods(ds)
+		ds.Status.Message = "Traffic mirror capture Pod " + ds.Status.TrafficMirror.OperationID + trafficMirrorCaptureSuffix + " created"
 	}
 	if template.Spec.AdmissionRecipe != nil {
 		ds.Status.Message = "Admission recipe applied: " + admissionRecipeTargetsDescription(ds.Spec.AdmissionRecipe.Targets)
@@ -2145,7 +2183,8 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil) {
+	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil || template.Spec.Hotfix != nil ||
+		template.Spec.TrafficMirror != nil) {
 		return true
 	}
 	// Binding approvers replace template approvers when the field is present,

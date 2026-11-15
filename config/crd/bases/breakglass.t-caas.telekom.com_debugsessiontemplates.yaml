@@ -5531,6 +5531,122 @@ spec:
                 required:
                 - image
                 type: object
+              trafficMirror:
+                description: |-
+                  trafficMirror enables a controller-executed, session-scoped traffic
+                  mirror into a capture container instead of a rendered Pod template.
+                properties:
+                  allowedSources:
+                    description: allowedSources is the allowlist of mirrorable Pods
+                      and Node interfaces.
+                    items:
+                      description: 'TrafficMirrorSource allows one kind of source:
+                        exactly one of pod or node.'
+                      properties:
+                        interfaces:
+                          description: |-
+                            interfaces are the exact interface names that may be mirrored, for
+                            example eth0 or a Multus/SR-IOV net1 inside the Pod network namespace.
+                          items:
+                            type: string
+                          maxItems: 8
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        node:
+                          description: node allows the host interfaces of Nodes whose
+                            labels match.
+                          properties:
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: matchLabels must all match; empty allows
+                                every Node.
+                              maxProperties: 8
+                              type: object
+                          type: object
+                        pod:
+                          description: pod allows Pods in one exact namespace whose
+                            labels match.
+                          properties:
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: matchLabels must all match; at least one
+                                and at most eight labels.
+                              maxProperties: 8
+                              minProperties: 1
+                              type: object
+                            namespace:
+                              description: namespace is the exact Pod namespace.
+                              maxLength: 63
+                              type: string
+                          required:
+                          - matchLabels
+                          - namespace
+                          type: object
+                      required:
+                      - interfaces
+                      type: object
+                    maxItems: 32
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  capturePayload:
+                    description: |-
+                      capturePayload lets the capture log print decoded protocol content
+                      (for example HTTP request lines). By default the capture prints only
+                      packet headers (tcpdump -q) and captures at most 96 bytes per packet,
+                      because the log may reach node log shippers.
+                    type: boolean
+                  direction:
+                    description: direction selects the mirrored traffic of the interface
+                      (default both).
+                    enum:
+                    - ingress
+                    - egress
+                    - both
+                    type: string
+                  filter:
+                    description: |-
+                      filter is a tcpdump/BPF expression applied by the capture container.
+                      It is passed as one argument, never through a shell.
+                    maxLength: 256
+                    pattern: ^[a-zA-Z0-9 .:/()!&|=<>\[\]-]*$
+                    type: string
+                  image:
+                    description: |-
+                      image must be an immutable image that provides iproute2 (ip, tc),
+                      util-linux nsenter and tcpdump, for example the network-debug utility.
+                    pattern: ^.+@sha256:[a-f0-9]{64}$
+                    type: string
+                  maxBandwidthMbps:
+                    description: |-
+                      maxBandwidthMbps limits the mirrored copies with a token bucket on the
+                      mirror device (default 10). Excess copies are dropped; the original
+                      traffic is never shaped.
+                    format: int32
+                    maximum: 1000
+                    minimum: 1
+                    type: integer
+                  maxPackets:
+                    description: maxPackets stops the capture after this many packets
+                      (default 10000).
+                    format: int32
+                    maximum: 1000000
+                    minimum: 1
+                    type: integer
+                  snapLength:
+                    description: snapLength bounds the captured bytes per packet (default
+                      256).
+                    format: int32
+                    maximum: 65535
+                    minimum: 64
+                    type: integer
+                required:
+                - allowedSources
+                - image
+                type: object
               workloadType:
                 description: |-
                   workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).

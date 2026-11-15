@@ -97,6 +97,9 @@ type DebugSessionSpec struct {
 	// hotfix is a typed platform hotfix stage request matched against the template profile.
 	// +optional
 	Hotfix *DebugSessionHotfixRequest `json:"hotfix,omitempty"`
+	// trafficMirror is a typed mirror source matched against the template allowlist.
+	// +optional
+	TrafficMirror *TrafficMirrorRequest `json:"trafficMirror,omitempty"`
 	// cluster is the name of the target cluster.
 	// +required
 	Cluster string `json:"cluster"`
@@ -240,6 +243,9 @@ type DebugSessionStatus struct {
 	// hotfix records the plan and rollout of a hotfix session.
 	// +optional
 	Hotfix *HotfixStatus `json:"hotfix,omitempty"`
+	// trafficMirror tracks the mirror executor until its teardown is verified.
+	// +optional
+	TrafficMirror *TrafficMirrorStatus `json:"trafficMirror,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	// +optional
