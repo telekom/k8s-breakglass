@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -71,6 +73,7 @@ func deployedFixtureDeployment(t *testing.T, c *DebugSessionController, ds *brea
 	for _, ref := range live.Status.DeployedResources {
 		if ref.Kind == "Deployment" {
 			live.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+			require.NoError(t, c.client.Status().Update(ctx, live))
 			return live, ref
 		}
 	}
@@ -103,61 +106,163 @@ func TestCleanupKeepsInventoryWhenPodOwnerReadFails(t *testing.T) {
 		"the workload stays so the owner can be verified on retry")
 }
 
-// A Pod evicted with a long grace period between the sweep and the workload
-// deletion is shortened before the inventory is retired.
-func TestCleanupRechecksPodGraceAfterWorkloadDeletion(t *testing.T) {
-	for _, recheckFails := range []bool{false, true} {
-		t.Run(map[bool]string{false: "shortened", true: "recheck fails"}[recheckFails], func(t *testing.T) {
-			testCleanupRechecksPodGrace(t, recheckFails)
-		})
-	}
+// podCleanupFixture deploys the fixture Deployment and a recorded session Pod.
+// The target fakes kubelet-less termination: Pod deletes are recorded but
+// leave the Pod in place, and once evicted is set, reads report the Pod as
+// terminating with the deletion given by pending.
+type podCleanupFixture struct {
+	c          *DebugSessionController
+	live       *breakglassv1alpha1.DebugSession
+	deployment breakglassv1alpha1.DeployedResourceRef
+	target     client.Client
+	pod        *corev1.Pod
+	evicted    bool
+	pending    func() (time.Time, int64)
+	deletes    []*client.DeleteOptions
+	failDelete bool
 }
 
-func testCleanupRechecksPodGrace(t *testing.T, recheckFails bool) {
-	ctx := context.Background()
+func newPodCleanupFixture(t *testing.T) *podCleanupFixture {
+	t.Helper()
+	f := &podCleanupFixture{pending: func() (time.Time, int64) { return time.Now(), 1_000_000 }}
 	c, ds, template, target := newDeploymentFenceFixture(t)
-	live, deployment := deployedFixtureDeployment(t, c, ds, template, target)
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "recorded", Namespace: deployment.Namespace, UID: "recorded-uid",
-		Labels: map[string]string{DebugSessionLabelKey: live.Name}}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: ptr.To[int64](30)}}
-	require.NoError(t, target.Create(ctx, pod))
-	live.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{{Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID)}}
-	evicted := false
-	var podGrace *int64
+	f.c, f.target = c, target
+	f.live, f.deployment = deployedFixtureDeployment(t, c, ds, template, target)
+	f.pod = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "recorded", Namespace: f.deployment.Namespace, UID: "recorded-uid",
+		Labels: map[string]string{DebugSessionLabelKey: f.live.Name}}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: ptr.To[int64](30)}}
+	require.NoError(t, target.Create(context.Background(), f.pod))
+	f.live.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{{Namespace: f.pod.Namespace, Name: f.pod.Name, UID: string(f.pod.UID)}}
 	watching := interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{
 		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 			if err := cl.Get(ctx, key, obj, opts...); err != nil {
 				return err
 			}
-			if p, ok := obj.(*corev1.Pod); ok && evicted {
-				now := metav1.Now()
-				p.DeletionTimestamp, p.DeletionGracePeriodSeconds = &now, ptr.To[int64](1_000_000)
+			if isPod(obj) && f.evicted {
+				at, grace := f.pending()
+				obj.SetDeletionTimestamp(&metav1.Time{Time: at})
+				obj.SetDeletionGracePeriodSeconds(ptr.To(grace))
 			}
 			return nil
 		},
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if obj.GetName() == deployment.Name {
-				evicted = true
+			if obj.GetName() == f.deployment.Name {
+				f.evicted = true
 			}
-			if _, ok := obj.(*corev1.Pod); ok {
-				o := &client.DeleteOptions{}
-				o.ApplyOptions(opts)
-				podGrace = o.GracePeriodSeconds
-				if recheckFails {
-					return apierrors.NewServiceUnavailable("pods unavailable")
-				}
+			if !isPod(obj) {
+				return cl.Delete(ctx, obj, opts...)
 			}
-			return cl.Delete(ctx, obj, opts...)
+			o := &client.DeleteOptions{}
+			o.ApplyOptions(opts)
+			f.deletes = append(f.deletes, o)
+			if f.failDelete {
+				return apierrors.NewServiceUnavailable("pods unavailable")
+			}
+			return nil
 		},
 	})
 	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return watching, nil }
-	err := c.cleanupResources(ctx, live)
-	require.True(t, evicted, "the workload was deleted")
-	assert.Equal(t, ptr.To[int64](30), podGrace, "the Pod evicted after the sweep is shortened")
-	if recheckFails {
-		require.ErrorContains(t, err, "pods unavailable")
-		assert.Contains(t, live.Status.DeployedResources, deployment, "the inventory is kept for a retry")
-		assert.NotEmpty(t, live.Status.AllowedPods, "the recorded Pod UID is kept for a retry")
+	return f
+}
+
+// isPod also matches the unstructured Pods the generic cleanup deletes.
+func isPod(obj client.Object) bool {
+	if _, ok := obj.(*corev1.Pod); ok {
+		return true
 	}
+	u, ok := obj.(*unstructured.Unstructured)
+	return ok && u.GetKind() == "Pod"
+}
+
+func (f *podCleanupFixture) podResidual() breakglassv1alpha1.DeployedResourceRef {
+	return breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: f.pod.Namespace, Name: f.pod.Name, UID: string(f.pod.UID), Source: "debug-pod"}
+}
+
+func (f *podCleanupFixture) graces(t *testing.T) []*int64 {
+	t.Helper()
+	var graces []*int64
+	for _, o := range f.deletes {
+		if o.GracePeriodSeconds != nil {
+			require.NotNil(t, o.Preconditions, "explicit grace periods carry a UID precondition")
+			graces = append(graces, o.GracePeriodSeconds)
+		}
+	}
+	return graces
+}
+
+// An eviction with a huge grace period after the first cleanup pass: the
+// inventory stays, every retry shortens the deletion again, and the Pod's
+// inventory is retired only once the Pod is gone.
+func TestCleanupWaitsForEvictedPodBeforeRetiringInventory(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+
+	require.Error(t, f.c.cleanupResources(ctx, f.live))
+	require.True(t, f.evicted, "the workload was deleted")
+	assert.Equal(t, []*int64{ptr.To[int64](30)}, f.graces(t), "the eviction after the sweep is shortened")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "the terminating Pod keeps the inventory")
+	assert.True(t, cleanupConditionFailed(f.live))
+
+	f.deletes = nil
+	require.Error(t, f.c.cleanupResources(ctx, f.live))
+	assert.Contains(t, f.graces(t), ptr.To[int64](30), "the retry shortens the pending deletion again")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual())
+
+	require.NoError(t, f.target.Delete(ctx, f.pod.DeepCopy()))
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.NotContains(t, f.live.Status.DeployedResources, f.podResidual(), "retired once the Pod is gone")
+	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+}
+
+// A failed recheck keeps the Pod in the inventory as well.
+func TestCleanupKeepsPodInventoryWhenRecheckFails(t *testing.T) {
+	f := newPodCleanupFixture(t)
+	f.failDelete = true
+	require.ErrorContains(t, f.c.cleanupResources(context.Background(), f.live), "pods unavailable")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual())
+}
+
+// A Pod still terminating past its (already shortened) deletion deadline is
+// force-deleted and reported on CleanupFailed.
+func TestCleanupForceDeletesPodPastItsDeadline(t *testing.T) {
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(-podForceDeleteAfter - time.Minute), 30 }
+	require.ErrorContains(t, f.c.cleanupResources(context.Background(), f.live), "was force-deleted")
+	require.Len(t, f.graces(t), 1)
+	assert.Equal(t, ptr.To[int64](0), f.graces(t)[0], "a zero grace period with a UID precondition")
+	assert.Equal(t, f.pod.UID, *f.deletes[len(f.deletes)-1].Preconditions.UID)
+	assert.True(t, cleanupConditionFailed(f.live))
+	assert.Contains(t, f.live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, f.pod.Name)
+}
+
+// A same-name replacement of a verified Pod is a different object: it is
+// never deleted, and it does not hold the inventory.
+func TestCleanupLeavesReplacementPodAlone(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(-time.Hour), 30 }
+	replace := f.c.targetClientFactory
+	f.c.targetClientFactory = func(cfg *rest.Config) (client.Client, error) {
+		cl, err := replace(cfg)
+		return interceptor.NewClient(cl.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, inner client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				err := inner.Delete(ctx, obj, opts...)
+				if obj.GetName() == f.deployment.Name {
+					require.NoError(t, f.target.Delete(ctx, f.pod.DeepCopy()))
+					replacement := f.pod.DeepCopy()
+					replacement.ResourceVersion, replacement.UID = "", "replacement-uid"
+					require.NoError(t, f.target.Create(ctx, replacement))
+				}
+				return err
+			},
+		}), err
+	}
+	_ = f.c.cleanupResources(ctx, f.live)
+	require.True(t, f.evicted)
+	assert.Empty(t, f.graces(t), "the replacement is never deleted")
+	assert.NotContains(t, f.live.Status.DeployedResources, f.podResidual())
+	live := &corev1.Pod{}
+	require.NoError(t, f.target.Get(ctx, client.ObjectKeyFromObject(f.pod), live))
+	assert.Equal(t, "replacement-uid", string(live.UID))
 }
 
 // A Pod verified only through its owners must survive a failed recheck as a
@@ -187,9 +292,9 @@ func TestCleanupRecordsLineageVerifiedPodWhenRecheckFails(t *testing.T) {
 			if err := cl.Get(ctx, key, obj, opts...); err != nil {
 				return err
 			}
-			if p, ok := obj.(*corev1.Pod); ok && evicted {
-				now := metav1.Now()
-				p.DeletionTimestamp, p.DeletionGracePeriodSeconds = &now, ptr.To[int64](1_000_000)
+			if isPod(obj) && evicted {
+				obj.SetDeletionTimestamp(ptr.To(metav1.Now()))
+				obj.SetDeletionGracePeriodSeconds(ptr.To[int64](1_000_000))
 			}
 			return nil
 		},
@@ -197,10 +302,12 @@ func TestCleanupRecordsLineageVerifiedPodWhenRecheckFails(t *testing.T) {
 			if obj.GetName() == deployment.Name {
 				evicted = true
 			}
-			if _, ok := obj.(*corev1.Pod); ok {
+			if isPod(obj) {
 				o := &client.DeleteOptions{}
 				o.ApplyOptions(opts)
-				podGrace = o.GracePeriodSeconds
+				if o.GracePeriodSeconds != nil {
+					podGrace = o.GracePeriodSeconds
+				}
 				if failDelete {
 					return apierrors.NewServiceUnavailable("pods unavailable")
 				}
@@ -211,8 +318,8 @@ func TestCleanupRecordsLineageVerifiedPodWhenRecheckFails(t *testing.T) {
 	})
 	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return watching, nil }
 	require.ErrorContains(t, c.cleanupResources(ctx, live), "pods unavailable")
-	require.Len(t, live.Status.AllowedPods, 1)
-	assert.Equal(t, string(pod.UID), live.Status.AllowedPods[0].UID, "the verified UID is recorded for the retry")
+	assert.Contains(t, live.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod",
+		Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID), Source: "debug-pod"}, "the verified UID is kept for the retry")
 
 	failDelete, podGrace = false, nil
 	_ = c.cleanupResources(ctx, live)

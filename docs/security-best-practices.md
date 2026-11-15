@@ -599,9 +599,17 @@ and a UID precondition; copied Pods get the same treatment before they are
 deleted. An explicit shorter grace period overrides the pending one. A Pod
 counts as the session's only when its UID is recorded or it belongs to a
 tracked workload, not because of its label, and Pods that are not being
-deleted are left alone. After deleting the workloads, the same attempt
-rechecks the Pods it verified, for an eviction in between. If any step fails,
-or an owner cannot be read, cleanup keeps its inventory and retries. `--disable-debug-session-pod-grace-enforcement`
+deleted are left alone. Cleanup then waits until every Pod it verified is
+gone (NotFound, or replaced by an object with another UID; terminating is not
+gone): until then the Pods stay in the inventory as residuals, the session
+reports `CleanupFailed`, and every retry, with the cleanup backoff, shortens a
+pending deletion again, so an eviction that lands between attempts is covered
+too. A Pod still terminating two minutes after its shortened deletion
+deadline is force-deleted with a zero grace period and named on
+`CleanupFailed`. If any step fails, or an owner cannot be read, cleanup keeps
+its inventory and retries. With `--disable-debug-session-pod-grace-enforcement`
+none of this happens, and a marked Pod evicted or deleted with a long grace
+period can keep running after the session. `--disable-debug-session-pod-grace-enforcement`
 (`BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT`) turns this off.
 
 For the same reason, a Binding (which since Kubernetes 1.35 copies its labels

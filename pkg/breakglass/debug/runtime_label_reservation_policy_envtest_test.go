@@ -552,7 +552,11 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 	// Evicted after the sweep, while cleanup deletes the workloads.
 	require.NoError(t, kube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: ns},
 		DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: ptr.To(long)}}))
-	require.NoError(t, recheckPodGrace(ctx, target, verified))
+	for i := range verified {
+		present, err := settlePodDeletion(ctx, target, &verified[i], time.Now())
+		require.NoError(t, err)
+		assert.True(t, present, "%s is terminating, not gone", verified[i].Name)
+	}
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("running"), "the recheck shortens a later eviction")
 
 	// A recorded Pod replaced under the same name after the controller read it.

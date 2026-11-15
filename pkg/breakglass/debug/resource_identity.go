@@ -11,6 +11,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -725,4 +726,50 @@ func (r *readErrorRecorder) Get(ctx context.Context, key client.ObjectKey, obj c
 		r.err = errors.Join(r.err, err)
 	}
 	return err
+}
+
+// podForceDeleteAfter is how long a Pod may stay past its deletion deadline
+// before cleanup force-deletes it.
+// ponytail: fixed; make it configurable if slow kubelets need more.
+const podForceDeleteAfter = 2 * time.Minute
+
+// settlePodDeletion reports whether the verified Pod is still present, and
+// shortens its pending deletion again. "Gone" means NotFound or a different
+// UID; a Pod that is merely terminating is still present. A Pod still
+// terminating podForceDeleteAfter past its (shortened) deletion deadline is
+// force-deleted with a zero grace period, and the error records it on
+// CleanupFailed.
+func settlePodDeletion(ctx context.Context, target client.Client, pod *corev1.Pod, now time.Time) (bool, error) {
+	live := &corev1.Pod{}
+	if err := target.Get(ctx, client.ObjectKeyFromObject(pod), live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return true, fmt.Errorf("verify deletion of pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if live.UID != pod.UID {
+		return false, nil
+	}
+	if podDeletionOutlastsGrace(live) {
+		return true, shortenPendingPodDeletion(ctx, target, live)
+	}
+	if live.DeletionTimestamp == nil || now.Before(live.DeletionTimestamp.Add(podForceDeleteAfter)) {
+		return true, nil
+	}
+	uid := live.UID
+	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(0)); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+		return true, fmt.Errorf("force-delete pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return true, fmt.Errorf("pod %s/%s (uid=%s) was still terminating %s past its deletion deadline and was force-deleted", pod.Namespace, pod.Name, uid, podForceDeleteAfter)
+}
+
+// appendPodResidual keeps a still-present session Pod in the cleanup
+// inventory, unless it is already there.
+func appendPodResidual(refs []breakglassv1alpha1.DeployedResourceRef, pod *corev1.Pod) []breakglassv1alpha1.DeployedResourceRef {
+	for _, ref := range refs {
+		if ref.Kind == "Pod" && ref.Namespace == pod.Namespace && ref.Name == pod.Name && ref.UID == string(pod.UID) {
+			return refs
+		}
+	}
+	return append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID), Source: "debug-pod"})
 }

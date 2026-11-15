@@ -608,24 +608,21 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err != nil {
 		return finishCleanup(errors.Join(append(cleanupErrors, err)...))
 	}
-	// A Pod evicted with a long grace period while this attempt deletes the
-	// workloads keeps it: recheck before the inventory is retired, and keep the
-	// inventory if that fails.
+	// An eviction or delete with a long grace period can land after any
+	// sweep, and the garbage collector does not shorten it. So every Pod the
+	// sweep verified must be gone before this attempt retires its inventory;
+	// one that is still there stays in the inventory as a Pod resource, is
+	// shortened again on every retry and retired once it is gone.
 	finishWithPodGrace := func() error {
-		if err := recheckPodGrace(ctx, targetClient, sessionPods); err != nil {
-			ds.Status.DeployedResources = cleanupBaseline.DeployedResources
-			ds.Status.AllowedPods = cleanupBaseline.AllowedPods
-			// The owners may be gone now, so record the Pods verified through
-			// them: the retry recognises a Pod by its recorded UID.
-			for i := range sessionPods {
-				pod := &sessionPods[i]
-				if !slices.ContainsFunc(ds.Status.AllowedPods, func(ref breakglassv1alpha1.AllowedPodRef) bool {
-					return ref.Namespace == pod.Namespace && ref.Name == pod.Name && ref.UID == string(pod.UID)
-				}) {
-					ds.Status.AllowedPods = append(ds.Status.AllowedPods, allowedPodRefFromPod(pod, false, nil))
-				}
+		for i := range sessionPods {
+			pod := &sessionPods[i]
+			present, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
+			if err != nil {
+				cleanupErrors = append(cleanupErrors, err)
 			}
-			cleanupErrors = append(cleanupErrors, err)
+			if present {
+				ds.Status.DeployedResources = appendPodResidual(ds.Status.DeployedResources, pod)
+			}
 		}
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}

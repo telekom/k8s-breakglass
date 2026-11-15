@@ -172,8 +172,8 @@ func (c *DebugSessionController) WithPodGraceEnforcement(enabled bool) *DebugSes
 // enforcePodGrace runs on every cleanup attempt that reaches the target
 // cluster, before the tracked workloads are deleted. It shortens the pending
 // deletions of the session's Pods (see shortenTrackedPodDeletion) and returns
-// the Pods it verified, so they can be rechecked after the workloads are
-// deleted. A Pod is the session's when its UID is recorded in
+// the Pods it verified, which must be gone before cleanup retires its
+// inventory (see settlePodDeletion). A Pod is the session's when its UID is recorded in
 // status.allowedPods or its lineage to a tracked workload is verified; the
 // label alone proves nothing without the label reservation policy.
 func (c *DebugSessionController) enforcePodGrace(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) ([]corev1.Pod, error) {
@@ -203,16 +203,6 @@ func (c *DebugSessionController) enforcePodGrace(ctx context.Context, target ctr
 		errs = append(errs, shortenPendingPodDeletion(ctx, target, pod))
 	}
 	return owned, errors.Join(errs...)
-}
-
-// recheckPodGrace shortens the pending deletions of Pods verified by
-// enforcePodGrace again, for an eviction that happened in between.
-func recheckPodGrace(ctx context.Context, target ctrlclient.Client, pods []corev1.Pod) error {
-	var errs []error
-	for _, pod := range pods {
-		errs = append(errs, shortenTrackedPodDeletion(ctx, target, pod.Namespace, pod.Name, string(pod.UID)))
-	}
-	return errors.Join(errs...)
 }
 
 // WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose
