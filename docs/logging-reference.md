@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 347 | 370 | 271 | 0 | 0 | 0 |
+| controller | 468 | 347 | 371 | 271 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -1059,6 +1059,7 @@ variable part of a concatenated message.
 | warn | `Failed to parse GVK for pod template resource` | `apiVersion`, `error`, `kind` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to parse GVK for resource` | `apiVersion`, `error`, `kind` | auxiliary_resource_manager.go |
 | warn | `Failed to parse RejectDebugSession request` | `error` | debug_session_api_session_ops.go |
+| warn | `Failed to record the ReplicaSets and Jobs of debug session workloads` | `error` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to recover prepared kubectl-debug operations` | `error` | debug_session_reconciler.go |
 | warn | `Failed to release unused terminal recording reservation` | `error`, `recordingId`, `session` | terminal_recording_api.go |
 | warn | `Failed to repair optional pod template usage; periodic reconciliation will retry` | `error`, `podTemplate` | debug_session_reconciler_lifecycle.go |
@@ -1335,7 +1336,7 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `CLI Configuration` | `allow_legacy_identity_cleanup_acknowledgement`†, `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_debug_session_cleanup_backoff`, `disable_debug_session_unserved_kind_handling`, `disable_email`†, `disable_session_rate_limit`, `disable_traffic_mirror`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
+| info | `CLI Configuration` | `allow_legacy_identity_cleanup_acknowledgement`†, `breakglass_namespace`, `cluster_config_check_interval`, `config_path`, `debug`, `disable_debug_session_cleanup_backoff`, `disable_debug_session_pod_grace_enforcement`, `disable_debug_session_unserved_kind_handling`, `disable_email`†, `disable_session_rate_limit`, `disable_traffic_mirror`, `enable_api`, `enable_cleanup`, `enable_controllers`, `enable_frontend`, `enable_http2`, `enable_leader_election`, `enable_validating_webhooks`, `enable_webhooks`, `escalation_status_update_interval`, `health_probe_bind_address`, `leader_elect_id`, `leader_elect_namespace`, `log_format`, `log_level`, `metrics_bind_address`, `metrics_cert_path`, `metrics_secure`, `otel_enabled`, `otel_endpoint`, `otel_exporter`, `otel_insecure`, `otel_required`, `otel_sampling_rate`, `pod_namespace`, `require_synced_approver_groups`†, `webhook-cert-generation`, `webhook-service-name`, `webhook-validating-config-name`, `webhook_bind_address`, `webhook_cert_key`, `webhook_cert_name`, `webhook_cert_path`, `webhooks_metrics_bind_address`, `webhooks_metrics_secure` | cli.go |
 | warn | (dynamic) |  | cli.go |
 
 #### `pkg/cluster`

@@ -469,20 +469,25 @@ func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
 func TestParse_DebugSessionCleanupOptOuts(t *testing.T) {
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "")
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT", "")
 	t.Setenv("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", "")
 	cfg := parseWithArgs(t, []string{})
+	assert.False(t, cfg.DisableDebugSessionPodGraceEnforcement, "pod grace enforcement is on by default")
 	assert.False(t, cfg.AllowLegacyIdentityCleanupAcknowledgement, "incomplete identities fail closed by default")
 	assert.False(t, cfg.DisableDebugSessionUnservedKindHandling, "unserved-kind handling is on by default")
 	assert.False(t, cfg.DisableDebugSessionCleanupBackoff, "cleanup backoff is on by default")
 
-	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff", "--allow-legacy-identity-cleanup-acknowledgement"})
+	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff", "--disable-debug-session-pod-grace-enforcement", "--allow-legacy-identity-cleanup-acknowledgement"})
+	assert.True(t, cfg.DisableDebugSessionPodGraceEnforcement)
 	assert.True(t, cfg.AllowLegacyIdentityCleanupAcknowledgement)
 	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
 	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
 
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "true")
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "true")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT", "true")
 	cfg = parseWithArgs(t, []string{})
+	assert.True(t, cfg.DisableDebugSessionPodGraceEnforcement)
 	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
 	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
 }

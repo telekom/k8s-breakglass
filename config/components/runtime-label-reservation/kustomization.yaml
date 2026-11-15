@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: reserve the debug-session pod labels and annotations
+# (`breakglass.telekom.com/debug-session*`, `breakglass.telekom.com/ephemeral.*`,
+# and the MOTD hook annotation `breakglass.t-caas.telekom.com/motd-profile`)
+# for the breakglass controller, so runtime-security tools can trust them.
+#
+# Opt-in. Deploy it on every cluster where debug pods run (each target
+# cluster, and the hub if it is also a target). Requires Kubernetes 1.30+
+# (ValidatingAdmissionPolicy GA); it is not part of config/base, so clusters
+# from Kubernetes 1.24 keep working without it.
+#
+# Usage, in an overlay's kustomization.yaml:
+#
+#   components:
+#     - ../../components/runtime-label-reservation
+#
+# The default exempts the in-cluster controller ServiceAccount
+# (system:serviceaccount:breakglass-system:breakglass-manager). On a target
+# cluster, list the user the hub's ClusterConfig credentials authenticate as
+# (`kubectl auth whoami` with them; for OIDC credentials the username after
+# the API server's claim mapping and prefix), and any ServiceAccount that
+# templates impersonate. variables/1 takes groups instead of users:
+#
+#   patches:
+#     - target:
+#         kind: ValidatingAdmissionPolicy
+#         name: breakglass-runtime-label-reservation
+#       patch: |
+#         - op: replace
+#           path: /spec/variables/0/expression
+#           value: '["system:serviceaccount:breakglass-system:breakglass-manager", "oidc:breakglass@example.com"]'
+#         - op: replace
+#           path: /spec/variables/1/expression
+#           value: '["oidc:breakglass-controllers"]'
+#
+# See docs/security-best-practices.md#reserved-debug-session-labels.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - policy.yaml

@@ -126,6 +126,8 @@ type DebugSessionController struct {
 	recordingConnections   TerminalRecordingConnectionProvider
 	// Transitional opt-out for #1663; see WithCleanupBackoff.
 	disableCleanupBackoff bool
+	// Opt-out; see WithPodGraceEnforcement.
+	disablePodGraceEnforcement bool
 	// Transitional opt-out; see WithLegacyIdentityFourEyes.
 	legacyIdentityFourEyes bool
 	// cleanupNotBefore maps a session's namespaced name to its
@@ -157,6 +159,15 @@ func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSe
 // transitional escape hatch.
 func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionController {
 	c.disableCleanupBackoff = !enabled
+	return c
+}
+
+// WithPodGraceEnforcement controls whether cleanup shortens a pending
+// deletion of the session's Pods (from an eviction or a delete with a long
+// grace period) to their own terminationGracePeriodSeconds. Enabled by
+// default; disabling is an opt-out.
+func (c *DebugSessionController) WithPodGraceEnforcement(enabled bool) *DebugSessionController {
+	c.disablePodGraceEnforcement = !enabled
 	return c
 }
 
@@ -965,7 +976,7 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
-			if errors.Is(err, errTrafficMirrorTeardownPending) {
+			if cleanupInProgress(err) {
 				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			retryAfter := c.recordCleanupFailure(ds)
@@ -1127,7 +1138,7 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
-		if errors.Is(err, errTrafficMirrorTeardownPending) {
+		if cleanupInProgress(err) {
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		retryAfter := c.recordCleanupFailure(ds)
@@ -1989,7 +2000,9 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 	if c.targetClients != nil {
 		provider = c.targetClients
 	}
-	return NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
+	h := NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
+	h.disablePodGraceEnforcement = c.disablePodGraceEnforcement
+	return h
 }
 
 // bindingMatchesTemplate checks if a binding references the given template

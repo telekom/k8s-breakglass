@@ -843,6 +843,18 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 ---
 
+#### `--disable-debug-session-pod-grace-enforcement`
+
+Opt-out. By default, DebugSession cleanup tracks the session's Pods (by recorded Pod UID and by owner-reference lineage from the tracked workloads, including CronJob to Job to Pod; not by label, and not the application Pods of ephemeral-container injection; recording them before deleting their owners), shortens any pending deletion (for example from an eviction or a delete with a long grace period) to the Pod's own `terminationGracePeriodSeconds` with a UID precondition, and completes only once those Pods are gone. Waiting within the grace period is progress, not `CleanupFailed`; a Pod still terminating two minutes past its shortened deadline is force-deleted only if its Node is Ready, and is reported on `CleanupFailed` (`node-unreachable: <node>` otherwise). With this flag set, none of this happens and a debug Pod evicted with a long grace period can outlive the session. See [Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT` |
+
+---
+
 #### `--allow-legacy-identity-cleanup-acknowledgement`
 
 Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's identities (`spec.requestedByIdentities`, `status.participants[].identities`, empty without a verified token subject), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).

@@ -360,6 +360,7 @@ release:
 |------|-------------|----------|
 | `--disable-debug-session-unserved-kind-handling` | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` | No activation preflight; the session fails at the first create instead. |
 | `--disable-debug-session-cleanup-backoff` | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` | Fixed 5-second cleanup retries and one `debug_session.cleanup_failed` event per failed attempt. |
+| `--disable-debug-session-pod-grace-enforcement` | `BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT` | Cleanup no longer shortens a session Pod's pending deletion (from an eviction or a long-grace delete) to the Pod's own `terminationGracePeriodSeconds`, and no longer waits for the session's Pods to be gone before completing. |
 | `--allow-legacy-identity-cleanup-acknowledgement` | `BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT` | Acknowledgements for sessions whose requester, participant or approver identities were recorded incompletely compare only the recorded identities instead of being rejected. |
 
 The `NoMatch` create classification is not gated: it only records that a

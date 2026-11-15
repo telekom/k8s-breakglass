@@ -184,6 +184,11 @@ func (c *DebugSessionController) refreshAllowedPods(ctx context.Context, ds *bre
 		}
 	}
 
+	if !c.disablePodGraceEnforcement {
+		if err := c.recordSessionIntermediates(ctx, targetClient, ds); err != nil {
+			log.Warnw("Failed to record the ReplicaSets and Jobs of debug session workloads", "error", err)
+		}
+	}
 	ds.Status.AllowedPods = allowedPods
 	patchAuxiliaryResourceStatuses := c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0
 	if err := c.updateAuxiliaryResourceReadiness(ctx, ds, targetClient); err != nil {
@@ -552,8 +557,14 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
+	// Session Pods still terminating within their grace period, and owners
+	// whose dependents are still there: inventory, but cleanup in progress
+	// rather than failed.
+	var inProgress []breakglassv1alpha1.DeployedResourceRef
+	persisted := true
 	finishCleanup := func(operationErr error) error {
-		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline)
+		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline, inProgress...)
+		persisted = patchErr == nil
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -606,10 +617,125 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
-	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	var targetClient ctrlclient.Client
+	if c.targetClientFactory != nil {
+		targetClient, err = c.targetClientFactory(restCfg)
+	} else {
+		targetClient, err = ctrlclient.New(restCfg, ctrlclient.Options{})
+	}
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
+	}
+
+	// The session's Pods must be gone before cleanup retires their inventory:
+	// an eviction or delete with a long grace period can land at any time,
+	// and the garbage collector does not shorten it. Record them before their
+	// owners are deleted, because afterwards their lineage can no longer be
+	// verified, and shorten any pending deletion.
+	var trackedResources, sweepInputs []breakglassv1alpha1.DeployedResourceRef
+	retained := func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
+	}
+	if !c.disablePodGraceEnforcement {
+		var enforceErrs []error
+		found, err := discoverSessionPods(ctx, targetClient, append(slices.Clone(ds.Status.DeployedResources), specializedCleanupRefs(ds)...), retained)
+		if err != nil {
+			return finishCleanup(errors.Join(append(cleanupErrors, err)...))
+		}
+		before := len(ds.Status.DeployedResources)
+		for _, ref := range found.intermediates {
+			ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, ref)
+		}
+		for i := range found.pods {
+			// Beyond the cap the Pods are not recorded; the second sweep then
+			// fails closed. The owners are deleted either way.
+			if len(found.pods) <= maxTrackedSessionPods {
+				ds.Status.DeployedResources, _ = trackSessionPod(ds.Status.DeployedResources, &found.pods[i])
+			}
+			if err := shortenPendingPodDeletion(ctx, targetClient, &found.pods[i]); err != nil {
+				enforceErrs = append(enforceErrs, err)
+			}
+		}
+		if len(ds.Status.DeployedResources) > before {
+			// Persist without reclassifying the CleanupFailed condition.
+			persist := ds.DeepCopy()
+			persist.Status.Conditions = nil
+			if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, persist, cleanupBaseline, nil); err != nil {
+				return errors.Join(append(cleanupErrors, err)...)
+			}
+			ds.Status, ds.ResourceVersion = persist.Status, persist.ResourceVersion
+			cleanupBaseline = ds.Status.DeepCopy()
+		}
+		// Only enforcement errors stop the workload cleanup; earlier ones,
+		// for example from the kubectl-debug cleanup, are reported at the end.
+		if len(enforceErrs) > 0 {
+			return finishCleanup(errors.Join(append(cleanupErrors, enforceErrs...)...))
+		}
+		trackedResources = slices.Clone(ds.Status.DeployedResources)
+		sweepInputs = append(slices.Clone(trackedResources), specializedCleanupRefs(ds)...)
+	}
+	// Within their grace period, terminating Pods and owners whose dependents
+	// are still there are progress, not a failure.
+	finishWithPodGrace := func() error {
+		if !c.disablePodGraceEnforcement {
+			// Discover again from the recorded owners and Pods, for Pods
+			// created or evicted while this attempt deleted the owners.
+			found, err := discoverSessionPods(ctx, targetClient, sweepInputs, retained)
+			if err == nil && len(found.pods) > maxTrackedSessionPods {
+				for i := range found.pods {
+					if shortenErr := shortenPendingPodDeletion(ctx, targetClient, &found.pods[i]); shortenErr != nil {
+						cleanupErrors = append(cleanupErrors, shortenErr)
+					}
+				}
+				err = fmt.Errorf("pod tracking capacity exceeded: %d debug session Pods, more than %d; keeping the inventory until they are gone", len(found.pods), maxTrackedSessionPods)
+				found = sessionPodDiscovery{}
+			}
+			if err != nil {
+				// Keep every owner the sweeps started from, including those
+				// only the specialized cleanups tracked, until discovery works.
+				ds.Status.DeployedResources = trackedResources
+				for _, ref := range sweepInputs {
+					if _, creator := podCreatorKinds[ref.Kind]; creator && ref.UID != "" && !retained(ref) {
+						ref.Source = podTrackingSource
+						ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, ref)
+					}
+				}
+				cleanupErrors = append(cleanupErrors, err)
+			}
+			for _, owner := range found.progressing {
+				// Only a deleted owner whose dependents are being torn down is
+				// progress; one whose delete failed or is held stays a residual.
+				if !slices.ContainsFunc(ds.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(ref, owner) }) {
+					ds.Status.DeployedResources = append(ds.Status.DeployedResources, owner)
+					inProgress = append(inProgress, owner)
+				}
+			}
+			// A dependent held past the deadline keeps its owner as a residual.
+			for _, owner := range found.stuck {
+				ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, owner)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("dependents of %s %s/%s are held past their deletion deadline", owner.Kind, owner.Namespace, owner.Name))
+			}
+			for i := range found.pods {
+				pod := &found.pods[i]
+				state, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
+				if state == podGone {
+					continue
+				}
+				var ref breakglassv1alpha1.DeployedResourceRef
+				ds.Status.DeployedResources, ref = trackSessionPod(ds.Status.DeployedResources, pod)
+				if state == podTerminating {
+					inProgress = append(inProgress, ref)
+				} else {
+					cleanupErrors = append(cleanupErrors, err)
+				}
+			}
+		}
+		err := finishCleanup(errors.Join(cleanupErrors...))
+		if persisted && len(inProgress) > 0 && !cleanupConditionFailed(ds) {
+			return errors.Join(fmt.Errorf("%w: %d debug session resources", errDebugPodsTerminating, len(inProgress)), err)
+		}
+		return err
 	}
 
 	// Cleanup auxiliary resources first using the manager
@@ -632,13 +758,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		return finishCleanup(errors.Join(cleanupErrors...))
+		return finishWithPodGrace()
 	}
 
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	return finishCleanup(errors.Join(cleanupErrors...))
+	return finishWithPodGrace()
 }
 
 const (
@@ -830,13 +956,14 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 // inventory and audits the transition: cleanup_failed once per distinct
 // residual set, cleanup_recovered when a failure clears. Every cleanup path,
 // including deletion, uses it.
-func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus) error {
-	setCleanupCondition(ds)
+func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, inProgress ...breakglassv1alpha1.DeployedResourceRef) error {
+	setCleanupConditionExcept(ds, inProgress)
 	var previous metav1.Condition
-	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous, inProgress...); err != nil {
 		return err
 	}
 	liveWasFailed := previous.Status == metav1.ConditionTrue
+	wasRecovering := liveWasFailed || previous.Reason == cleanupRecoveringReason
 	if !c.shouldEmitAudit(ctx, ds) {
 		return nil
 	}
@@ -848,10 +975,15 @@ func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *b
 		// The condition message names the residual set. Emit once per
 		// distinct set rather than on every retry (#1663); the recovered
 		// event is the final event.
-		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
-			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+		// Compare the residual sets the two conditions name, both without
+		// the resources still in progress.
+		current := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != residualSetDigestFromMessage(current.Message) {
+			var residuals []string
+			withoutInProgress(ds, inProgress, func() { residuals = cleanupResidualIdentities(ds) })
+			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, residuals)
 		}
-	} else if liveWasFailed {
+	} else if wasRecovering && len(inProgress) == 0 {
 		auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 	}
 	return nil
@@ -870,6 +1002,98 @@ func appliedCleanupAcknowledgements(ds *breakglassv1alpha1.DebugSession) []break
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// setCleanupConditionExcept classifies the inventory without the given Pods,
+// which are still terminating within their grace period: they stay in the
+// inventory but are not residuals, because CleanupFailed means the
+// controller cannot remove something.
+func setCleanupConditionExcept(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef) {
+	recovering := cleanupRecovering(ds)
+	withoutInProgress(ds, inProgress, func() { setCleanupCondition(ds) })
+	if len(inProgress) == 0 || cleanupConditionFailed(ds) {
+		return
+	}
+	// Not failed, but not complete either. CleanupRecovering remembers an
+	// earlier failure, so cleanup_recovered is emitted only once the
+	// inventory is empty.
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	condition.Reason = cleanupInProgressReason
+	if recovering {
+		condition.Reason = cleanupRecoveringReason
+	}
+	condition.Message = fmt.Sprintf("Cleanup in progress; waiting for %d debug session resources to be removed.", len(inProgress))
+	ds.SetCondition(*condition)
+}
+
+// withoutInProgress runs fn while ds's inventories omit the given resources,
+// in every representation (deployed resources, auxiliary and pod-template
+// statuses), then restores them: they stay durable records but are not
+// residuals.
+func withoutInProgress(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef, fn func()) {
+	if len(inProgress) == 0 {
+		fn()
+		return
+	}
+	matches := func(kind, namespace, name, uid string) bool {
+		return slices.ContainsFunc(inProgress, func(p breakglassv1alpha1.DeployedResourceRef) bool {
+			return sameResource(p, breakglassv1alpha1.DeployedResourceRef{Kind: kind, Namespace: namespace, Name: name, UID: uid})
+		})
+	}
+	saved := ds.Status.DeepCopy()
+	ds.Status.DeployedResources = slices.DeleteFunc(slices.Clone(ds.Status.DeployedResources), func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return matches(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+	})
+	ds.Status.PodTemplateResourceStatuses = slices.DeleteFunc(slices.Clone(ds.Status.PodTemplateResourceStatuses), func(s breakglassv1alpha1.PodTemplateResourceStatus) bool {
+		return matches(s.Kind, s.Namespace, s.ResourceName, s.UID)
+	})
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		s := &ds.Status.AuxiliaryResourceStatuses[i]
+		// Only the matched identity counts as done; its other children
+		// stay classified.
+		if matches(s.Kind, s.Namespace, s.ResourceName, s.UID) {
+			s.Deleted = true
+		}
+		for j := range s.AdditionalResources {
+			if r := &s.AdditionalResources[j]; matches(r.Kind, r.Namespace, r.ResourceName, r.UID) {
+				r.Deleted = true
+			}
+		}
+	}
+	fn()
+	conditions := ds.Status.Conditions
+	ds.Status = *saved
+	ds.Status.Conditions = conditions
+}
+
+// specializedCleanupRefs returns the UID-backed resources that auxiliary and
+// pod-template cleanup track outside status.deployedResources, so their Pods
+// are followed too.
+func specializedCleanupRefs(ds *breakglassv1alpha1.DebugSession) []breakglassv1alpha1.DeployedResourceRef {
+	var refs []breakglassv1alpha1.DeployedResourceRef
+	for _, s := range ds.Status.AuxiliaryResourceStatuses {
+		source := "auxiliary:" + s.Name
+		refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: s.APIVersion, Kind: s.Kind, Namespace: s.Namespace, Name: s.ResourceName, UID: s.UID, Source: source})
+		for _, r := range s.AdditionalResources {
+			refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: r.APIVersion, Kind: r.Kind, Namespace: r.Namespace, Name: r.ResourceName, UID: r.UID, Source: source})
+		}
+	}
+	for _, s := range ds.Status.PodTemplateResourceStatuses {
+		refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: s.APIVersion, Kind: s.Kind, Namespace: s.Namespace, Name: s.ResourceName, UID: s.UID, Source: "pod-template"})
+	}
+	return refs
+}
+
+const (
+	cleanupInProgressReason = "CleanupInProgress"
+	cleanupRecoveringReason = "CleanupRecovering"
+)
+
+// cleanupRecovering reports whether cleanup failed before and has not
+// completed since.
+func cleanupRecovering(ds *breakglassv1alpha1.DebugSession) bool {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	return condition != nil && (condition.Status == metav1.ConditionTrue || condition.Reason == cleanupRecoveringReason)
 }
 
 func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
@@ -1066,7 +1290,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 // patchDebugSessionCleanupStatusWithTransition stores into previous (when
 // non-nil) the live CleanupFailed condition observed before the patch, or the
 // zero condition when none existed.
-func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
+func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition, inProgress ...breakglassv1alpha1.DeployedResourceRef) error {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
@@ -1117,7 +1341,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			retireIdentities(current, completed, acknowledgedAbsentReason)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
-				setCleanupCondition(current)
+				setCleanupConditionExcept(current, inProgress)
 			}
 
 			if current.Generation > 0 {

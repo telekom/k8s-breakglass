@@ -203,6 +203,11 @@ func outstandingCleanupResiduals(ds *breakglassv1alpha1.DebugSession) map[Cleanu
 		out[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}] = true
 	}
 	for _, ref := range ds.Status.DeployedResources {
+		// Copied Pods cannot be acknowledged, also once handed over to Pod
+		// tracking.
+		if ref.Source == copiedPodSource {
+			continue
+		}
 		if !utils.DebugSessionResourceIntentionallyRetained(ds, ref) && !utils.DebugSessionAuxiliaryResourceDeleted(ds, ref) {
 			add(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID)
 		}

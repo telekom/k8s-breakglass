@@ -11,6 +11,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -21,6 +22,7 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -80,6 +82,17 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 		return fmt.Errorf("verify tracked resource deletion: %w", err)
 	}
 	if remaining.GetUID() == uid {
+		// A foreign finalizer can hold the owner indefinitely. With Background
+		// propagation the garbage collector keeps its dependents (for a
+		// workload: the ReplicaSets and Pods) until the owner is gone; switching
+		// the pending delete to Foreground makes it delete them now.
+		if remaining.GetDeletionTimestamp() != nil && len(remaining.GetFinalizers()) > 0 &&
+			!slices.Contains(remaining.GetFinalizers(), metav1.FinalizerDeleteDependents) {
+			if err := target.Delete(ctx, remaining, client.Preconditions{UID: &uid},
+				client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete dependents of tracked resource with UID %s pending finalizers: %w", uid, err)
+			}
+		}
 		return fmt.Errorf("delete tracked resource with UID %s is pending finalizers", uid)
 	}
 	return nil
@@ -654,4 +667,348 @@ func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.D
 		}
 	}
 	return ""
+}
+
+// A debug container that ignores SIGTERM keeps running for the whole grace
+// period of a pending deletion, and the garbage collector does not re-delete
+// Pods that are already terminating. Session cleanup therefore shortens the
+// pending deletion of the session's Pods (for example after an eviction or a
+// delete with a long grace period) to their own terminationGracePeriodSeconds.
+
+// shortenTrackedPodDeletion shortens the pending deletion of the Pod at
+// namespace/name if it is still the recorded instance uid.
+func shortenTrackedPodDeletion(ctx context.Context, target client.Client, namespace, name, uid string) error {
+	pod := &corev1.Pod{}
+	if err := target.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if uid == "" || string(pod.UID) != uid {
+		return nil
+	}
+	return shortenPendingPodDeletion(ctx, target, pod)
+}
+
+func podGracePeriod(pod *corev1.Pod) int64 {
+	if pod.Spec.TerminationGracePeriodSeconds != nil {
+		return *pod.Spec.TerminationGracePeriodSeconds
+	}
+	return corev1.DefaultTerminationGracePeriodSeconds
+}
+
+func podDeletionOutlastsGrace(pod *corev1.Pod) bool {
+	return pod.DeletionTimestamp != nil && pod.DeletionGracePeriodSeconds != nil && *pod.DeletionGracePeriodSeconds > podGracePeriod(pod)
+}
+
+// shortenPendingPodDeletion deletes pod again with its own grace period if its
+// pending deletion is longer. An explicit shorter grace period overrides the
+// pending one; the UID precondition leaves a same-name replacement alone.
+func shortenPendingPodDeletion(ctx context.Context, target client.Client, pod *corev1.Pod) error {
+	if !podDeletionOutlastsGrace(pod) {
+		return nil
+	}
+	uid := pod.UID
+	err := target.Delete(ctx, pod, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(podGracePeriod(pod)))
+	if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+		return fmt.Errorf("shorten pending deletion of pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
+// podForceDeleteAfter is how long a Pod may stay past its deletion deadline
+// before cleanup force-deletes it.
+// ponytail: fixed; make it configurable if slow kubelets need more.
+const podForceDeleteAfter = 2 * time.Minute
+
+// errDebugPodsTerminating requeues cleanup while session Pods terminate
+// within their grace period; like a pending traffic mirror teardown it is
+// progress, not a failure.
+var errDebugPodsTerminating = errors.New("debug session Pods are terminating")
+
+// cleanupInProgress reports whether a cleanup error only means "wait".
+func cleanupInProgress(err error) bool {
+	return errors.Is(err, errTrafficMirrorTeardownPending) || errors.Is(err, errDebugPodsTerminating)
+}
+
+type podDeletionState int
+
+const (
+	podGone podDeletionState = iota
+	// podTerminating: still present, within its (shortened) grace period.
+	podTerminating
+	// podStuck: could not be verified gone, or force-deleted past its
+	// deadline; a cleanup residual.
+	podStuck
+)
+
+// settlePodDeletion moves a verified session Pod towards deletion and reports
+// where it is. "Gone" means NotFound or a different UID; a terminating Pod is
+// still present. A Pod not yet being deleted is deleted with its own grace
+// period, a longer pending deletion is shortened to it, and a Pod still
+// terminating podForceDeleteAfter past its (shortened) deletion deadline is
+// force-deleted with a zero grace period. Every delete carries a UID
+// precondition.
+func settlePodDeletion(ctx context.Context, target client.Client, pod *corev1.Pod, now time.Time) (podDeletionState, error) {
+	live := &corev1.Pod{}
+	if err := target.Get(ctx, client.ObjectKeyFromObject(pod), live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return podGone, nil
+		}
+		return podStuck, fmt.Errorf("verify deletion of pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if live.UID != pod.UID {
+		return podGone, nil
+	}
+	uid := live.UID
+	switch {
+	case podDeletionOutlastsGrace(live):
+		if err := shortenPendingPodDeletion(ctx, target, live); err != nil {
+			return podStuck, err
+		}
+		return podTerminating, nil
+	case live.DeletionTimestamp == nil:
+		err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(podGracePeriod(live)))
+		if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+			return podStuck, fmt.Errorf("delete pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		return podTerminating, nil
+	case now.Before(live.DeletionTimestamp.Add(podForceDeleteAfter)):
+		return podTerminating, nil
+	}
+	// A force delete only removes the API object; on a node that is not Ready
+	// the kubelet may keep the containers running. The operator has to fence
+	// or recover the node; until the Pod is gone it stays a residual.
+	if node := live.Spec.NodeName; node != "" {
+		n := &corev1.Node{}
+		if err := target.Get(ctx, client.ObjectKey{Name: node}, n); err != nil && !apierrors.IsNotFound(err) {
+			return podStuck, fmt.Errorf("read node %s of pod %s/%s: %w", node, pod.Namespace, pod.Name, err)
+		} else if err != nil || !nodeReady(n) {
+			return podStuck, fmt.Errorf("node-unreachable: %s: pod %s/%s (uid=%s) is still terminating past its deletion deadline", node, pod.Namespace, pod.Name, uid)
+		}
+	}
+	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(0)); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+		return podStuck, fmt.Errorf("force-delete pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return podStuck, fmt.Errorf("pod %s/%s (uid=%s) was still terminating %s past its deletion deadline and was force-deleted", pod.Namespace, pod.Name, uid, podForceDeleteAfter)
+}
+
+func nodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+const (
+	// podTrackingSource marks inventory entries that cleanup adds for Pod
+	// tracking: intermediates between workloads and their Pods, and owners
+	// kept for a retry. The workload logic (for example Job deadlines) keys
+	// on other sources and leaves them alone.
+	podTrackingSource = "pod-tracking"
+	// copiedPodSource marks a kubectl-debug copied Pod handed over to Pod
+	// tracking; like the copy record, it cannot be acknowledged.
+	copiedPodSource = "copied-pod"
+)
+
+// maxTrackedSessionPods bounds the Pods cleanup records in status. Beyond it
+// cleanup still deletes the owners but keeps its inventory, failing closed.
+// ponytail: fixed; a variable so tests can lower it.
+var maxTrackedSessionPods = 256
+
+// podCreatorKinds are the built-in kinds whose Pods cleanup tracks, with the
+// intermediate kind between them and their Pods.
+var podCreatorKinds = map[string]string{
+	"Deployment": "ReplicaSet", "CronJob": "Job",
+	"ReplicaSet": "", "ReplicationController": "", "DaemonSet": "", "Job": "", "StatefulSet": "",
+}
+
+// controlledBy reports whether obj's controller is one of owners. Only the
+// controller reference counts: anyone who may create a Pod can add other
+// owner references to it.
+func controlledBy(obj metav1.Object, owners []types.UID) bool {
+	controller := metav1.GetControllerOfNoCopy(obj)
+	return controller != nil && slices.Contains(owners, controller.UID)
+}
+
+// sessionPodDiscovery is what discoverSessionPods found.
+type sessionPodDiscovery struct {
+	pods []corev1.Pod
+	// progressing are tracked workloads whose dependents are being torn
+	// down; stuck are those with a dependent held past the deadline.
+	progressing, stuck []breakglassv1alpha1.DeployedResourceRef
+	// intermediates are the ReplicaSets and Jobs between tracked workloads
+	// and their Pods, to be recorded so that their Pods stay discoverable
+	// after the garbage collector has removed them.
+	intermediates []breakglassv1alpha1.DeployedResourceRef
+}
+
+// descendants adds the Pods that descend from the tracked workload ref
+// through controller references, as the garbage collector sees them, to d.
+// An intermediate object deleted more than podForceDeleteAfter ago, for
+// example one held by a finalizer, is stuck rather than progress.
+func descendants(ctx context.Context, lists *namespaceLists, ref breakglassv1alpha1.DeployedResourceRef, now time.Time, d *sessionPodDiscovery) (progressing, stuck bool, err error) {
+	owners := []types.UID{types.UID(ref.UID)}
+	var intermediates []client.Object
+	apiVersion := "apps/v1"
+	if kind := podCreatorKinds[ref.Kind]; kind != "" {
+		if kind == "Job" {
+			apiVersion = "batch/v1"
+		}
+		if intermediates, err = lists.get(ctx, ref.Namespace, kind); err != nil {
+			return false, false, err
+		}
+	}
+	for _, obj := range intermediates {
+		if !controlledBy(obj, owners[:1]) {
+			continue
+		}
+		owners = append(owners, obj.GetUID())
+		d.intermediates = append(d.intermediates, breakglassv1alpha1.DeployedResourceRef{APIVersion: apiVersion, Kind: podCreatorKinds[ref.Kind],
+			Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID()), Source: podTrackingSource})
+		if ts := obj.GetDeletionTimestamp(); ts != nil && now.After(ts.Add(podForceDeleteAfter)) {
+			stuck = true
+		} else {
+			progressing = true
+		}
+	}
+	pods, err := lists.get(ctx, ref.Namespace, "Pod")
+	if err != nil {
+		return false, false, err
+	}
+	for _, obj := range pods {
+		if controlledBy(obj, owners) {
+			d.addPod(*obj.(*corev1.Pod))
+			progressing = true // bounded by settlePodDeletion's own deadline
+		}
+	}
+	return progressing && !stuck, stuck, nil
+}
+
+// namespaceLists lists Pods, ReplicaSets and Jobs once per namespace and
+// sweep, however many tracked references share the namespace.
+type namespaceLists struct {
+	target client.Client
+	cache  map[[2]string][]client.Object
+}
+
+func (l *namespaceLists) get(ctx context.Context, namespace, kind string) ([]client.Object, error) {
+	key := [2]string{namespace, kind}
+	if objs, ok := l.cache[key]; ok {
+		return objs, nil
+	}
+	var list client.ObjectList
+	switch kind {
+	case "Pod":
+		list = &corev1.PodList{}
+	case "ReplicaSet":
+		list = &appsv1.ReplicaSetList{}
+	default:
+		list = &batchv1.JobList{}
+	}
+	if err := l.target.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list %s in namespace %s: %w", kind, namespace, err)
+	}
+	items, err := meta.ExtractList(list)
+	if err != nil {
+		return nil, err
+	}
+	objs := make([]client.Object, 0, len(items))
+	for _, item := range items {
+		objs = append(objs, item.(client.Object))
+	}
+	if l.cache == nil {
+		l.cache = map[[2]string][]client.Object{}
+	}
+	l.cache[key] = objs
+	return objs, nil
+}
+
+func (d *sessionPodDiscovery) addPod(pod corev1.Pod) {
+	if !slices.ContainsFunc(d.pods, func(p corev1.Pod) bool { return p.UID == pod.UID }) {
+		d.pods = append(d.pods, pod)
+	}
+}
+
+// discoverSessionPods finds the session's Pods: those recorded as Pod
+// resources, read by name and matched by UID, and those that descend from a
+// tracked workload through controller references. Labels are not used:
+// without the label reservation policy anyone may set or strip them. Nor is
+// status.allowedPods, which also lists application Pods a session only
+// injected an ephemeral container into. Intentionally retained resources and
+// their descendants are left alone.
+func discoverSessionPods(ctx context.Context, target client.Client, refs []breakglassv1alpha1.DeployedResourceRef, retained func(breakglassv1alpha1.DeployedResourceRef) bool) (sessionPodDiscovery, error) {
+	now := time.Now()
+	lists := &namespaceLists{target: target}
+	var d, kept sessionPodDiscovery
+	for _, ref := range refs {
+		if ref.UID == "" {
+			continue
+		}
+		if retained(ref) {
+			if _, creator := podCreatorKinds[ref.Kind]; creator {
+				if _, _, err := descendants(ctx, lists, ref, now, &kept); err != nil {
+					return d, err
+				}
+			}
+			kept.pods = append(kept.pods, corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(ref.UID)}})
+			continue
+		}
+		if ref.Kind == "Pod" {
+			pod := &corev1.Pod{}
+			if err := target.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, pod); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return d, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
+			}
+			if string(pod.UID) == ref.UID {
+				d.addPod(*pod)
+			}
+			continue
+		}
+		if _, creator := podCreatorKinds[ref.Kind]; !creator {
+			continue
+		}
+		progressing, stuck, err := descendants(ctx, lists, ref, now, &d)
+		if err != nil {
+			return d, err
+		}
+		if progressing {
+			d.progressing = append(d.progressing, ref)
+		}
+		if stuck {
+			d.stuck = append(d.stuck, ref)
+		}
+	}
+	d.pods = slices.DeleteFunc(d.pods, func(p corev1.Pod) bool {
+		return slices.ContainsFunc(kept.pods, func(k corev1.Pod) bool { return k.UID == p.UID })
+	})
+	return d, nil
+}
+
+// sameResource compares inventory entries by identity, ignoring how they
+// were recorded.
+func sameResource(a, b breakglassv1alpha1.DeployedResourceRef) bool {
+	return a.Kind == b.Kind && a.Namespace == b.Namespace && a.Name == b.Name && a.UID == b.UID
+}
+
+// trackSessionPod returns refs with an entry for pod, reusing an existing
+// entry for the same Pod (node-debug Pods are recorded without a source), and
+// that entry.
+func trackSessionPod(refs []breakglassv1alpha1.DeployedResourceRef, pod *corev1.Pod) ([]breakglassv1alpha1.DeployedResourceRef, breakglassv1alpha1.DeployedResourceRef) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID), Source: "debug-pod"}
+	for _, existing := range refs {
+		if sameResource(existing, ref) {
+			return refs, existing
+		}
+	}
+	return append(refs, ref), ref
+}
+
+func appendDeployedRef(refs []breakglassv1alpha1.DeployedResourceRef, ref breakglassv1alpha1.DeployedResourceRef) []breakglassv1alpha1.DeployedResourceRef {
+	if slices.ContainsFunc(refs, func(existing breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(existing, ref) }) {
+		return refs
+	}
+	return append(refs, ref)
 }

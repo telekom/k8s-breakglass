@@ -56,6 +56,8 @@ type KubectlDebugHandler struct {
 	apiReader                ctrlclient.Reader
 	ccProvider               ClientProviderInterface
 	connectionLeaseValidator func(context.Context, *breakglassv1alpha1.DebugSession) error
+	// disablePodGraceEnforcement mirrors the controller's opt-out.
+	disablePodGraceEnforcement bool
 }
 
 // WithConnectionLeaseValidator installs the controller-owned access fence.
@@ -1944,6 +1946,15 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 	var cleanupErrors []error
 	remainingCopiedPods := make([]breakglassv1alpha1.CopiedPodRef, 0, len(ds.Status.KubectlDebugStatus.CopiedPods))
+	// A deleted copy may still be terminating, possibly with an eviction's
+	// long grace period: hand it over to the session's Pod tracking, which
+	// keeps it until it is gone and shortens its deletion on every attempt.
+	var handedOver []breakglassv1alpha1.DeployedResourceRef
+	handOver := func(status *breakglassv1alpha1.DebugSessionStatus) {
+		for _, ref := range handedOver {
+			status.DeployedResources = appendDeployedRef(status.DeployedResources, ref)
+		}
+	}
 
 	// Cleanup copied pods
 	for _, cp := range ds.Status.KubectlDebugStatus.CopiedPods {
@@ -1957,10 +1968,33 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		if expectedUID == "" {
 			expectedUID = cp.CopyUID
 		}
+		// A copy evicted or deleted with a long grace period would otherwise
+		// keep running after the session; see shortenTrackedPodDeletion.
+		if !h.disablePodGraceEnforcement {
+			if err := shortenTrackedPodDeletion(ctx, targetClient, cp.CopyNamespace, cp.CopyName, expectedUID); err != nil {
+				remainingCopiedPods = append(remainingCopiedPods, cp)
+				cleanupErrors = append(cleanupErrors, err)
+				continue
+			}
+		}
+		// A legacy record has no UID; deleteOwnedResource verifies the copy by
+		// its source-session annotation instead, so hand over that instance.
+		handOverUID := expectedUID
+		if handOverUID == "" && !h.disablePodGraceEnforcement {
+			live := &corev1.Pod{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(pod), live); err == nil &&
+				ds.UID != "" && live.Annotations[sourceSessionUIDAnnotation] == string(ds.UID) {
+				handOverUID = string(live.UID)
+			}
+		}
 		if err := deleteOwnedResource(ctx, targetClient, pod, expectedUID, ds); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
+		}
+		if !h.disablePodGraceEnforcement && handOverUID != "" {
+			handedOver = append(handedOver, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod",
+				Namespace: cp.CopyNamespace, Name: cp.CopyName, UID: handOverUID, Source: copiedPodSource})
 		}
 	}
 
@@ -1971,6 +2005,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
 			}
 			status.KubectlDebugStatus.CopiedPods = remainingCopiedPods
+			handOver(status)
 		}); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("preserve kubectl-debug cleanup status: %w", err))
 		}
@@ -1979,6 +2014,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
+		handOver(status)
 	})
 }
 
