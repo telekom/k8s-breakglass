@@ -69,9 +69,12 @@ with `hostPID`, created only after the capture Pod runs.
   `action mirred egress mirror dev bgm… continue cookie <operation>`.
   `continue` lets classification go on to foreign filters at higher
   preferences; mirred's default `pipe` would end it and bypass them. The
-  agent records the interface's ifindex and MAC at attach and fails with
-  `interface-changed` when they change, so a renamed or re-created
-  interface reports a lost mirror instead of a silent one. The agent also
+  agent records the interface's ifindex and MAC at preflight and fails
+  with `interface-changed` when they change: before it changes the
+  interface, before the capture end comes up (so copies of a replaced
+  interface are never captured) and while it runs, so a renamed or
+  re-created interface reports a lost mirror instead of a silent one. The
+  agent also
   receives the absolute approved expiry: it refuses to attach after it and
   detaches itself, with verification, when it is reached.
 - The capture Pod's only container (`NET_RAW`, plus `SETUID`/`SETGID` to drop

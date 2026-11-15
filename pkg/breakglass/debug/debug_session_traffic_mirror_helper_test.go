@@ -375,3 +375,26 @@ func TestTrafficMirrorHelperNeverDeletesAForeignDevice(t *testing.T) {
 		})
 	}
 }
+
+func TestTrafficMirrorHelperAttachRefusesInterfaceReplacedDuringAttach(t *testing.T) {
+	for name, tc := range map[string]struct {
+		when, never string
+	}{
+		// Re-created once the mirror device exists: eth0 is never changed.
+		"before the source is changed": {"[ -e ns/target.link." + helperVeth + " ]", "tc qdisc add dev eth0"},
+		// Re-created after the filters were added: the capture never starts.
+		"before the capture starts": {"grep -q 'tc filter add dev eth0 egress' calls", "ip link set bgmirror0 up"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHelperHost(t)
+			replace := "cd " + h.dir + " && " + tc.when + " && printf '%s' '" + helperLink(7, "eth0") + "' >ns/target.link.eth0"
+			require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(replace+"\n"), 0o644))
+			code, output := h.run("attach")
+			require.Equal(t, 1, code, output)
+			require.Contains(t, output, "interface-changed")
+			calls := h.calls()
+			require.NotContains(t, calls, tc.never)
+			require.NotContains(t, calls, "ip link set bgmirror0 up", "the capture never starts")
+		})
+	}
+}

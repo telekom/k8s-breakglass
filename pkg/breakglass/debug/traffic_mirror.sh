@@ -199,6 +199,12 @@ owned_device() {
 		fail teardown-unverifiable "a device named $MIRROR_VETH exists that this operation does not own"
 }
 
+# require_identity stops the script when MIRROR_INTERFACE is no longer the
+# interface recorded at preflight.
+require_identity() {
+	[ "$(link_id)" = "$ifid" ] || fail interface-changed "interface $MIRROR_INTERFACE was renamed or re-created before the attach completed"
+}
+
 # show_filters DEV HOOK prints the filters of one hook; a missing device has none.
 show_filters() {
 	if out=$(in_target tc filter show dev "$1" "$2" 2>&1); then
@@ -317,6 +323,11 @@ attach() {
 	in_target ip link set "$MIRROR_VETH" up
 	# Only the mirrored copies pass this bucket; excess copies are dropped.
 	in_target tc qdisc replace dev "$MIRROR_VETH" root tbf rate "${MIRROR_RATE_MBIT:?}mbit" burst 64kb latency 100ms
+	# tc addresses the interface by name only, so the preflight identity is
+	# checked before the first change to it and again before the capture end
+	# comes up: until then the copies of a replaced interface reach a device
+	# that is down and are never captured.
+	require_identity
 	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact
 	for hook in $(hooks); do
 		# basic without an ematch matches every packet. Unlike matchall it is
@@ -326,6 +337,7 @@ attach() {
 		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic \
 			action mirred egress mirror dev "$MIRROR_VETH" continue cookie "$MIRROR_COOKIE"
 	done
+	require_identity
 	# Bringing the capture side up last tells the capture Pod that the
 	# attach is complete.
 	in_capture ip link set "$peer" up

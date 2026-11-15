@@ -223,7 +223,8 @@ synchronous durable audit sink.
   `Ready` and the `mirroring` state mean that the mirror is attached, not
   that it observes packets.
 - A renamed or re-created source interface fails the session: the mirror
-  agent checks the interface index and hardware address while it runs, and
+  agent checks the interface index and hardware address during the attach
+  and while it runs, and
   teardown removes the operation's filters from every link of the namespace.
 - Captures are the decoded `tcpdump` output in the capture container log.
   Uploading pcaps to the [diagnostic artifact store](diagnostic-artifacts.md)
