@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -16,10 +17,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
@@ -157,7 +160,8 @@ func newPodCleanupFixture(t *testing.T) *podCleanupFixture {
 	f.pod = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "recorded", Namespace: f.deployment.Namespace, UID: "recorded-uid",
 		Labels: map[string]string{DebugSessionLabelKey: f.live.Name}}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: ptr.To[int64](30)}}
 	require.NoError(t, target.Create(context.Background(), f.pod))
-	f.live.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{{Namespace: f.pod.Namespace, Name: f.pod.Name, UID: string(f.pod.UID)}}
+	// A Pod the controller deployed itself, recorded by UID.
+	f.live.Status.DeployedResources = append(f.live.Status.DeployedResources, f.podResidual())
 	watching := interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{
 		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 			if err := cl.Get(ctx, key, obj, opts...); err != nil {
@@ -520,7 +524,9 @@ func TestCleanupReusesExistingPodReference(t *testing.T) {
 	f := newPodCleanupFixture(t)
 	f.pending = func() (time.Time, int64) { return time.Now().Add(30 * time.Second), 30 }
 	nodeDebug := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: f.pod.Namespace, Name: f.pod.Name, UID: string(f.pod.UID)}
-	f.live.Status.DeployedResources = append(f.live.Status.DeployedResources, nodeDebug)
+	f.live.Status.DeployedResources = append(slices.DeleteFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return ref.Kind == "Pod"
+	}), nodeDebug)
 	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
 	count := 0
 	for _, ref := range f.live.Status.DeployedResources {
@@ -570,6 +576,8 @@ func TestCleanupDoesNotForceDeletePodOnUnreachableNode(t *testing.T) {
 // With the opt-out, cleanup neither shortens nor waits for the session's Pods.
 func TestCleanupWithoutPodGraceEnforcement(t *testing.T) {
 	f := newPodCleanupFixture(t)
+	f.lineagePod(t, "lineage")
+	f.live.Status.DeployedResources = slices.DeleteFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return ref.Kind == "Pod" })
 	f.c.WithPodGraceEnforcement(false)
 	require.NoError(t, f.c.cleanupResources(context.Background(), f.live))
 	assert.Empty(t, f.graces(t))
@@ -582,7 +590,7 @@ func TestCleanupWithoutPodGraceEnforcement(t *testing.T) {
 func TestCopiedPodEvictedAfterDeleteIsTrackedUntilGone(t *testing.T) {
 	ctx := context.Background()
 	f := newPodCleanupFixture(t)
-	f.live.Status.AllowedPods = nil
+	f.live.Status.DeployedResources = slices.DeleteFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return ref.Kind == "Pod" })
 	f.live.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 		{CopyName: f.pod.Name, CopyNamespace: f.pod.Namespace, UID: string(f.pod.UID)},
 	}}
@@ -614,4 +622,122 @@ func TestCleanupFailsClosedBeyondPodTrackingCap(t *testing.T) {
 		"the owner is not deleted")
 	assert.Contains(t, f.live.Status.DeployedResources, f.deployment)
 	assert.True(t, cleanupConditionFailed(f.live))
+}
+
+func ownedPod(name string, owner client.Object) *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid"),
+		OwnerReferences: []metav1.OwnerReference{{Name: owner.GetName(), UID: owner.GetUID(), Controller: ptr.To(true)}}}}
+}
+
+func trackedRef(kind string, obj client.Object) breakglassv1alpha1.DeployedResourceRef {
+	return breakglassv1alpha1.DeployedResourceRef{Kind: kind, Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID())}
+}
+
+func podNames(pods []corev1.Pod) []string {
+	var names []string
+	for _, p := range pods {
+		names = append(names, p.Name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// Every built-in Pod creator is followed, including CronJob to Job to Pod.
+func TestDiscoverSessionPodsFollowsAllPodCreators(t *testing.T) {
+	meta := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid")}
+	}
+	cron := &batchv1.CronJob{ObjectMeta: meta("cron")}
+	job := &batchv1.Job{ObjectMeta: meta("job")}
+	job.OwnerReferences = []metav1.OwnerReference{{Name: cron.Name, UID: cron.UID, Controller: ptr.To(true)}}
+	rs := &appsv1.ReplicaSet{ObjectMeta: meta("rs")}
+	rc := &corev1.ReplicationController{ObjectMeta: meta("rc")}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cron, job, rs, rc,
+		ownedPod("from-job", job), ownedPod("from-rs", rs), ownedPod("from-rc", rc), &corev1.Pod{ObjectMeta: meta("unrelated")}).Build()
+	pods, owners, err := discoverSessionPods(context.Background(), target,
+		[]breakglassv1alpha1.DeployedResourceRef{trackedRef("CronJob", cron), trackedRef("ReplicaSet", rs), trackedRef("ReplicationController", rc)},
+		func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
+	require.NoError(t, err)
+	assert.Equal(t, []string{"from-job", "from-rc", "from-rs"}, podNames(pods))
+	assert.Len(t, owners, 3)
+}
+
+// Intentionally retained resources and their descendants are left alone,
+// also when one of their Pods is recorded as well.
+func TestDiscoverSessionPodsSkipsRetainedResources(t *testing.T) {
+	meta := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid")}
+	}
+	kept, removed := &appsv1.ReplicaSet{ObjectMeta: meta("kept")}, &appsv1.ReplicaSet{ObjectMeta: meta("removed")}
+	keptPod := ownedPod("kept-pod", kept)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(kept, removed, keptPod, ownedPod("removed-pod", removed)).Build()
+	keptRef := trackedRef("ReplicaSet", kept)
+	pods, _, err := discoverSessionPods(context.Background(), target,
+		[]breakglassv1alpha1.DeployedResourceRef{keptRef, trackedRef("ReplicaSet", removed), trackedRef("Pod", keptPod)},
+		func(ref breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(ref, keptRef) })
+	require.NoError(t, err)
+	assert.Equal(t, []string{"removed-pod"}, podNames(pods))
+}
+
+// An intermediate owner deleted long ago (held by a finalizer) is stuck, not
+// progress; a fresh one is progress.
+func TestDiscoverSessionPodsTreatsHeldDependentsAsStuck(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		deletedAgo  time.Duration
+		progressing bool
+	}{{"fresh", 0, true}, {"held", podForceDeleteAfter + time.Minute, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: "ns", UID: "d-uid"}}
+			rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: "ns", UID: "rs-uid",
+				OwnerReferences: []metav1.OwnerReference{{Name: "d", UID: "d-uid", Controller: ptr.To(true)}}}}
+			if tc.deletedAgo > 0 {
+				rs.Finalizers = []string{"example.com/hold"}
+				rs.DeletionTimestamp = &metav1.Time{Time: time.Now().Add(-tc.deletedAgo)}
+			}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(rs).Build()
+			_, owners, err := discoverSessionPods(context.Background(), target,
+				[]breakglassv1alpha1.DeployedResourceRef{trackedRef("Deployment", deployment)},
+				func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
+			require.NoError(t, err)
+			assert.Equal(t, tc.progressing, len(owners) == 1)
+		})
+	}
+}
+
+// status.allowedPods also lists application Pods a session only injected an
+// ephemeral container into; cleanup must not delete them.
+func TestCleanupLeavesInjectionTargetsAlone(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	app := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: f.pod.Namespace, UID: "app-uid"}}
+	require.NoError(t, f.target.Create(ctx, app))
+	f.live.Status.AllowedPods = append(f.live.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{Namespace: app.Namespace, Name: app.Name, UID: string(app.UID)})
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.NotContains(t, f.deleted, "app", "the application Pod is not deleted")
+	assert.False(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return ref.UID == "app-uid" }))
+}
+
+// An owner whose delete failed is a residual even while it has dependents.
+func TestCleanupOwnerWhoseDeleteFailedIsNotProgress(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.lineagePod(t, "lineage")
+	inner := f.c.targetClientFactory
+	f.c.targetClientFactory = func(cfg *rest.Config) (client.Client, error) {
+		cl, err := inner(cfg)
+		return interceptor.NewClient(cl.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				if obj.GetName() == f.deployment.Name {
+					return apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, obj.GetName(), errors.New("denied"))
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}), err
+	}
+	err := f.c.cleanupResources(ctx, f.live)
+	require.Error(t, err)
+	assert.False(t, cleanupInProgress(err))
+	assert.True(t, cleanupConditionFailed(f.live))
+	assert.Contains(t, f.live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, f.deployment.Name)
 }

@@ -627,9 +627,11 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// owners are deleted, because afterwards their lineage can no longer be
 	// verified, and shorten any pending deletion.
 	var trackedResources []breakglassv1alpha1.DeployedResourceRef
-	var trackedPods []breakglassv1alpha1.AllowedPodRef
+	retained := func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
+	}
 	if !c.disablePodGraceEnforcement {
-		pods, _, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, ds.Status.AllowedPods)
+		pods, _, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, retained)
 		if err != nil {
 			return finishCleanup(errors.Join(append(cleanupErrors, err)...))
 		}
@@ -655,7 +657,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if len(cleanupErrors) > 0 {
 			return finishCleanup(errors.Join(cleanupErrors...))
 		}
-		trackedResources, trackedPods = slices.Clone(ds.Status.DeployedResources), slices.Clone(ds.Status.AllowedPods)
+		trackedResources = slices.Clone(ds.Status.DeployedResources)
 	}
 	// Within their grace period, terminating Pods and owners whose dependents
 	// are still there are progress, not a failure.
@@ -663,15 +665,18 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if !c.disablePodGraceEnforcement {
 			// Discover again from the recorded owners and Pods, for Pods
 			// created or evicted while this attempt deleted the owners.
-			pods, owners, err := discoverSessionPods(ctx, targetClient, trackedResources, trackedPods)
+			pods, owners, err := discoverSessionPods(ctx, targetClient, trackedResources, retained)
 			if err != nil {
 				ds.Status.DeployedResources = trackedResources
-				ds.Status.AllowedPods = trackedPods
 				cleanupErrors = append(cleanupErrors, err)
 			}
 			for _, owner := range owners {
-				ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, owner)
-				inProgress = append(inProgress, owner)
+				// Only a deleted owner whose dependents are being torn down is
+				// progress; one whose delete failed or is held stays a residual.
+				if !slices.ContainsFunc(ds.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(ref, owner) }) {
+					ds.Status.DeployedResources = append(ds.Status.DeployedResources, owner)
+					inProgress = append(inProgress, owner)
+				}
 			}
 			for i := range pods {
 				pod := &pods[i]

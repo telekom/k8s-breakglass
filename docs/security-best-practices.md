@@ -593,15 +593,20 @@ of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
 admission and does not carry the Pod's labels, so the policy cannot check it.
 The controller closes that gap instead, with or without the policy. On every
 cleanup attempt that reaches the target cluster it finds the session's Pods:
-those whose UID the session status records (deployed and allowed Pods, read
-by name), and those that descend from a tracked workload by owner reference
-UID, as the garbage collector sees them. Labels play no part, so stripping
-them hides nothing. Before it deletes any owner, it records these Pods in the
+those the session status records as deployed Pods (read by name and matched
+by UID), and those that descend from a tracked workload (Deployment,
+ReplicaSet, ReplicationController, StatefulSet, DaemonSet, Job or CronJob) by
+owner reference UID, as the garbage collector sees them. Labels play no part,
+so stripping them hides nothing. Application Pods a session only injected an
+ephemeral container into, and resources an auxiliary template retains with
+`deleteAfter: false` (and their Pods), are left alone. Before it deletes any owner, it records these Pods in the
 session status, so a restart cannot lose the ones it could only find through
 their owners, and it shortens any pending deletion to the Pod's own
 `terminationGracePeriodSeconds` with a UID precondition. After the owners are
 deleted it looks again, for Pods created or evicted in the meantime, and
-keeps an owner tracked while it still has dependents. A copied Pod is handed
+keeps a deleted owner tracked while its dependents are torn down; an owner
+whose delete failed, or whose dependents are held more than two minutes past
+their deletion, is a `CleanupFailed` residual. A copied Pod is handed
 over to the same tracking when the kubectl-debug cleanup deletes it.
 
 Cleanup completes only once every tracked Pod is gone: NotFound, or replaced

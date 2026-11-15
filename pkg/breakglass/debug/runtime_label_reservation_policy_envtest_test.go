@@ -522,8 +522,9 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 		require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, live))
 		return live.DeletionGracePeriodSeconds
 	}
+	var recorded []breakglassv1alpha1.DeployedResourceRef
 	record := func(p *corev1.Pod) {
-		ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{Namespace: ns, Name: p.Name, UID: string(p.UID)})
+		recorded = append(recorded, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: ns, Name: p.Name, UID: string(p.UID)})
 	}
 	record(newPod("deleted"))
 	deleteLong("deleted")
@@ -537,7 +538,7 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 
 	// Labels play no part: the forged Pod carries the label but is neither
 	// recorded nor owned by a tracked workload.
-	verified, _, err := discoverSessionPods(ctx, target, nil, ds.Status.AllowedPods)
+	verified, _, err := discoverSessionPods(ctx, target, recorded, func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
 	require.NoError(t, err)
 	for i := range verified {
 		require.NoError(t, shortenPendingPodDeletion(ctx, target, &verified[i]))

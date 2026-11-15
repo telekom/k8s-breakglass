@@ -803,80 +803,131 @@ func nodeReady(node *corev1.Node) bool {
 // ponytail: fixed; beyond it cleanup fails closed and keeps its inventory.
 const maxTrackedSessionPods = 256
 
-// discoverSessionPods returns the session's Pods: those whose UID the status
-// records (Pod references and allowedPods), read by name, and those that
-// descend from a tracked workload by owner reference UID (Deployment to
-// ReplicaSet to Pod, or a DaemonSet, Job or StatefulSet to Pod), as the
-// garbage collector sees them. Labels are not used: without the label
-// reservation policy anyone may set or strip them. It also returns the tracked
-// workloads that still have dependents.
-func discoverSessionPods(ctx context.Context, target client.Client, refs []breakglassv1alpha1.DeployedResourceRef, allowed []breakglassv1alpha1.AllowedPodRef) ([]corev1.Pod, []breakglassv1alpha1.DeployedResourceRef, error) {
+// podCreatorKinds are the built-in kinds whose Pods cleanup tracks, with the
+// intermediate kind between them and their Pods.
+var podCreatorKinds = map[string]string{
+	"Deployment": "ReplicaSet", "CronJob": "Job",
+	"ReplicaSet": "", "ReplicationController": "", "DaemonSet": "", "Job": "", "StatefulSet": "",
+}
+
+// descendants returns the Pods that descend from the tracked workload ref by
+// owner reference UID, as the garbage collector sees them, and whether ref
+// still has dependents that are being torn down: an intermediate object
+// deleted more than podForceDeleteAfter ago (for example one held by a
+// finalizer) is stuck, not progress.
+func descendants(ctx context.Context, target client.Client, ref breakglassv1alpha1.DeployedResourceRef, now time.Time) ([]corev1.Pod, bool, error) {
+	owners := []types.UID{types.UID(ref.UID)}
+	ownedBy := func(obj metav1.Object, owners []types.UID) bool {
+		return slices.ContainsFunc(obj.GetOwnerReferences(), func(r metav1.OwnerReference) bool { return slices.Contains(owners, r.UID) })
+	}
+	progressing, stuck := false, false
+	var intermediates []client.Object
+	switch podCreatorKinds[ref.Kind] {
+	case "ReplicaSet":
+		list := &appsv1.ReplicaSetList{}
+		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
+			return nil, false, fmt.Errorf("list replicasets of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		for i := range list.Items {
+			intermediates = append(intermediates, &list.Items[i])
+		}
+	case "Job":
+		list := &batchv1.JobList{}
+		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
+			return nil, false, fmt.Errorf("list jobs of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		for i := range list.Items {
+			intermediates = append(intermediates, &list.Items[i])
+		}
+	}
+	for _, obj := range intermediates {
+		if !ownedBy(obj, owners[:1]) {
+			continue
+		}
+		owners = append(owners, obj.GetUID())
+		if ts := obj.GetDeletionTimestamp(); ts != nil && now.After(ts.Add(podForceDeleteAfter)) {
+			stuck = true
+		} else {
+			progressing = true
+		}
+	}
+	list := &corev1.PodList{}
+	if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
+		return nil, false, fmt.Errorf("list pods of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+	}
 	var pods []corev1.Pod
+	for i := range list.Items {
+		if ownedBy(&list.Items[i], owners) {
+			pods = append(pods, list.Items[i])
+		}
+	}
+	// Pods are bounded by settlePodDeletion's own deadline.
+	return pods, (progressing || len(pods) > 0) && !stuck, nil
+}
+
+// discoverSessionPods returns the session's Pods: those recorded as Pod
+// resources, read by name and matched by UID, and those that descend from a
+// tracked workload by owner reference UID. Labels are not used: without the
+// label reservation policy anyone may set or strip them. Nor is
+// status.allowedPods, which also lists application Pods a session only
+// injected an ephemeral container into. Intentionally retained resources and
+// their descendants are left alone. It also returns the tracked workloads
+// whose dependents are still being torn down.
+func discoverSessionPods(ctx context.Context, target client.Client, refs []breakglassv1alpha1.DeployedResourceRef, retained func(breakglassv1alpha1.DeployedResourceRef) bool) ([]corev1.Pod, []breakglassv1alpha1.DeployedResourceRef, error) {
+	now := time.Now()
+	var pods []corev1.Pod
+	var keep []types.UID
 	add := func(pod corev1.Pod) {
 		if !slices.ContainsFunc(pods, func(p corev1.Pod) bool { return p.UID == pod.UID }) {
 			pods = append(pods, pod)
 		}
 	}
-	recorded := func(namespace, name, uid string) error {
-		pod := &corev1.Pod{}
-		if uid == "" {
-			return nil
-		}
-		if err := target.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pod); err != nil {
-			return client.IgnoreNotFound(err)
-		}
-		if string(pod.UID) == uid {
-			add(*pod)
-		}
-		return nil
-	}
-	ownedBy := func(obj metav1.Object, owners []types.UID) bool {
-		return slices.ContainsFunc(obj.GetOwnerReferences(), func(r metav1.OwnerReference) bool { return slices.Contains(owners, r.UID) })
-	}
 	var withDependents []breakglassv1alpha1.DeployedResourceRef
 	for _, ref := range refs {
-		if ref.Kind == "Pod" {
-			if err := recorded(ref.Namespace, ref.Name, ref.UID); err != nil {
-				return nil, nil, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
-			}
+		if ref.UID == "" {
 			continue
 		}
-		if ref.UID == "" || !slices.Contains([]string{"Deployment", "DaemonSet", "Job", "StatefulSet"}, ref.Kind) {
-			continue
-		}
-		owners := []types.UID{types.UID(ref.UID)}
-		dependents := 0
-		if ref.Kind == "Deployment" {
-			replicaSets := &appsv1.ReplicaSetList{}
-			if err := target.List(ctx, replicaSets, client.InNamespace(ref.Namespace)); err != nil {
-				return nil, nil, fmt.Errorf("list replicasets of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
-			}
-			for i := range replicaSets.Items {
-				if ownedBy(&replicaSets.Items[i], owners[:1]) {
-					owners = append(owners, replicaSets.Items[i].UID)
-					dependents++
+		if retained(ref) {
+			keep = append(keep, types.UID(ref.UID))
+			if _, creator := podCreatorKinds[ref.Kind]; creator {
+				retainedPods, _, err := descendants(ctx, target, ref, now)
+				if err != nil {
+					return nil, nil, err
+				}
+				for _, pod := range retainedPods {
+					keep = append(keep, pod.UID)
 				}
 			}
+			continue
 		}
-		list := &corev1.PodList{}
-		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
-			return nil, nil, fmt.Errorf("list pods of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
-		}
-		for i := range list.Items {
-			if ownedBy(&list.Items[i], owners) {
-				add(list.Items[i])
-				dependents++
+		if ref.Kind == "Pod" {
+			pod := &corev1.Pod{}
+			if err := target.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, pod); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, nil, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
+			if string(pod.UID) == ref.UID {
+				add(*pod)
+			}
+			continue
 		}
-		if dependents > 0 {
+		if _, creator := podCreatorKinds[ref.Kind]; !creator {
+			continue
+		}
+		found, progressing, err := descendants(ctx, target, ref, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, pod := range found {
+			add(pod)
+		}
+		if progressing {
 			withDependents = append(withDependents, ref)
 		}
 	}
-	for _, ref := range allowed {
-		if err := recorded(ref.Namespace, ref.Name, ref.UID); err != nil {
-			return nil, nil, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
-		}
-	}
+	pods = slices.DeleteFunc(pods, func(p corev1.Pod) bool { return slices.Contains(keep, p.UID) })
 	if len(pods) > maxTrackedSessionPods {
 		return nil, nil, fmt.Errorf("found %d debug session pods, more than the %d cleanup can track; keeping the inventory", len(pods), maxTrackedSessionPods)
 	}
