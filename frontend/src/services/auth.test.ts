@@ -673,7 +673,14 @@ describe("AuthService", () => {
     it("clears the user and the stored OIDC user when the IdP session ends", async () => {
       const { service, removeUser } = await signedInService("https://idp-a.example.com");
       sessionStorage.setItem("oidc_idp_name", "corp");
-      window.dispatchEvent(new MessageEvent("message", { origin: "https://idp-a.example.com", data: "unchanged" }));
+      const frame = document.querySelector<HTMLIFrameElement>('iframe[src^="https://idp-a.example.com"]');
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://idp-a.example.com",
+          data: "unchanged",
+          source: frame?.contentWindow ?? null,
+        }),
+      );
 
       await service.userManager.events._raiseUserSignedOut();
 
@@ -682,11 +689,28 @@ describe("AuthService", () => {
       expect(removeUser).toHaveBeenCalledTimes(1);
     });
 
+    it("ends a reloaded session when the iframe confirmed the IdP session earlier in this tab", async () => {
+      sessionStorage.setItem(
+        "breakglass_check_session_confirmed",
+        JSON.stringify(["https://idp-c.example.com/check-session"]),
+      );
+      const { service, removeUser } = await signedInService("https://idp-c.example.com");
+
+      await service.userManager.events._raiseUserSignedOut();
+
+      expect(useUser().value).toBeUndefined();
+      expect(removeUser).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the session when the iframe never saw the IdP session", async () => {
       const { warn } = await import("@/services/logger");
       const { service, removeUser } = await signedInService("https://idp-b.example.com");
-      // An "unchanged" from another origin does not count.
+      // Neither an "unchanged" from another origin nor one from another window of the same origin
+      // (for example another realm on the same host) counts.
       window.dispatchEvent(new MessageEvent("message", { origin: "https://other.example.com", data: "unchanged" }));
+      window.dispatchEvent(
+        new MessageEvent("message", { origin: "https://idp-b.example.com", data: "unchanged", source: window }),
+      );
 
       await service.userManager.events._raiseUserSignedOut();
 

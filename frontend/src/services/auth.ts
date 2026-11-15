@@ -404,9 +404,28 @@ Log.setLogger({
   error: (...args: unknown[]) => logError("oidc-client", ...args),
 });
 
-// Origins of check_session_iframes that answered "unchanged", i.e. can see the IdP session cookie.
-const confirmedSessionOrigins = new Set<string>();
-const checkSessionOrigins = new WeakMap<UserManager, string>();
+// check_session_iframe URLs (one per IdP realm) that answered "unchanged" in this tab, i.e. can see the
+// IdP session cookie. Kept in sessionStorage so a reload after an IdP logout still counts as a logout.
+const CONFIRMED_CHECK_SESSION_STORAGE_KEY = "breakglass_check_session_confirmed";
+const checkSessionURLs = new WeakMap<UserManager, string>();
+
+function confirmedCheckSessionURLs(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      getBrowserStorageItem("sessionStorage", CONFIRMED_CHECK_SESSION_STORAGE_KEY) ?? "[]",
+    );
+    return Array.isArray(parsed) ? parsed.filter((u): u is string => typeof u === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function confirmCheckSessionURL(url: string) {
+  const urls = confirmedCheckSessionURLs();
+  if (!urls.includes(url)) {
+    setBrowserStorageItem("sessionStorage", CONFIRMED_CHECK_SESSION_STORAGE_KEY, JSON.stringify([...urls, url]));
+  }
+}
 
 /**
  * Prepare session monitoring for a manager once a user is present (when oidc-client-ts starts its
@@ -430,11 +449,14 @@ function watchCheckSessionIframe(manager: UserManager) {
           return;
         }
         const origin = new URL(url).origin;
-        checkSessionOrigins.set(manager, origin);
+        checkSessionURLs.set(manager, url);
         window.addEventListener("message", (event: MessageEvent) => {
-          if (event.origin === origin && event.data === "unchanged") {
-            confirmedSessionOrigins.add(origin);
-          }
+          if (event.origin !== origin || event.data !== "unchanged") return;
+          // Several realms can share a host: only count the answer of this realm's iframe.
+          const fromThisIframe = Array.from(document.querySelectorAll("iframe")).some(
+            (frame) => frame.src === url && frame.contentWindow === event.source,
+          );
+          if (fromThisIframe) confirmCheckSessionURL(url);
         });
       })
       // Metadata errors are logged by oidc-client-ts (SessionMonitor) itself.
@@ -446,10 +468,10 @@ function watchCheckSessionIframe(manager: UserManager) {
   });
 }
 
-/** True once the check_session_iframe of this manager's IdP has seen the live IdP session. */
+/** True once the check_session_iframe of this manager's IdP realm has seen the IdP session in this tab. */
 function idpSessionConfirmed(manager: UserManager): boolean {
-  const origin = checkSessionOrigins.get(manager);
-  return origin !== undefined && confirmedSessionOrigins.has(origin);
+  const url = checkSessionURLs.get(manager);
+  return url !== undefined && confirmedCheckSessionURLs().includes(url);
 }
 
 export const AuthRedirect = "/auth/callback";
