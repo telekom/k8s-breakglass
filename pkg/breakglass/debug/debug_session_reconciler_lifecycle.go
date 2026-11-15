@@ -615,6 +615,16 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if err := recheckPodGrace(ctx, targetClient, sessionPods); err != nil {
 			ds.Status.DeployedResources = cleanupBaseline.DeployedResources
 			ds.Status.AllowedPods = cleanupBaseline.AllowedPods
+			// The owners may be gone now, so record the Pods verified through
+			// them: the retry recognises a Pod by its recorded UID.
+			for i := range sessionPods {
+				pod := &sessionPods[i]
+				if !slices.ContainsFunc(ds.Status.AllowedPods, func(ref breakglassv1alpha1.AllowedPodRef) bool {
+					return ref.Namespace == pod.Namespace && ref.Name == pod.Name && ref.UID == string(pod.UID)
+				}) {
+					ds.Status.AllowedPods = append(ds.Status.AllowedPods, allowedPodRefFromPod(pod, false, nil))
+				}
+			}
 			cleanupErrors = append(cleanupErrors, err)
 		}
 		return finishCleanup(errors.Join(cleanupErrors...))

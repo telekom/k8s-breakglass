@@ -160,6 +160,65 @@ func testCleanupRechecksPodGrace(t *testing.T, recheckFails bool) {
 	}
 }
 
+// A Pod verified only through its owners must survive a failed recheck as a
+// recorded UID: once the owners are deleted, the retry cannot verify it again.
+func TestCleanupRecordsLineageVerifiedPodWhenRecheckFails(t *testing.T) {
+	ctx := context.Background()
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	live, deployment := deployedFixtureDeployment(t, c, ds, template, target)
+	owner := &appsv1.Deployment{}
+	require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: deployment.Namespace, Name: deployment.Name}, owner))
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: owner.Namespace, UID: "rs-uid",
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: owner.Name, UID: owner.UID, Controller: ptr.To(true)}}},
+		Spec: appsv1.ReplicaSetSpec{Selector: owner.Spec.Selector, Template: owner.Spec.Template}}
+	require.NoError(t, target.Create(ctx, rs))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "unrecorded", Namespace: owner.Namespace, UID: "unrecorded-uid",
+		Labels:          map[string]string{DebugSessionLabelKey: live.Name},
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: rs.Name, UID: rs.UID, Controller: ptr.To(true)}}},
+		Spec: *owner.Spec.Template.Spec.DeepCopy()}
+	require.NoError(t, target.Create(ctx, pod))
+	require.True(t, c.podBelongsToTrackedWorkload(ctx, target, live, pod), "the fixture Pod is lineage-verified")
+	require.Empty(t, live.Status.AllowedPods)
+
+	evicted, failDelete := false, true
+	var podGrace *int64
+	watching := interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if err := cl.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+			if p, ok := obj.(*corev1.Pod); ok && evicted {
+				now := metav1.Now()
+				p.DeletionTimestamp, p.DeletionGracePeriodSeconds = &now, ptr.To[int64](1_000_000)
+			}
+			return nil
+		},
+		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			if obj.GetName() == deployment.Name {
+				evicted = true
+			}
+			if _, ok := obj.(*corev1.Pod); ok {
+				o := &client.DeleteOptions{}
+				o.ApplyOptions(opts)
+				podGrace = o.GracePeriodSeconds
+				if failDelete {
+					return apierrors.NewServiceUnavailable("pods unavailable")
+				}
+				return nil
+			}
+			return cl.Delete(ctx, obj, opts...)
+		},
+	})
+	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return watching, nil }
+	require.ErrorContains(t, c.cleanupResources(ctx, live), "pods unavailable")
+	require.Len(t, live.Status.AllowedPods, 1)
+	assert.Equal(t, string(pod.UID), live.Status.AllowedPods[0].UID, "the verified UID is recorded for the retry")
+
+	failDelete, podGrace = false, nil
+	_ = c.cleanupResources(ctx, live)
+	assert.Equal(t, ptr.To[int64](30), podGrace, "the retry still shortens the Pod although its owner is gone")
+}
+
 // Copied Pods are deleted by the kubectl-debug cleanup, which retires their
 // references; a copy evicted with a long grace period must be shortened first.
 func TestCopiedPodCleanupShortensPendingDeletion(t *testing.T) {
