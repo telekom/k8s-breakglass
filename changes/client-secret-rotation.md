@@ -9,4 +9,4 @@ section: Behaviour changes
   sync is removed from the IdentityProvider, these notifications are skipped
   (fail closed) as they are when group sync was never configured.
   `docs/identity-provider.md#rotating-client-secrets` describes the rotation
-  procedure for all client secrets.
+  procedure for all client secrets (#1717).
