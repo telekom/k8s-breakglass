@@ -857,7 +857,9 @@ func TestCleanupRecoveredOnlyOnceInventoryIsEmpty(t *testing.T) {
 // Pods are listed once per namespace and sweep, however many tracked
 // references share the namespace.
 func TestDiscoverSessionPodsListsEachNamespaceOnce(t *testing.T) {
-	meta := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid")} }
+	meta := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid")}
+	}
 	a, b := &appsv1.ReplicaSet{ObjectMeta: meta("a")}, &appsv1.ReplicaSet{ObjectMeta: meta("b")}
 	deployment := &appsv1.Deployment{ObjectMeta: meta("d")}
 	podLists := 0
