@@ -845,7 +845,7 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 #### `--disable-debug-session-pod-grace-enforcement`
 
-Opt-out. By default, every DebugSession cleanup attempt that reaches the target cluster deletes the session's Pods again whose pending deletion is longer than their own `terminationGracePeriodSeconds` (for example after an eviction or a delete with a long grace period), with that grace period and a UID precondition, so a debug container that ignores SIGTERM does not keep running after the session. Pods that are not being deleted are left alone. This flag turns that off. See [Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels).
+Opt-out. By default, every DebugSession cleanup attempt that reaches the target cluster, before deleting the tracked workloads, deletes the session's Pods again whose pending deletion is longer than their own `terminationGracePeriodSeconds` (for example after an eviction or a delete with a long grace period), with that grace period and a UID precondition, so a debug container that ignores SIGTERM does not keep running after the session. Copied Pods are handled the same way before they are deleted. Only Pods whose UID is recorded or that belong to a tracked workload are touched, and only while they are being deleted. This flag turns that off. See [Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels).
 
 | Property | Value |
 |----------|-------|

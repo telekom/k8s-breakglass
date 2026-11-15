@@ -671,34 +671,57 @@ func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.D
 // deletion outlasts their own terminationGracePeriodSeconds, for example after
 // an eviction or a delete with a long grace period: a debug container that
 // ignores SIGTERM would otherwise keep running after the session, and the
-// garbage collector does not re-delete Pods that are already terminating. Only
-// Pods already being deleted are touched, so a forged session label cannot get
-// an unrelated Pod deleted.
-func shortenPendingPodDeletions(ctx context.Context, target client.Client, sessionName string) error {
+// garbage collector does not re-delete Pods that are already terminating.
+// owned must confirm that a Pod belongs to the session, because without the
+// label reservation policy anyone may set the session label.
+func shortenPendingPodDeletions(ctx context.Context, target client.Client, sessionName string, owned func(*corev1.Pod) bool) error {
 	pods := &corev1.PodList{}
 	if err := target.List(ctx, pods, client.MatchingLabels{DebugSessionLabelKey: sessionName}); err != nil {
 		return fmt.Errorf("list debug session pods: %w", err)
 	}
 	var errs []error
 	for i := range pods.Items {
-		errs = append(errs, shortenPendingPodDeletion(ctx, target, &pods.Items[i]))
+		pod := &pods.Items[i]
+		if podDeletionOutlastsGrace(pod) && owned(pod) {
+			errs = append(errs, shortenPendingPodDeletion(ctx, target, pod))
+		}
 	}
 	return errors.Join(errs...)
+}
+
+// shortenTrackedPodDeletion shortens the pending deletion of the Pod at
+// namespace/name if it is still the recorded instance uid.
+func shortenTrackedPodDeletion(ctx context.Context, target client.Client, namespace, name, uid string) error {
+	pod := &corev1.Pod{}
+	if err := target.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if uid == "" || string(pod.UID) != uid {
+		return nil
+	}
+	return shortenPendingPodDeletion(ctx, target, pod)
+}
+
+func podGracePeriod(pod *corev1.Pod) int64 {
+	if pod.Spec.TerminationGracePeriodSeconds != nil {
+		return *pod.Spec.TerminationGracePeriodSeconds
+	}
+	return corev1.DefaultTerminationGracePeriodSeconds
+}
+
+func podDeletionOutlastsGrace(pod *corev1.Pod) bool {
+	return pod.DeletionTimestamp != nil && pod.DeletionGracePeriodSeconds != nil && *pod.DeletionGracePeriodSeconds > podGracePeriod(pod)
 }
 
 // shortenPendingPodDeletion deletes pod again with its own grace period if its
 // pending deletion is longer. An explicit shorter grace period overrides the
 // pending one; the UID precondition leaves a same-name replacement alone.
 func shortenPendingPodDeletion(ctx context.Context, target client.Client, pod *corev1.Pod) error {
-	grace := int64(corev1.DefaultTerminationGracePeriodSeconds)
-	if pod.Spec.TerminationGracePeriodSeconds != nil {
-		grace = *pod.Spec.TerminationGracePeriodSeconds
-	}
-	if pod.DeletionTimestamp == nil || pod.DeletionGracePeriodSeconds == nil || *pod.DeletionGracePeriodSeconds <= grace {
+	if !podDeletionOutlastsGrace(pod) {
 		return nil
 	}
 	uid := pod.UID
-	err := target.Delete(ctx, pod, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(grace))
+	err := target.Delete(ctx, pod, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(podGracePeriod(pod)))
 	if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
 		return fmt.Errorf("shorten pending deletion of pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}

@@ -592,12 +592,15 @@ of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
 `terminationGracePeriodSeconds`. An Eviction does not go through Pod DELETE
 admission and does not carry the Pod's labels, so the policy cannot check it.
 The controller closes that gap instead, with or without the policy: on every
-cleanup attempt that reaches the target cluster it deletes the session's Pods
-again whose pending deletion is longer than their own
-`terminationGracePeriodSeconds`, with that grace period and a UID
-precondition. An explicit shorter grace period overrides the pending one.
-Pods that are not being deleted are left alone, so a forged session label
-cannot get an unrelated Pod deleted. `--disable-debug-session-pod-grace-enforcement`
+cleanup attempt that reaches the target cluster, before it deletes the tracked
+workloads, it deletes the session's Pods again whose pending deletion is
+longer than their own `terminationGracePeriodSeconds`, with that grace period
+and a UID precondition; copied Pods get the same treatment before they are
+deleted. An explicit shorter grace period overrides the pending one. A Pod
+counts as the session's only when its UID is recorded or it belongs to a
+tracked workload, not because of its label, and Pods that are not being
+deleted are left alone. If this fails, cleanup keeps its inventory and
+retries. `--disable-debug-session-pod-grace-enforcement`
 (`BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT`) turns this off.
 
 For the same reason, a Binding (which since Kubernetes 1.35 copies its labels

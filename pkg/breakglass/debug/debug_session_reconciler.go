@@ -170,12 +170,19 @@ func (c *DebugSessionController) WithPodGraceEnforcement(enabled bool) *DebugSes
 }
 
 // enforcePodGrace runs on every cleanup attempt that reaches the target
-// cluster; see shortenPendingPodDeletions.
+// cluster, before the tracked workloads are deleted; see
+// shortenPendingPodDeletions. A Pod counts as the session's when its UID is
+// recorded in status.allowedPods or it belongs to a tracked workload.
 func (c *DebugSessionController) enforcePodGrace(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
 	if c.disablePodGraceEnforcement {
 		return nil
 	}
-	return shortenPendingPodDeletions(ctx, target, ds.Name)
+	return shortenPendingPodDeletions(ctx, target, ds.Name, func(pod *corev1.Pod) bool {
+		if existing, ok := existingAllowedPodRef(ds, pod); ok && existing.UID != "" && existing.UID == string(pod.UID) {
+			return true
+		}
+		return c.podBelongsToTrackedWorkload(ctx, target, ds, pod)
+	})
 }
 
 // WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose
@@ -1971,7 +1978,9 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 	if c.targetClients != nil {
 		provider = c.targetClients
 	}
-	return NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
+	h := NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
+	h.disablePodGraceEnforcement = c.disablePodGraceEnforcement
+	return h
 }
 
 // bindingMatchesTemplate checks if a binding references the given template

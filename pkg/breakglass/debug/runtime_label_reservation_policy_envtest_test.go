@@ -485,9 +485,10 @@ func TestPlatformCleanupForegroundsPendingOwnerEnvtest(t *testing.T) {
 }
 
 // TestPlatformCleanupShortensPendingPodGraceEnvtest proves that session
-// cleanup shortens a marked Pod's pending deletion (from an eviction or a
-// delete with a long grace period) to the Pod's own grace period, leaves a
-// same-name replacement alone, and can be turned off.
+// cleanup shortens the pending deletion of the session's own Pods (from an
+// eviction or a delete with a long grace period) to the Pod's own grace
+// period, leaves a forged-label Pod and a same-name replacement alone, and can
+// be turned off.
 func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS required")
@@ -512,38 +513,55 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 		require.NoError(t, target.Create(ctx, p))
 		return p
 	}
+	const long = int64(1_000_000)
+	deleteLong := func(name string) {
+		require.NoError(t, target.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}, client.GracePeriodSeconds(long)))
+	}
 	pendingGrace := func(name string) *int64 {
 		live := &corev1.Pod{}
 		require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, live))
 		return live.DeletionGracePeriodSeconds
 	}
-	const long = int64(1_000_000)
-	newPod("deleted")
-	require.NoError(t, target.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleted", Namespace: ns}}, client.GracePeriodSeconds(long)))
-	newPod("evicted")
+	record := func(p *corev1.Pod) {
+		ds.Status.AllowedPods = append(ds.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{Namespace: ns, Name: p.Name, UID: string(p.UID)})
+	}
+	record(newPod("deleted"))
+	deleteLong("deleted")
+	record(newPod("evicted"))
 	require.NoError(t, kube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: "evicted", Namespace: ns},
 		DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: ptr.To(long)}}))
-	newPod("running")
+	record(newPod("running"))
+	// Without the admission policy anyone may set the session label.
+	newPod("forged")
+	deleteLong("forged")
 
 	disabled := (&DebugSessionController{}).WithPodGraceEnforcement(false)
 	require.NoError(t, disabled.enforcePodGrace(ctx, target, ds))
 	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the opt-out leaves pending deletions alone")
 	assert.Equal(t, ptr.To(long), pendingGrace("evicted"))
 
-	// The controller listed "deleted"; it was then replaced under the same name.
-	stale := &corev1.Pod{}
-	require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: "deleted"}, stale))
-	require.NoError(t, target.Delete(ctx, stale.DeepCopy(), client.GracePeriodSeconds(0)))
-	require.Eventually(t, func() bool {
-		return apierrors.IsNotFound(target.Get(ctx, client.ObjectKeyFromObject(stale), &corev1.Pod{}))
-	}, 10*time.Second, 100*time.Millisecond)
-	newPod("deleted")
-	require.NoError(t, target.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleted", Namespace: ns}}, client.GracePeriodSeconds(long)))
-	require.NoError(t, shortenPendingPodDeletion(ctx, target, stale))
-	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the UID precondition leaves the replacement alone")
-
 	require.NoError(t, (&DebugSessionController{}).enforcePodGrace(ctx, target, ds))
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("deleted"), "a delete with a long grace period is shortened")
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("evicted"), "an eviction with a long grace period is shortened")
 	assert.Nil(t, pendingGrace("running"), "Pods that are not being deleted are left alone")
+	assert.Equal(t, ptr.To(long), pendingGrace("forged"), "a Pod with a forged session label is not the session's")
+
+	// A recorded Pod replaced under the same name after the controller read it.
+	stale := newPod("replaced")
+	deleteLong("replaced")
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(stale), stale))
+	require.NoError(t, target.Delete(ctx, stale.DeepCopy(), client.GracePeriodSeconds(0)))
+	require.Eventually(t, func() bool {
+		return apierrors.IsNotFound(target.Get(ctx, client.ObjectKeyFromObject(stale), &corev1.Pod{}))
+	}, 10*time.Second, 100*time.Millisecond)
+	newPod("replaced")
+	deleteLong("replaced")
+	require.NoError(t, shortenPendingPodDeletion(ctx, target, stale))
+	assert.Equal(t, ptr.To(long), pendingGrace("replaced"), "the UID precondition leaves the replacement alone")
+	require.NoError(t, shortenTrackedPodDeletion(ctx, target, ns, "replaced", string(stale.UID)))
+	assert.Equal(t, ptr.To(long), pendingGrace("replaced"), "a copied Pod is shortened only while it is the recorded instance")
+	live := &corev1.Pod{}
+	require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: "replaced"}, live))
+	require.NoError(t, shortenTrackedPodDeletion(ctx, target, ns, "replaced", string(live.UID)))
+	assert.Equal(t, ptr.To[int64](30), pendingGrace("replaced"))
 }

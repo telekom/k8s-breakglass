@@ -591,14 +591,21 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
-	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	var targetClient ctrlclient.Client
+	if c.targetClientFactory != nil {
+		targetClient, err = c.targetClientFactory(restCfg)
+	} else {
+		targetClient, err = ctrlclient.New(restCfg, ctrlclient.Options{})
+	}
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
+	// Before anything is deleted: once the tracked workloads are gone, a Pod's
+	// lineage can no longer be verified, so keep the inventory for a retry.
 	if err := c.enforcePodGrace(ctx, targetClient, ds); err != nil {
-		cleanupErrors = append(cleanupErrors, err)
+		return finishCleanup(errors.Join(append(cleanupErrors, err)...))
 	}
 
 	// Cleanup auxiliary resources first using the manager

@@ -56,6 +56,8 @@ type KubectlDebugHandler struct {
 	apiReader                ctrlclient.Reader
 	ccProvider               ClientProviderInterface
 	connectionLeaseValidator func(context.Context, *breakglassv1alpha1.DebugSession) error
+	// disablePodGraceEnforcement mirrors the controller's opt-out.
+	disablePodGraceEnforcement bool
 }
 
 // WithConnectionLeaseValidator installs the controller-owned access fence.
@@ -1956,6 +1958,15 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		expectedUID := cp.UID
 		if expectedUID == "" {
 			expectedUID = cp.CopyUID
+		}
+		// A copy evicted or deleted with a long grace period would otherwise
+		// keep running after the session; see shortenPendingPodDeletions.
+		if !h.disablePodGraceEnforcement {
+			if err := shortenTrackedPodDeletion(ctx, targetClient, cp.CopyNamespace, cp.CopyName, expectedUID); err != nil {
+				remainingCopiedPods = append(remainingCopiedPods, cp)
+				cleanupErrors = append(cleanupErrors, err)
+				continue
+			}
 		}
 		if err := deleteOwnedResource(ctx, targetClient, pod, expectedUID, ds); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
