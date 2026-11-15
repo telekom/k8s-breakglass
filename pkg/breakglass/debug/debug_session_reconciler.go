@@ -171,42 +171,6 @@ func (c *DebugSessionController) WithPodGraceEnforcement(enabled bool) *DebugSes
 	return c
 }
 
-// enforcePodGrace runs on every cleanup attempt that reaches the target
-// cluster, before the tracked workloads are deleted. It shortens the pending
-// deletions of the session's Pods (see shortenTrackedPodDeletion) and returns
-// the Pods it verified, which must be gone before cleanup retires its
-// inventory (see settlePodDeletion). A Pod is the session's when its UID is recorded in
-// status.allowedPods or its lineage to a tracked workload is verified; the
-// label alone proves nothing without the label reservation policy.
-func (c *DebugSessionController) enforcePodGrace(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) ([]corev1.Pod, error) {
-	if c.disablePodGraceEnforcement {
-		return nil, nil
-	}
-	pods := &corev1.PodList{}
-	if err := target.List(ctx, pods, ctrlclient.MatchingLabels{DebugSessionLabelKey: ds.Name}); err != nil {
-		return nil, fmt.Errorf("list debug session pods: %w", err)
-	}
-	var owned []corev1.Pod
-	var errs []error
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if existing, ok := existingAllowedPodRef(ds, pod); !ok || existing.UID == "" || existing.UID != string(pod.UID) {
-			reads := &readErrorRecorder{Client: target}
-			belongs := c.podBelongsToTrackedWorkload(ctx, reads, ds, pod)
-			if reads.err != nil {
-				errs = append(errs, fmt.Errorf("verify owner of pod %s/%s: %w", pod.Namespace, pod.Name, reads.err))
-				continue
-			}
-			if !belongs {
-				continue
-			}
-		}
-		owned = append(owned, *pod)
-		errs = append(errs, shortenPendingPodDeletion(ctx, target, pod))
-	}
-	return owned, errors.Join(errs...)
-}
-
 // WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose
 // party identities were recorded incompletely (sessions created, joined or
 // approved before every identity was recorded) compare the identities that

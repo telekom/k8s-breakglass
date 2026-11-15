@@ -713,21 +713,6 @@ func shortenPendingPodDeletion(ctx context.Context, target client.Client, pod *c
 	return nil
 }
 
-// readErrorRecorder records reads that fail other than with NotFound, so an
-// ownership check that could not read an owner is not taken for a mismatch.
-type readErrorRecorder struct {
-	client.Client
-	err error
-}
-
-func (r *readErrorRecorder) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	err := r.Client.Get(ctx, key, obj, opts...)
-	if err != nil && !apierrors.IsNotFound(err) {
-		r.err = errors.Join(r.err, err)
-	}
-	return err
-}
-
 // podForceDeleteAfter is how long a Pod may stay past its deletion deadline
 // before cleanup force-deletes it.
 // ponytail: fixed; make it configurable if slow kubelets need more.
@@ -788,19 +773,137 @@ func settlePodDeletion(ctx context.Context, target client.Client, pod *corev1.Po
 	case now.Before(live.DeletionTimestamp.Add(podForceDeleteAfter)):
 		return podTerminating, nil
 	}
+	// A force delete only removes the API object; on a node that is not Ready
+	// the kubelet may keep the containers running. The operator has to fence
+	// or recover the node; until the Pod is gone it stays a residual.
+	if node := live.Spec.NodeName; node != "" {
+		n := &corev1.Node{}
+		if err := target.Get(ctx, client.ObjectKey{Name: node}, n); err != nil && !apierrors.IsNotFound(err) {
+			return podStuck, fmt.Errorf("read node %s of pod %s/%s: %w", node, pod.Namespace, pod.Name, err)
+		} else if err != nil || !nodeReady(n) {
+			return podStuck, fmt.Errorf("node-unreachable: %s: pod %s/%s (uid=%s) is still terminating past its deletion deadline", node, pod.Namespace, pod.Name, uid)
+		}
+	}
 	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.GracePeriodSeconds(0)); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
 		return podStuck, fmt.Errorf("force-delete pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	return podStuck, fmt.Errorf("pod %s/%s (uid=%s) was still terminating %s past its deletion deadline and was force-deleted", pod.Namespace, pod.Name, uid, podForceDeleteAfter)
 }
 
-// podResidualRef is the cleanup inventory entry for a still-present session Pod.
-func podResidualRef(pod *corev1.Pod) breakglassv1alpha1.DeployedResourceRef {
-	return breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID), Source: "debug-pod"}
+func nodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// maxTrackedSessionPods bounds the Pods cleanup records in status.
+// ponytail: fixed; beyond it cleanup fails closed and keeps its inventory.
+const maxTrackedSessionPods = 256
+
+// discoverSessionPods returns the session's Pods: those whose UID the status
+// records (Pod references and allowedPods), read by name, and those that
+// descend from a tracked workload by owner reference UID (Deployment to
+// ReplicaSet to Pod, or a DaemonSet, Job or StatefulSet to Pod), as the
+// garbage collector sees them. Labels are not used: without the label
+// reservation policy anyone may set or strip them. It also returns the tracked
+// workloads that still have dependents.
+func discoverSessionPods(ctx context.Context, target client.Client, refs []breakglassv1alpha1.DeployedResourceRef, allowed []breakglassv1alpha1.AllowedPodRef) ([]corev1.Pod, []breakglassv1alpha1.DeployedResourceRef, error) {
+	var pods []corev1.Pod
+	add := func(pod corev1.Pod) {
+		if !slices.ContainsFunc(pods, func(p corev1.Pod) bool { return p.UID == pod.UID }) {
+			pods = append(pods, pod)
+		}
+	}
+	recorded := func(namespace, name, uid string) error {
+		pod := &corev1.Pod{}
+		if uid == "" {
+			return nil
+		}
+		if err := target.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pod); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if string(pod.UID) == uid {
+			add(*pod)
+		}
+		return nil
+	}
+	ownedBy := func(obj metav1.Object, owners []types.UID) bool {
+		return slices.ContainsFunc(obj.GetOwnerReferences(), func(r metav1.OwnerReference) bool { return slices.Contains(owners, r.UID) })
+	}
+	var withDependents []breakglassv1alpha1.DeployedResourceRef
+	for _, ref := range refs {
+		if ref.Kind == "Pod" {
+			if err := recorded(ref.Namespace, ref.Name, ref.UID); err != nil {
+				return nil, nil, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
+			}
+			continue
+		}
+		if ref.UID == "" || !slices.Contains([]string{"Deployment", "DaemonSet", "Job", "StatefulSet"}, ref.Kind) {
+			continue
+		}
+		owners := []types.UID{types.UID(ref.UID)}
+		dependents := 0
+		if ref.Kind == "Deployment" {
+			replicaSets := &appsv1.ReplicaSetList{}
+			if err := target.List(ctx, replicaSets, client.InNamespace(ref.Namespace)); err != nil {
+				return nil, nil, fmt.Errorf("list replicasets of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+			}
+			for i := range replicaSets.Items {
+				if ownedBy(&replicaSets.Items[i], owners[:1]) {
+					owners = append(owners, replicaSets.Items[i].UID)
+					dependents++
+				}
+			}
+		}
+		list := &corev1.PodList{}
+		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
+			return nil, nil, fmt.Errorf("list pods of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		for i := range list.Items {
+			if ownedBy(&list.Items[i], owners) {
+				add(list.Items[i])
+				dependents++
+			}
+		}
+		if dependents > 0 {
+			withDependents = append(withDependents, ref)
+		}
+	}
+	for _, ref := range allowed {
+		if err := recorded(ref.Namespace, ref.Name, ref.UID); err != nil {
+			return nil, nil, fmt.Errorf("read recorded pod %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+	}
+	if len(pods) > maxTrackedSessionPods {
+		return nil, nil, fmt.Errorf("found %d debug session pods, more than the %d cleanup can track; keeping the inventory", len(pods), maxTrackedSessionPods)
+	}
+	return pods, withDependents, nil
+}
+
+// sameResource compares inventory entries by identity, ignoring how they
+// were recorded.
+func sameResource(a, b breakglassv1alpha1.DeployedResourceRef) bool {
+	return a.Kind == b.Kind && a.Namespace == b.Namespace && a.Name == b.Name && a.UID == b.UID
+}
+
+// trackSessionPod returns refs with an entry for pod, reusing an existing
+// entry for the same Pod (node-debug Pods are recorded without a source), and
+// that entry.
+func trackSessionPod(refs []breakglassv1alpha1.DeployedResourceRef, pod *corev1.Pod) ([]breakglassv1alpha1.DeployedResourceRef, breakglassv1alpha1.DeployedResourceRef) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID), Source: "debug-pod"}
+	for _, existing := range refs {
+		if sameResource(existing, ref) {
+			return refs, existing
+		}
+	}
+	return append(refs, ref), ref
 }
 
 func appendDeployedRef(refs []breakglassv1alpha1.DeployedResourceRef, ref breakglassv1alpha1.DeployedResourceRef) []breakglassv1alpha1.DeployedResourceRef {
-	if slices.Contains(refs, ref) {
+	if slices.ContainsFunc(refs, func(existing breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(existing, ref) }) {
 		return refs
 	}
 	return append(refs, ref)

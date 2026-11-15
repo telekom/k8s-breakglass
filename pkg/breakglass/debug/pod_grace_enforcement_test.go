@@ -5,6 +5,8 @@ package debug
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -94,12 +97,12 @@ func TestCleanupKeepsInventoryWhenPodOwnerReadFails(t *testing.T) {
 	require.NoError(t, target.Create(ctx, pod))
 	failed := false
 	flaky := interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{
-		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			if _, ok := obj.(*appsv1.ReplicaSet); ok && !failed {
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*appsv1.ReplicaSetList); ok && !failed {
 				failed = true
 				return apierrors.NewServiceUnavailable("replicasets unavailable")
 			}
-			return cl.Get(ctx, key, obj, opts...)
+			return cl.List(ctx, list, opts...)
 		},
 	})
 	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return flaky, nil }
@@ -121,7 +124,10 @@ type podCleanupFixture struct {
 	evicted    bool
 	pending    func() (time.Time, int64)
 	deletes    []*client.DeleteOptions
+	deleted    []string
 	failDelete bool
+	// evictOnPodDelete evicts the Pod right after its first delete.
+	evictOnPodDelete bool
 
 	audit        *cleanupAuditCaptureSink
 	auditManager *audit.Manager
@@ -174,6 +180,10 @@ func newPodCleanupFixture(t *testing.T) *podCleanupFixture {
 			o := &client.DeleteOptions{}
 			o.ApplyOptions(opts)
 			f.deletes = append(f.deletes, o)
+			f.deleted = append(f.deleted, obj.GetName())
+			if f.evictOnPodDelete {
+				f.evicted = true
+			}
 			if f.failDelete {
 				return apierrors.NewServiceUnavailable("pods unavailable")
 			}
@@ -405,4 +415,203 @@ func TestCopiedPodCleanupShortensPendingDeletion(t *testing.T) {
 			assert.Equal(t, ptr.To[int64](30), graces[0], "the copy's own grace period replaces the pending one")
 		}
 	}
+}
+
+// shortened returns the Pods deleted with an explicit grace period of 30s.
+func (f *podCleanupFixture) shortened() []string {
+	var names []string
+	for i, o := range f.deletes {
+		if o.GracePeriodSeconds != nil && *o.GracePeriodSeconds == 30 {
+			names = append(names, f.deleted[i])
+		}
+	}
+	return names
+}
+
+// lineagePod creates a Pod owned by a ReplicaSet of the fixture Deployment,
+// without labels or a recorded UID.
+func (f *podCleanupFixture) lineagePod(t *testing.T, name string) *corev1.Pod {
+	t.Helper()
+	ctx := context.Background()
+	owner := &appsv1.Deployment{}
+	if err := f.target.Get(ctx, client.ObjectKey{Namespace: f.deployment.Namespace, Name: f.deployment.Name}, owner); err == nil {
+		rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: owner.Namespace, UID: "rs-uid",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: owner.Name, UID: owner.UID, Controller: ptr.To(true)}}},
+			Spec: appsv1.ReplicaSetSpec{Selector: owner.Spec.Selector, Template: owner.Spec.Template}}
+		if err := f.target.Create(ctx, rs); err != nil {
+			require.True(t, apierrors.IsAlreadyExists(err), err)
+		}
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.deployment.Namespace, UID: types.UID(name + "-uid"),
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "rs-uid", Controller: ptr.To(true)}}},
+		Spec: corev1.PodSpec{TerminationGracePeriodSeconds: ptr.To[int64](30)}}
+	require.NoError(t, f.target.Create(ctx, pod))
+	return pod
+}
+
+// onOwnerDelete runs hook when cleanup deletes the fixture Deployment.
+func (f *podCleanupFixture) onOwnerDelete(hook func()) {
+	inner := f.c.targetClientFactory
+	f.c.targetClientFactory = func(cfg *rest.Config) (client.Client, error) {
+		cl, err := inner(cfg)
+		return interceptor.NewClient(cl.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				if obj.GetName() == f.deployment.Name {
+					hook()
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}), err
+	}
+}
+
+// Thread: a recorded Pod whose labels were stripped is still the session's.
+func TestCleanupFindsRecordedPodWithoutLabels(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pod.Labels = nil
+	require.NoError(t, f.target.Update(ctx, f.pod))
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
+	assert.Equal(t, []string{f.pod.Name}, f.shortened(), "the evicted Pod is shortened although its labels are gone")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual())
+}
+
+// Pods found only through their owners are recorded in status before the
+// owners are deleted, so a restart or failed final write cannot lose them.
+func TestCleanupPersistsSessionPodsBeforeDeletingOwners(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	pod := f.lineagePod(t, "lineage")
+	persisted := false
+	f.onOwnerDelete(func() {
+		hub := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, f.c.client.Get(ctx, client.ObjectKeyFromObject(f.live), hub))
+		persisted = slices.ContainsFunc(hub.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+			return ref.Kind == "Pod" && ref.UID == string(pod.UID)
+		})
+	})
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.True(t, persisted, "the lineage-only Pod is in the persisted inventory before its owner is deleted")
+}
+
+// A Pod created after the first sweep (here: while the owner is deleted) and
+// evicted with a long grace period is found by the second sweep, and the
+// owner stays tracked while it has dependents.
+func TestCleanupFindsPodCreatedAfterFirstSweep(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.lineagePod(t, "early")
+	f.onOwnerDelete(func() { f.lineagePod(t, "late") })
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
+	assert.Contains(t, f.shortened(), "late", "the late Pod's eviction is shortened")
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return ref.Kind == "Pod" && ref.UID == "late-uid"
+	}), "the late Pod is tracked")
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return sameResource(ref, f.deployment)
+	}), "the owner stays tracked while it has dependents")
+	assert.False(t, cleanupConditionFailed(f.live))
+}
+
+// A node-debug Pod is already recorded without a source; cleanup reuses that
+// entry instead of adding a second one that would count as a failure.
+func TestCleanupReusesExistingPodReference(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(30 * time.Second), 30 }
+	nodeDebug := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod", Namespace: f.pod.Namespace, Name: f.pod.Name, UID: string(f.pod.UID)}
+	f.live.Status.DeployedResources = append(f.live.Status.DeployedResources, nodeDebug)
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
+	count := 0
+	for _, ref := range f.live.Status.DeployedResources {
+		if ref.Kind == "Pod" && ref.UID == string(f.pod.UID) {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "%+v", f.live.Status.DeployedResources)
+	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+}
+
+// A Pod on a node that is not Ready is not force-deleted: that would only
+// remove the API object. It stays a residual until the node is recovered.
+func TestCleanupDoesNotForceDeletePodOnUnreachableNode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		node  *corev1.Node
+		force bool
+	}{
+		{name: "not ready", node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionUnknown}}}}},
+		{name: "gone"},
+		{name: "ready", force: true, node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newPodCleanupFixture(t)
+			f.pod.Spec.NodeName = "node-1"
+			require.NoError(t, f.target.Update(ctx, f.pod))
+			if tc.node != nil {
+				require.NoError(t, f.target.Create(ctx, tc.node))
+			}
+			f.pending = func() (time.Time, int64) { return time.Now().Add(-podForceDeleteAfter - time.Minute), 30 }
+			err := f.c.cleanupResources(ctx, f.live)
+			forced := slices.ContainsFunc(f.graces(t), func(g *int64) bool { return *g == 0 })
+			assert.Equal(t, tc.force, forced)
+			if !tc.force {
+				require.ErrorContains(t, err, "node-unreachable: node-1")
+			}
+			assert.True(t, cleanupConditionFailed(f.live))
+			assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "kept until the Pod is really gone")
+		})
+	}
+}
+
+// With the opt-out, cleanup neither shortens nor waits for the session's Pods.
+func TestCleanupWithoutPodGraceEnforcement(t *testing.T) {
+	f := newPodCleanupFixture(t)
+	f.c.WithPodGraceEnforcement(false)
+	require.NoError(t, f.c.cleanupResources(context.Background(), f.live))
+	assert.Empty(t, f.graces(t))
+	assert.Empty(t, f.live.Status.DeployedResources)
+}
+
+// A copied Pod evicted with a long grace period right after the kubectl-debug
+// cleanup deleted it: its reference is handed over to the session's Pod
+// tracking, so cleanup shortens the eviction and waits for the copy.
+func TestCopiedPodEvictedAfterDeleteIsTrackedUntilGone(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.live.Status.AllowedPods = nil
+	f.live.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+		{CopyName: f.pod.Name, CopyNamespace: f.pod.Namespace, UID: string(f.pod.UID)},
+	}}
+	watching, err := f.c.targetClientFactory(nil)
+	require.NoError(t, err)
+	f.c.targetClients = &mockClientProvider{clients: map[string]client.Client{f.live.Spec.Cluster: watching}}
+	f.evictOnPodDelete = true
+
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
+	assert.Contains(t, f.shortened(), f.pod.Name, "the eviction after the copy's delete is shortened")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "the copy is tracked until it is gone")
+	assert.False(t, cleanupConditionFailed(f.live))
+
+	require.NoError(t, f.target.Delete(ctx, f.pod.DeepCopy()))
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.NotContains(t, f.live.Status.DeployedResources, f.podResidual(), "retired once the copy is gone")
+}
+
+// More Pods than the status budget allows: cleanup fails closed, keeps the
+// owner and drops no identities.
+func TestCleanupFailsClosedBeyondPodTrackingCap(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	for i := range maxTrackedSessionPods {
+		f.lineagePod(t, fmt.Sprintf("pod-%d", i))
+	}
+	require.ErrorContains(t, f.c.cleanupResources(ctx, f.live), "more than the 256 cleanup can track")
+	require.NoError(t, f.target.Get(ctx, client.ObjectKey{Namespace: f.deployment.Namespace, Name: f.deployment.Name}, &appsv1.Deployment{}),
+		"the owner is not deleted")
+	assert.Contains(t, f.live.Status.DeployedResources, f.deployment)
+	assert.True(t, cleanupConditionFailed(f.live))
 }

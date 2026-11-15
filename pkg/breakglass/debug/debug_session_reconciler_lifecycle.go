@@ -552,11 +552,12 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
-	// Session Pods still terminating within their grace period: inventory, but
-	// cleanup in progress rather than failed.
-	var terminatingPods []breakglassv1alpha1.DeployedResourceRef
+	// Session Pods still terminating within their grace period, and owners
+	// whose dependents are still there: inventory, but cleanup in progress
+	// rather than failed.
+	var inProgress []breakglassv1alpha1.DeployedResourceRef
 	finishCleanup := func(operationErr error) error {
-		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline, terminatingPods...)
+		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline, inProgress...)
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -620,36 +621,76 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
-	// Before anything is deleted: once the tracked workloads are gone, a Pod's
-	// lineage can no longer be verified, so keep the inventory for a retry.
-	sessionPods, err := c.enforcePodGrace(ctx, targetClient, ds)
-	if err != nil {
-		return finishCleanup(errors.Join(append(cleanupErrors, err)...))
-	}
-	// An eviction or delete with a long grace period can land after any
-	// sweep, and the garbage collector does not shorten it. So every Pod the
-	// sweep verified must be gone before this attempt retires its inventory;
-	// one that is still there stays in the inventory as a Pod resource, is
-	// shortened again on every retry and retired once it is gone. Within its
-	// grace period that is progress, not a failure.
-	finishWithPodGrace := func() error {
-		for i := range sessionPods {
-			pod := &sessionPods[i]
-			state, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
-			if state == podGone {
-				continue
-			}
-			ref := podResidualRef(pod)
-			ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, ref)
-			if state == podTerminating {
-				terminatingPods = append(terminatingPods, ref)
-			} else {
+	// The session's Pods must be gone before cleanup retires their inventory:
+	// an eviction or delete with a long grace period can land at any time,
+	// and the garbage collector does not shorten it. Record them before their
+	// owners are deleted, because afterwards their lineage can no longer be
+	// verified, and shorten any pending deletion.
+	var trackedResources []breakglassv1alpha1.DeployedResourceRef
+	var trackedPods []breakglassv1alpha1.AllowedPodRef
+	if !c.disablePodGraceEnforcement {
+		pods, _, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, ds.Status.AllowedPods)
+		if err != nil {
+			return finishCleanup(errors.Join(append(cleanupErrors, err)...))
+		}
+		added := false
+		for i := range pods {
+			before := len(ds.Status.DeployedResources)
+			ds.Status.DeployedResources, _ = trackSessionPod(ds.Status.DeployedResources, &pods[i])
+			added = added || len(ds.Status.DeployedResources) > before
+			if err := shortenPendingPodDeletion(ctx, targetClient, &pods[i]); err != nil {
 				cleanupErrors = append(cleanupErrors, err)
 			}
 		}
+		if added {
+			// Persist without reclassifying the CleanupFailed condition.
+			persist := ds.DeepCopy()
+			persist.Status.Conditions = nil
+			if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, persist, cleanupBaseline, nil); err != nil {
+				return errors.Join(append(cleanupErrors, err)...)
+			}
+			ds.Status, ds.ResourceVersion = persist.Status, persist.ResourceVersion
+			cleanupBaseline = ds.Status.DeepCopy()
+		}
+		if len(cleanupErrors) > 0 {
+			return finishCleanup(errors.Join(cleanupErrors...))
+		}
+		trackedResources, trackedPods = slices.Clone(ds.Status.DeployedResources), slices.Clone(ds.Status.AllowedPods)
+	}
+	// Within their grace period, terminating Pods and owners whose dependents
+	// are still there are progress, not a failure.
+	finishWithPodGrace := func() error {
+		if !c.disablePodGraceEnforcement {
+			// Discover again from the recorded owners and Pods, for Pods
+			// created or evicted while this attempt deleted the owners.
+			pods, owners, err := discoverSessionPods(ctx, targetClient, trackedResources, trackedPods)
+			if err != nil {
+				ds.Status.DeployedResources = trackedResources
+				ds.Status.AllowedPods = trackedPods
+				cleanupErrors = append(cleanupErrors, err)
+			}
+			for _, owner := range owners {
+				ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, owner)
+				inProgress = append(inProgress, owner)
+			}
+			for i := range pods {
+				pod := &pods[i]
+				state, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
+				if state == podGone {
+					continue
+				}
+				var ref breakglassv1alpha1.DeployedResourceRef
+				ds.Status.DeployedResources, ref = trackSessionPod(ds.Status.DeployedResources, pod)
+				if state == podTerminating {
+					inProgress = append(inProgress, ref)
+				} else {
+					cleanupErrors = append(cleanupErrors, err)
+				}
+			}
+		}
 		err := finishCleanup(errors.Join(cleanupErrors...))
-		if len(terminatingPods) > 0 && !cleanupConditionFailed(ds) {
-			return errors.Join(fmt.Errorf("%w: %d debug session Pods", errDebugPodsTerminating, len(terminatingPods)), err)
+		if len(inProgress) > 0 && !cleanupConditionFailed(ds) {
+			return errors.Join(fmt.Errorf("%w: %d debug session resources", errDebugPodsTerminating, len(inProgress)), err)
 		}
 		return err
 	}
@@ -921,7 +962,7 @@ func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 func setCleanupConditionExcept(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef) {
 	inventory := ds.Status.DeployedResources
 	ds.Status.DeployedResources = slices.DeleteFunc(slices.Clone(inventory), func(ref breakglassv1alpha1.DeployedResourceRef) bool {
-		return slices.Contains(inProgress, ref)
+		return slices.ContainsFunc(inProgress, func(p breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(p, ref) })
 	})
 	setCleanupCondition(ds)
 	ds.Status.DeployedResources = inventory

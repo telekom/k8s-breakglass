@@ -1946,6 +1946,15 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 	var cleanupErrors []error
 	remainingCopiedPods := make([]breakglassv1alpha1.CopiedPodRef, 0, len(ds.Status.KubectlDebugStatus.CopiedPods))
+	// A deleted copy may still be terminating, possibly with an eviction's
+	// long grace period: hand it over to the session's Pod tracking, which
+	// keeps it until it is gone and shortens its deletion on every attempt.
+	var handedOver []breakglassv1alpha1.DeployedResourceRef
+	handOver := func(status *breakglassv1alpha1.DebugSessionStatus) {
+		for _, ref := range handedOver {
+			status.DeployedResources = appendDeployedRef(status.DeployedResources, ref)
+		}
+	}
 
 	// Cleanup copied pods
 	for _, cp := range ds.Status.KubectlDebugStatus.CopiedPods {
@@ -1973,6 +1982,10 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
 		}
+		if !h.disablePodGraceEnforcement && expectedUID != "" {
+			handedOver = append(handedOver, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod",
+				Namespace: cp.CopyNamespace, Name: cp.CopyName, UID: expectedUID, Source: "debug-pod"})
+		}
 	}
 
 	// Note: Ephemeral containers cannot be removed, they remain until pod deletion
@@ -1982,6 +1995,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
 			}
 			status.KubectlDebugStatus.CopiedPods = remainingCopiedPods
+			handOver(status)
 		}); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("preserve kubectl-debug cleanup status: %w", err))
 		}
@@ -1990,6 +2004,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
+		handOver(status)
 	})
 }
 

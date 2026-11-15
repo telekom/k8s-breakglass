@@ -535,14 +535,13 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 	newPod("forged")
 	deleteLong("forged")
 
-	disabled := (&DebugSessionController{}).WithPodGraceEnforcement(false)
-	_, err = disabled.enforcePodGrace(ctx, target, ds)
+	// Labels play no part: the forged Pod carries the label but is neither
+	// recorded nor owned by a tracked workload.
+	verified, _, err := discoverSessionPods(ctx, target, nil, ds.Status.AllowedPods)
 	require.NoError(t, err)
-	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the opt-out leaves pending deletions alone")
-	assert.Equal(t, ptr.To(long), pendingGrace("evicted"))
-
-	verified, err := (&DebugSessionController{}).enforcePodGrace(ctx, target, ds)
-	require.NoError(t, err)
+	for i := range verified {
+		require.NoError(t, shortenPendingPodDeletion(ctx, target, &verified[i]))
+	}
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("deleted"), "a delete with a long grace period is shortened")
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("evicted"), "an eviction with a long grace period is shortened")
 	assert.Nil(t, pendingGrace("running"), "Pods that are not being deleted are left alone")

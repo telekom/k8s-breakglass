@@ -591,29 +591,39 @@ ends, and a later delete without one does not shorten it. Non-exempt deletes
 of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
 `terminationGracePeriodSeconds`. An Eviction does not go through Pod DELETE
 admission and does not carry the Pod's labels, so the policy cannot check it.
-The controller closes that gap instead, with or without the policy: on every
-cleanup attempt that reaches the target cluster, before it deletes the tracked
-workloads, it deletes the session's Pods again whose pending deletion is
-longer than their own `terminationGracePeriodSeconds`, with that grace period
-and a UID precondition; copied Pods get the same treatment before they are
-deleted. An explicit shorter grace period overrides the pending one. A Pod
-counts as the session's only when its UID is recorded or it belongs to a
-tracked workload, not because of its label, and Pods that are not being
-deleted are left alone. Cleanup then waits for every Pod it verified to
-terminate, up to its grace period, before it completes (gone means NotFound,
-or replaced by an object with another UID; terminating is not gone). While
-the Pods terminate within their deadline, cleanup is in progress, not failed:
-they stay in the inventory, `CleanupFailed` is not set, no
-`debug_session.cleanup_failed` event is emitted, and cleanup is retried
-every second, shortening a pending deletion again each time, so an eviction
-between attempts is covered too. Only a Pod still terminating two minutes
-after its shortened deletion deadline is force-deleted with a zero grace
-period and recorded as a residual on `CleanupFailed`, with the normal backoff
-and audit. If any step fails, or an owner cannot be read, cleanup keeps
-its inventory and retries. With `--disable-debug-session-pod-grace-enforcement`
-none of this happens, and a marked Pod evicted or deleted with a long grace
-period can keep running after the session. `--disable-debug-session-pod-grace-enforcement`
-(`BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT`) turns this off.
+The controller closes that gap instead, with or without the policy. On every
+cleanup attempt that reaches the target cluster it finds the session's Pods:
+those whose UID the session status records (deployed and allowed Pods, read
+by name), and those that descend from a tracked workload by owner reference
+UID, as the garbage collector sees them. Labels play no part, so stripping
+them hides nothing. Before it deletes any owner, it records these Pods in the
+session status, so a restart cannot lose the ones it could only find through
+their owners, and it shortens any pending deletion to the Pod's own
+`terminationGracePeriodSeconds` with a UID precondition. After the owners are
+deleted it looks again, for Pods created or evicted in the meantime, and
+keeps an owner tracked while it still has dependents. A copied Pod is handed
+over to the same tracking when the kubectl-debug cleanup deletes it.
+
+Cleanup completes only once every tracked Pod is gone: NotFound, or replaced
+by an object with another UID; terminating is not gone. While the Pods
+terminate within their deadline, cleanup is in progress, not failed:
+`CleanupFailed` is not set, no `debug_session.cleanup_failed` event is
+emitted, and cleanup is retried every second, shortening a pending deletion
+again each time. A Pod still terminating two minutes after its shortened
+deletion deadline is force-deleted with a zero grace period, but only if its
+Node is Ready; either way it is recorded on `CleanupFailed`, with the normal
+backoff and audit. On a Node that is NotReady, Unknown or gone a force delete
+would only remove the API object while the kubelet may keep the containers
+running, so the Pod stays a residual and the cleanup error names it as
+`node-unreachable: <node>`. Fence, drain or reboot such a node; cleanup
+completes once the Pod is really gone. Cleanup tracks at most 256 Pods per
+session; beyond that it fails closed and keeps its inventory. If any step
+fails, cleanup keeps its inventory and retries.
+
+`--disable-debug-session-pod-grace-enforcement`
+(`BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT`) turns all of this
+off; a marked Pod evicted or deleted with a long grace period can then keep
+running after the session.
 
 For the same reason, a Binding (which since Kubernetes 1.35 copies its labels
 onto the Pod) may carry only the `topology.kubernetes.io/` and
