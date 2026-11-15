@@ -191,7 +191,7 @@ mutable image tag during teardown.
 
 - Verify CI success on the release commit.
 - Open the release PR `chore(release): vX.Y.Z` with `make changelog-release RELEASE=X.Y.Z` (see [CONTRIBUTING.md](../CONTRIBUTING.md#release-process)); check `make changelog` output and the `changes/` fragments first.
-- Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
+- Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags. Which releases receive security fixes is defined in [Supported Versions](../SECURITY.md#supported-versions).
 - Chart versions are selected automatically during release preparation. The
   selector keeps the source chart version independent from the controller tag,
   advances only the patch component beyond the authoritative OCI maximum when
