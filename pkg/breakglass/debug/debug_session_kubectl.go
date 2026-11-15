@@ -986,9 +986,9 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	}
 
 	// Validate capabilities
-	for _, cap := range capabilities {
-		if !h.isCapabilityAllowed(cap, ec.MaxCapabilities) {
-			return kubectlDebugPolicyErrorf("capability %s is not allowed", cap)
+	for _, capability := range capabilities {
+		if !h.isCapabilityAllowed(capability, ec.MaxCapabilities) {
+			return kubectlDebugPolicyErrorf("capability %s is not allowed", capability)
 		}
 	}
 

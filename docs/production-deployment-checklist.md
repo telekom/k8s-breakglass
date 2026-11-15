@@ -13,6 +13,8 @@ This checklist helps ensure a secure and reliable production deployment of the b
 - [ ] DNS configured for breakglass service endpoint
 - [ ] Storage for audit logs (optional, if using persistent audit)
 - [ ] ValidatingAdmissionPolicy component enabled (K8s 1.30+, optional — see [VAP Migration](validating-admission-policy.md))
+- [ ] Cleanup acknowledgement policy component `config/components/cleanup-acknowledgement-policy` enabled (K8s 1.30+, recommended — enforces `acknowledgedBy` in the API server; see [DebugSession cleanup recovery](debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone))
+- [ ] `breakglass-debugsession-cleanup-acknowledger` ClusterRole (`debugsession-cleanup-acknowledger` plus the kustomize name prefix) bound only to operators independent of the sessions they acknowledge
 - [ ] Runtime label reservation component `config/components/runtime-label-reservation` enabled on every cluster where debug pods run, if runtime-security tools (Falco, Tetragon, session recording) trust the debug-session labels (K8s 1.30+, optional — see [Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels))
 
 ### Authentication & Identity

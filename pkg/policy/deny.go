@@ -469,9 +469,9 @@ func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.Ris
 			}
 			// Check capabilities
 			if c.SecurityContext.Capabilities != nil {
-				for _, cap := range c.SecurityContext.Capabilities.Add {
-					if _, ok := rf.Capabilities[string(cap)]; ok {
-						factors = append(factors, fmt.Sprintf("capability:%s:%s", cap, c.Name))
+				for _, capability := range c.SecurityContext.Capabilities.Add {
+					if _, ok := rf.Capabilities[string(capability)]; ok {
+						factors = append(factors, fmt.Sprintf("capability:%s:%s", capability, c.Name))
 					}
 				}
 			}
@@ -521,8 +521,8 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 			}
 			// Add capability scores
 			if c.SecurityContext.Capabilities != nil {
-				for _, cap := range c.SecurityContext.Capabilities.Add {
-					if capScore, ok := rf.Capabilities[string(cap)]; ok {
+				for _, capability := range c.SecurityContext.Capabilities.Add {
+					if capScore, ok := rf.Capabilities[string(capability)]; ok {
 						score += capScore
 					}
 				}

@@ -194,6 +194,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		targetClient = baseClient
 	}
 
+	// Fail before the first target write when a required auxiliary kind is
+	// not served, instead of applying part of the session (#1663).
+	if c.auxiliaryMgr != nil {
+		if err := c.auxiliaryMgr.PreflightAuxiliaryKinds(ctx, ds, &template.Spec, binding, targetClient, targetNs); err != nil {
+			return err
+		}
+	}
+
 	// Ensure target namespace exists
 	ready, err := c.ensureTargetNamespace(ctx, targetClient, targetNs, template.Spec.FailMode, namespaceConstraints, fence)
 	if err != nil {

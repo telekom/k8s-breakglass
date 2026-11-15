@@ -52,8 +52,8 @@ image:
       - RUNBOOK.md
       - MOTD
   build:
-    name: golang:1.27.3
-    digest: sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b
+    name: golang:1.27.4
+    digest: sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   dependencyLock: versions.env
   moduleLock: pwru/go.mod
   installedPackages: /usr/share/breakglass/installed-packages

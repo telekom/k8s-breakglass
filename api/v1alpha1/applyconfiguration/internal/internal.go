@@ -988,6 +988,35 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: withdrawnAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: uid
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementPhase
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementTransition
+  map:
+    fields:
+    - name: cleanupFailed
+      type:
+        scalar: boolean
+    - name: residualSetDigest
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterAuthType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfig
@@ -1544,6 +1573,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approvedBy
       type:
         scalar: string
+    - name: approvedByIdentities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: approvedByIdentitiesIncomplete
+      type:
+        scalar: boolean
     - name: approvedByIdentityProvider
       type:
         scalar: string
@@ -1764,6 +1802,102 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: 90d
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgement
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementObjectStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementObjectStatus
+  map:
+    fields:
+    - name: claimedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: message
+      type:
+        scalar: string
+    - name: phase
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementPhase
+    - name: processedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: retired
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
+          elementRelationship: atomic
+    - name: transition
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementTransition
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementSpec
+  map:
+    fields:
+    - name: acknowledgedBy
+      type:
+        scalar: string
+    - name: identities
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
+          elementRelationship: atomic
+    - name: reason
+      type:
+        scalar: string
+    - name: sessionName
+      type:
+        scalar: string
+    - name: sessionUID
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementStatus
+  map:
+    fields:
+    - name: acknowledgedBy
+      type:
+        scalar: string
+    - name: applied
+      type:
+        scalar: boolean
+    - name: message
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: processedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: reason
+      type:
+        scalar: string
+    - name: retired
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
+          elementRelationship: atomic
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBinding
   map:
     fields:
@@ -2170,6 +2304,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: email
       type:
         scalar: string
+    - name: identities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: identityProviderIssuer
       type:
         scalar: string
@@ -2249,6 +2389,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: requestedByEmail
       type:
         scalar: string
+    - name: requestedByIdentities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: requestedByKubernetesUser
       type:
         scalar: string
@@ -2317,6 +2463,14 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResourceStatus
           elementRelationship: atomic
+    - name: cleanupAcknowledgements
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementStatus
+          elementRelationship: associative
+          keys:
+          - uid
     - name: conditions
       type:
         list:

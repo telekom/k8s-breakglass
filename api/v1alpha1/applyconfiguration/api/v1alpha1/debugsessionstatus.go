@@ -29,6 +29,13 @@ type DebugSessionStatusApplyConfiguration struct {
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
+	// cleanupAcknowledgements records the applied
+	// DebugSessionCleanupAcknowledgements that retired residuals of this
+	// session. Rejections are recorded on the acknowledgement object only.
+	// A record is omitted when it would push the serialized session beyond
+	// the controller's size budget; the retained acknowledgement object then
+	// keeps its provenance.
+	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
@@ -141,6 +148,19 @@ func (b *DebugSessionStatusApplyConfiguration) WithHotfix(value *HotfixStatusApp
 // If called multiple times, the ConnectionLease field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithConnectionLease(value *DebugSessionConnectionLeaseApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ConnectionLease = value
+	return b
+}
+
+// WithCleanupAcknowledgements adds the given value to the CleanupAcknowledgements field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the CleanupAcknowledgements field.
+func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgements(values ...*DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithCleanupAcknowledgements")
+		}
+		b.CleanupAcknowledgements = append(b.CleanupAcknowledgements, *values[i])
+	}
 	return b
 }
 
