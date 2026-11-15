@@ -124,6 +124,8 @@ type DebugSessionController struct {
 	recordingConnections   TerminalRecordingConnectionProvider
 	// Transitional opt-out for #1663; see WithCleanupBackoff.
 	disableCleanupBackoff bool
+	// Opt-out; see WithPodGraceEnforcement.
+	disablePodGraceEnforcement bool
 	// Transitional opt-out; see WithLegacyIdentityFourEyes.
 	legacyIdentityFourEyes bool
 	// cleanupNotBefore maps a session's namespaced name to its
@@ -156,6 +158,24 @@ func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSe
 func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionController {
 	c.disableCleanupBackoff = !enabled
 	return c
+}
+
+// WithPodGraceEnforcement controls whether cleanup shortens a pending
+// deletion of the session's Pods (from an eviction or a delete with a long
+// grace period) to their own terminationGracePeriodSeconds. Enabled by
+// default; disabling is an opt-out.
+func (c *DebugSessionController) WithPodGraceEnforcement(enabled bool) *DebugSessionController {
+	c.disablePodGraceEnforcement = !enabled
+	return c
+}
+
+// enforcePodGrace runs on every cleanup attempt that reaches the target
+// cluster; see shortenPendingPodDeletions.
+func (c *DebugSessionController) enforcePodGrace(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
+	if c.disablePodGraceEnforcement {
+		return nil
+	}
+	return shortenPendingPodDeletions(ctx, target, ds.Name)
 }
 
 // WithLegacyIdentityFourEyes lets cleanup acknowledgements for sessions whose

@@ -58,6 +58,8 @@ type Config struct {
 	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
 	DisableDebugSessionUnservedKindHandling bool
 	DisableDebugSessionCleanupBackoff       bool
+	// Opt-out: do not shorten pending deletions of a session's Pods at cleanup.
+	DisableDebugSessionPodGraceEnforcement bool
 	// Transitional opt-out: compare legacy approvals by approvedBy alone.
 	AllowLegacyIdentityCleanupAcknowledgement bool
 
@@ -211,6 +213,9 @@ func Parse() *Config {
 	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
 		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
 		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")
+	flag.BoolVar(&config.DisableDebugSessionPodGraceEnforcement, "disable-debug-session-pod-grace-enforcement",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT", false),
+		"Opt-out: during DebugSession cleanup, do not shorten a pending deletion of the session's Pods (for example from an eviction or a delete with a long grace period) to their own terminationGracePeriodSeconds")
 	flag.BoolVar(&config.AllowLegacyIdentityCleanupAcknowledgement, "allow-legacy-identity-cleanup-acknowledgement",
 		getEnvBool("BREAKGLASS_ALLOW_LEGACY_IDENTITY_CLEANUP_ACKNOWLEDGEMENT", false),
 		"Transitional escape hatch: accept DebugSessionCleanupAcknowledgements for sessions whose requester, participant or approver identities were recorded incompletely (for example before an upgrade), comparing only the recorded identities")
@@ -302,6 +307,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
 		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
 		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
+		"disable_debug_session_pod_grace_enforcement", c.DisableDebugSessionPodGraceEnforcement,
 		"allow_legacy_identity_cleanup_acknowledgement", c.AllowLegacyIdentityCleanupAcknowledgement,
 		"require_synced_approver_groups", c.RequireSyncedApproverGroups,
 		// OpenTelemetry

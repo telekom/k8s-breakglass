@@ -785,6 +785,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 			reconciler.DebugSessionOptions{
 				DisableUnservedKindHandling:        deps.cliConfig.DisableDebugSessionUnservedKindHandling,
 				DisableCleanupBackoff:              deps.cliConfig.DisableDebugSessionCleanupBackoff,
+				DisablePodGraceEnforcement:         deps.cliConfig.DisableDebugSessionPodGraceEnforcement,
 				AllowLegacyIdentityAcknowledgement: deps.cliConfig.AllowLegacyIdentityCleanupAcknowledgement,
 			},
 			deps.escalationManager, deps.cliConfig.EnableControllers, log, deps.artifactReconciler); err != nil {

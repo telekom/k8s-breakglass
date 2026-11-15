@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -171,18 +172,6 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		assert.NoError(t, kubelet.Delete(ctx, debugPod.DeepCopy(), client.GracePeriodSeconds(0), client.DryRunAll),
 			"the kubelet's final delete carries no propagation policy")
 		assert.NoError(t, forger.Delete(ctx, plainPod.DeepCopy(), long, client.DryRunAll), "unmarked pods are unaffected")
-
-		evict := func(name string, grace *int64) error {
-			return forgerKube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-				DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: grace, DryRun: []string{metav1.DryRunAll}}})
-		}
-		// An Eviction does not carry the Pod's labels, so the cap applies to every Pod.
-		err = evict(debugPod.Name, ptr.To[int64](1_000_000))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "evictions may not set a grace period above 30 seconds")
-		assert.Error(t, evict(plainPod.Name, ptr.To[int64](31)))
-		assert.NoError(t, evict(debugPod.Name, ptr.To[int64](30)))
-		assert.NoError(t, evict(debugPod.Name, nil), "kubectl drain without --grace-period")
 	})
 
 	t.Run("binding annotations are reserved", func(t *testing.T) {
@@ -270,9 +259,15 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 			require.Error(t, err, data)
 			assert.Contains(t, err.Error(), "ControllerRevision data must spell spec, template, metadata, labels and annotations exactly", data)
 		}
-		otherOwner := metav1.OwnerReference{APIVersion: "example.com/v1", Kind: "VirtualMachine", Name: "vm", UID: "u1", Controller: ptr.To(true)}
-		assert.NoError(t, forger.Create(ctx, rawRevision("other-operator-rev", `{"Spec":{}}`, otherOwner), client.DryRunAll),
-			"revisions other controllers own are not StatefulSet history")
+		// The StatefulSet controller claims revisions by owner kind and UID
+		// only, so no ownerReference may exempt a revision from the check.
+		for name, owner := range map[string]metav1.OwnerReference{
+			"other-operator-rev": {APIVersion: "example.com/v1", Kind: "VirtualMachine", Name: "vm", UID: "u1", Controller: ptr.To(true)},
+			"forged-owner-rev":   {APIVersion: "example.com/v1", Kind: "StatefulSet", Name: "sts", UID: "u2", Controller: ptr.To(true)},
+		} {
+			err := forger.Create(ctx, rawRevision(name, `{"Spec":{"template":{"metadata":{"labels":`+reservedLabels+`}}}}`, owner), client.DryRunAll)
+			assert.ErrorContains(t, err, "ControllerRevision data must spell spec, template, metadata, labels and annotations exactly", name)
+		}
 		statefulSetController, _ := as("system:serviceaccount:kube-system:statefulset-controller")
 		assert.NoError(t, statefulSetController.Create(ctx, revision("genuine-rev", selected), client.DryRunAll),
 			"the StatefulSet controller records revisions of reserved templates")
@@ -487,4 +482,68 @@ func TestPlatformCleanupForegroundsPendingOwnerEnvtest(t *testing.T) {
 
 	// Retries keep the Foreground delete and still report the owner as pending.
 	require.ErrorContains(t, deleteTrackedResource(ctx, target, nil, held.DeepCopy()), "pending finalizers")
+}
+
+// TestPlatformCleanupShortensPendingPodGraceEnvtest proves that session
+// cleanup shortens a marked Pod's pending deletion (from an eviction or a
+// delete with a long grace period) to the Pod's own grace period, leaves a
+// same-name replacement alone, and can be turned off.
+func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS required")
+	}
+	env := &envtest.Environment{}
+	cfg, err := env.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
+	target, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	require.NoError(t, err)
+	kube := kubernetes.NewForConfigOrDie(cfg)
+	ctx := context.Background()
+	const ns = "pod-grace"
+	require.NoError(t, target.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "s1"}}
+
+	// No kubelet runs, so a Pod bound to a node stays terminating.
+	newPod := func(name string) *corev1.Pod {
+		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{DebugSessionLabelKey: ds.Name}},
+			Spec: corev1.PodSpec{NodeName: "node-1", TerminationGracePeriodSeconds: ptr.To[int64](30),
+				Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}}
+		require.NoError(t, target.Create(ctx, p))
+		return p
+	}
+	pendingGrace := func(name string) *int64 {
+		live := &corev1.Pod{}
+		require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, live))
+		return live.DeletionGracePeriodSeconds
+	}
+	const long = int64(1_000_000)
+	newPod("deleted")
+	require.NoError(t, target.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleted", Namespace: ns}}, client.GracePeriodSeconds(long)))
+	newPod("evicted")
+	require.NoError(t, kube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: "evicted", Namespace: ns},
+		DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: ptr.To(long)}}))
+	newPod("running")
+
+	disabled := (&DebugSessionController{}).WithPodGraceEnforcement(false)
+	require.NoError(t, disabled.enforcePodGrace(ctx, target, ds))
+	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the opt-out leaves pending deletions alone")
+	assert.Equal(t, ptr.To(long), pendingGrace("evicted"))
+
+	// The controller listed "deleted"; it was then replaced under the same name.
+	stale := &corev1.Pod{}
+	require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: ns, Name: "deleted"}, stale))
+	require.NoError(t, target.Delete(ctx, stale.DeepCopy(), client.GracePeriodSeconds(0)))
+	require.Eventually(t, func() bool {
+		return apierrors.IsNotFound(target.Get(ctx, client.ObjectKeyFromObject(stale), &corev1.Pod{}))
+	}, 10*time.Second, 100*time.Millisecond)
+	newPod("deleted")
+	require.NoError(t, target.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleted", Namespace: ns}}, client.GracePeriodSeconds(long)))
+	require.NoError(t, shortenPendingPodDeletion(ctx, target, stale))
+	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the UID precondition leaves the replacement alone")
+
+	require.NoError(t, (&DebugSessionController{}).enforcePodGrace(ctx, target, ds))
+	assert.Equal(t, ptr.To[int64](30), pendingGrace("deleted"), "a delete with a long grace period is shortened")
+	assert.Equal(t, ptr.To[int64](30), pendingGrace("evicted"), "an eviction with a long grace period is shortened")
+	assert.Nil(t, pendingGrace("running"), "Pods that are not being deleted are left alone")
 }

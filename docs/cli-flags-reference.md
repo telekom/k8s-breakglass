@@ -843,6 +843,18 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 ---
 
+#### `--disable-debug-session-pod-grace-enforcement`
+
+Opt-out. By default, every DebugSession cleanup attempt that reaches the target cluster deletes the session's Pods again whose pending deletion is longer than their own `terminationGracePeriodSeconds` (for example after an eviction or a delete with a long grace period), with that grace period and a UID precondition, so a debug container that ignores SIGTERM does not keep running after the session. Pods that are not being deleted are left alone. This flag turns that off. See [Reserved debug-session labels](security-best-practices.md#reserved-debug-session-labels).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT` |
+
+---
+
 #### `--allow-legacy-identity-cleanup-acknowledgement`
 
 Transitional escape hatch. A DebugSessionCleanupAcknowledgement is rejected by default when an identity of the session's requester, participants or approver is not recorded: the requester's or a participant's identities (`spec.requestedByIdentities`, `status.participants[].identities`, empty without a verified token subject), approver identities from before `status.approval.approvedByIdentities` existed, or `status.approval.approvedByIdentitiesIncomplete`. Four-eyes then cannot compare the acknowledging user with every identity. Sessions created, joined or approved before an upgrade to this version are affected. This flag compares only the identities that were recorded. See [DebugSession cleanup recovery](debug-session-cleanup.md).

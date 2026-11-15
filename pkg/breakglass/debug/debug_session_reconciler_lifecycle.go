@@ -597,6 +597,10 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
+	if err := c.enforcePodGrace(ctx, targetClient, ds); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+
 	// Cleanup auxiliary resources first using the manager
 	auxiliaryCleanupFailed := false
 	if c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0 {

@@ -590,14 +590,15 @@ a debug container that ignores SIGTERM keeps running until the grace period
 ends, and a later delete without one does not shorten it. Non-exempt deletes
 of a marked Pod may therefore not set `gracePeriodSeconds` above the Pod's
 `terminationGracePeriodSeconds`. An Eviction does not go through Pod DELETE
-admission and does not carry the Pod's labels, so the policy cannot tell
-whether it targets a debug Pod; it caps `deleteOptions.gracePeriodSeconds` at
-30 seconds (the Kubernetes default) for every non-exempt eviction in the
-cluster. Trade-off: `kubectl drain --grace-period` above 30 and node
-autoscalers that evict with a longer grace period (the cluster-autoscaler
-sends the Pod's own period, up to `--max-graceful-termination-sec`) are
-denied for Pods with a longer `terminationGracePeriodSeconds` while the policy
-is installed; evictions without a grace period are unaffected.
+admission and does not carry the Pod's labels, so the policy cannot check it.
+The controller closes that gap instead, with or without the policy: on every
+cleanup attempt that reaches the target cluster it deletes the session's Pods
+again whose pending deletion is longer than their own
+`terminationGracePeriodSeconds`, with that grace period and a UID
+precondition. An explicit shorter grace period overrides the pending one.
+Pods that are not being deleted are left alone, so a forged session label
+cannot get an unrelated Pod deleted. `--disable-debug-session-pod-grace-enforcement`
+(`BREAKGLASS_DISABLE_DEBUG_SESSION_POD_GRACE_ENFORCEMENT`) turns this off.
 
 For the same reason, a Binding (which since Kubernetes 1.35 copies its labels
 onto the Pod) may carry only the `topology.kubernetes.io/` and

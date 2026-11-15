@@ -128,6 +128,9 @@ func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 type DebugSessionOptions struct {
 	DisableUnservedKindHandling bool
 	DisableCleanupBackoff       bool
+	// DisablePodGraceEnforcement keeps cleanup from shortening pending
+	// deletions of a session's Pods.
+	DisablePodGraceEnforcement bool
 	// AllowLegacyIdentityAcknowledgement compares sessions with incompletely
 	// recorded party identities by the identities that were recorded.
 	AllowLegacyIdentityAcknowledgement bool
@@ -339,6 +342,7 @@ func Setup(
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail).
 			WithUnservedKindHandling(!debugSessionOptions.DisableUnservedKindHandling).
 			WithCleanupBackoff(!debugSessionOptions.DisableCleanupBackoff).
+			WithPodGraceEnforcement(!debugSessionOptions.DisablePodGraceEnforcement).
 			WithLegacyIdentityFourEyes(debugSessionOptions.AllowLegacyIdentityAcknowledgement)
 		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
 			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace), debug.ClusterConfigCredentialSource(ccProvider)))
