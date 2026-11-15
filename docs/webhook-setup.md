@@ -157,6 +157,107 @@ spec:
       path: /etc/kubernetes/breakglass-webhook-kubeconfig.yaml
 ```
 
+### Reject escalated groups from the identity provider
+
+Breakglass never adds the `escalatedGroup` to a user's token. The webhook
+checks the RBAC permissions of the session's group on behalf of the user. The
+RBAC authorizer runs before the webhook, so a token that already carries an
+`escalatedGroup` gets the access of that group directly. That access has no
+session, no approval, no DenyPolicy check and no Breakglass audit event. The
+same applies to a token whose username or groups start with `system:`, for
+example `system:masters`. Anyone who can add a group to a user in the identity
+provider, or give a user such a name, gets that access.
+
+The target cluster's kube-apiserver must therefore never accept these names
+from a token. Use one or both of the following in its structured
+authentication configuration (`--authentication-config`, Kubernetes 1.30 and
+later).
+
+**Prefix all identity provider groups.** With `claimMappings.groups.prefix`,
+every group from the token starts with that prefix, for example `oidc:`. A
+token can then never produce an unprefixed `escalatedGroup` or a `system:`
+group. For this to hold:
+
+- Set `kubernetes.oidcPrefixes` in the Breakglass configuration to the prefix.
+  The list is empty unless you set it. See
+  [`oidcPrefixes`](configuration-reference.md#oidcprefixes).
+- Do not start any `escalatedGroup` with the prefix.
+- Bind the RBAC roles of an escalation only to the plain `escalatedGroup`,
+  never to the prefixed name. The webhook also checks `<prefix><escalatedGroup>`
+  for a session, so a binding to `oidc:admin` works for sessions of the
+  escalated group `admin`. It also works for every token whose identity
+  provider group is `admin`, because the apiserver maps that group to
+  `oidc:admin`. Find such bindings with
+  `kubectl get clusterrolebindings,rolebindings -A -o wide | grep 'oidc:'` and
+  move them to the plain group.
+- The prefix does not cover the username. Keep the username rule below, or
+  map usernames with a prefix that does not start with `system:`.
+
+**Reject reserved names with validation rules.** Use this when groups must stay
+unprefixed, or as a second line of defence. Give all escalated groups one
+reserved prefix and reject tokens that carry it. The `extra` mapping is not
+part of the protection; it carries the verified issuer that DebugSession
+`exec`, `attach` and `portforward` need (see
+[Keycloak Configuration](keycloak-configuration.md)):
+
+```yaml
+# /etc/kubernetes/authentication-config.yaml
+apiVersion: apiserver.config.k8s.io/v1  # v1beta1 on Kubernetes 1.30 to 1.33
+kind: AuthenticationConfiguration
+jwt:
+  - issuer:
+      url: https://idp.example.com/realms/example
+      audiences:
+        - kubernetes
+    claimMappings:
+      username:
+        claim: email
+        prefix: ""
+      groups:
+        claim: groups
+        prefix: ""
+      extra:
+        - key: identity.t-caas.telekom.com/issuer
+          valueExpression: claims.iss
+    userValidationRules:
+      - expression: "!user.username.startsWith('system:')"
+        message: "username must not use the reserved system: prefix"
+      - expression: "user.groups.all(g, !g.startsWith('system:'))"
+        message: "groups must not use the reserved system: prefix"
+      - expression: "user.groups.all(g, !g.startsWith('breakglass:'))"
+        message: "breakglass: groups are granted by Breakglass sessions only"
+```
+
+`userValidationRules` check the user after the claim mappings, so they work
+the same whether the groups come from one claim, an expression or carry a
+prefix. A token that fails a rule is rejected with `401 Unauthorized`; the
+apiserver logs the rule's message.
+
+To pick the reserved prefix:
+
+- Choose one that no group in your identity provider uses, for example
+  `breakglass:`.
+- Rename every `escalatedGroup` and its RBAC bindings to start with it. List
+  the current values with
+  `kubectl get breakglassescalations -A -o jsonpath='{range .items[*]}{.spec.escalatedGroup}{"\n"}{end}' | sort -u`.
+- If you also prefix the identity provider groups, neither prefix may start
+  with the other (`breakglass:` and `breakglass:oidc:` overlap; `breakglass:`
+  and `oidc:` do not). With disjoint prefixes the group rules always pass, and
+  only the username rule still matters.
+
+Keep the username mapping in line with the identity mapping of Breakglass
+(see [OIDC Compatibility](oidc-compatibility.md)). On Kubernetes 1.29 and
+earlier, without structured authentication configuration, use
+`--oidc-groups-prefix` with the RBAC rules above, and `--oidc-username-prefix`
+with a value that does not start with `system:`; the `--oidc-*` flags cannot
+reject tokens. They also do not pass the issuer extra.
+
+The example was checked against a kind cluster (Kubernetes 1.37) with a test
+issuer. Tokens with the group `breakglass:admin`, the group `system:masters` or
+the username `system:admin` were rejected with `401`; a token with the group
+`developers` was accepted and `kubectl auth whoami` showed the user, the group
+and the issuer extra.
+
 ## Webhook Kubeconfig
 
 ### Configuration File
@@ -613,6 +714,7 @@ If you're experiencing this issue, you'll see:
 - [ ] Health checks working
 - [ ] Connectivity tested
 - [ ] Authorization flow validated
+- [ ] **Target API servers reject `escalatedGroup` and `system:` names from tokens** (see [Reject escalated groups from the identity provider](#reject-escalated-groups-from-the-identity-provider))
 - [ ] **OIDC identity excluded from webhook matchConditions** (multi-cluster setups)
 - [ ] **RBAC permissions granted to OIDC identity** (multi-cluster setups)
 

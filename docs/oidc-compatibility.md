@@ -13,6 +13,11 @@ replacing that provider principal. Changing only the target Kubernetes username
 must not change who can withdraw the session, approve it, or receive its
 notification emails.
 
+This page covers how Breakglass maps identities. The target kube-apiserver
+must also reject tokens that already carry an escalated group or a `system:`
+name; see
+[Reject escalated groups from the identity provider](webhook-setup.md#reject-escalated-groups-from-the-identity-provider).
+
 ## Simple claim and prefix
 
 For a cluster whose API server authenticates `preferred_username: k834798` as

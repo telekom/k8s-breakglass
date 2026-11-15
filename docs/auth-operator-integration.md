@@ -161,6 +161,10 @@ spec:
 > `RoleDefinition`. If you need to escalate to a higher privilege level
 > (e.g., `cluster-admin`), create a separate `BreakglassEscalation`
 > with appropriate approval requirements.
+>
+> No identity provider group may equal an `escalatedGroup`: a token with that
+> group gets the binding through RBAC without a session. See
+> [Reject escalated groups from the identity provider](./webhook-setup.md#reject-escalated-groups-from-the-identity-provider).
 
 ### Binding with Breakglass Fallback
 
