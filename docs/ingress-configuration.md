@@ -344,4 +344,5 @@ If rate limiting logs show ingress IPs instead of client IPs:
 
 - [Security Best Practices](security-best-practices.md)
 - [Configuration Reference](configuration-reference.md)
+- [Network flows](network-flows.md)
 - [Installation Guide](installation.md)
