@@ -750,7 +750,7 @@ List of prefixes to strip from OIDC user group names for cluster matching.
 | Property | Value |
 |----------|-------|
 | **Type** | `[]string` |
-| **Default** | `["oidc:", "keycloak:"]` |
+| **Default** | `[]` (empty, no prefix is stripped; the sample `config/default/config.yaml` sets `["oidc:"]`) |
 | **Example** | `["oidc:", "keycloak:", "adfs/"]` |
 
 ```yaml
