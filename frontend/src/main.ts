@@ -215,7 +215,8 @@ async function initializeSilentRenew() {
   if (!cachedConfig) {
     cacheRuntimeConfig(config);
   }
-  const auth = new AuthService(config);
+  // The silent-renew page runs in a hidden iframe of the app; the app window already monitors the IdP session.
+  const auth = new AuthService({ ...config, monitorSession: false });
   try {
     await auth.handleSilentSigninCallback();
     logger.info("SilentRenew", "Silent renew callback completed successfully");

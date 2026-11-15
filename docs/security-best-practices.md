@@ -294,9 +294,10 @@ The following patterns are stripped from text fields:
 
 1. **Use short-lived tokens** - Configure your IDP to issue tokens with 5-15 minute expiry
 2. **Disable UI refresh tokens** - Do not issue `offline_access` or refresh tokens for breakglass UI sessions; use short access-token lifetimes and require explicit re-authentication instead
-3. **Validate audiences** - Ensure tokens are issued for the breakglass client
-4. **Use HTTPS** - Always use TLS for OIDC communication
-5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
+3. **Keep session monitoring on** (`frontend.monitorSession`, default) - The UI signs out when the identity provider session ends. Where the browser blocks third-party cookies, the access token lifetime is the upper bound of the UI session. See [Configuration Reference](configuration-reference.md#monitorsession-optional).
+4. **Validate audiences** - Ensure tokens are issued for the breakglass client
+5. **Use HTTPS** - Always use TLS for OIDC communication
+6. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
 
 ### Multi-Cluster OIDC Service Account
 

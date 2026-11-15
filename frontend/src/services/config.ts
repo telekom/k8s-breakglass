@@ -58,6 +58,10 @@ function parseRuntimeConfigPayload(data: Record<string, unknown>): Partial<Confi
 
   result.brandingName = (nested.brandingName ?? data.brandingName ?? result.brandingName) as string | undefined;
   result.uiFlavour = (nested.uiFlavour ?? data.uiFlavour ?? result.uiFlavour) as string | undefined;
+  const monitorSession = nested.monitorSession ?? data.monitorSession;
+  if (typeof monitorSession === "boolean") {
+    result.monitorSession = monitorSession;
+  }
 
   return result;
 }
@@ -75,6 +79,9 @@ function mergeConfigValues(target: Partial<Config>, source: Partial<Config>) {
   }
   if (typeof target.uiFlavour === "undefined" && typeof source.uiFlavour !== "undefined") {
     target.uiFlavour = source.uiFlavour;
+  }
+  if (typeof target.monitorSession === "undefined" && typeof source.monitorSession !== "undefined") {
+    target.monitorSession = source.monitorSession;
   }
 }
 
@@ -176,7 +183,13 @@ export default async function getConfig(): Promise<Config> {
 
   if (!resolved.oidcAuthority || !resolved.oidcClientID) {
     logError("ConfigService", "Config missing OIDC fields after all attempts", resolved);
-    return { oidcAuthority: "", oidcClientID: "", brandingName: resolved.brandingName, uiFlavour: resolved.uiFlavour };
+    return {
+      oidcAuthority: "",
+      oidcClientID: "",
+      brandingName: resolved.brandingName,
+      uiFlavour: resolved.uiFlavour,
+      monitorSession: resolved.monitorSession,
+    };
   }
 
   const finalConfig: Config = {
@@ -184,6 +197,7 @@ export default async function getConfig(): Promise<Config> {
     oidcClientID: resolved.oidcClientID,
     brandingName: resolved.brandingName,
     uiFlavour: resolved.uiFlavour,
+    monitorSession: resolved.monitorSession,
   };
 
   const flavourOverride = readBrowserFlavourOverride();

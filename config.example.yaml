@@ -63,6 +63,9 @@ frontend:
   # Supported values: "oss" (default, neutral), "telekom" (branded), or "neutral".
   # This allows the UI look-and-feel to be configured server-side without requiring a rebuild.
   # uiFlavour: "telekom"
+  # Optional: end the UI session when the identity provider session ends
+  # (OIDC check_session_iframe). Default true; false is a transitional opt-out.
+  # monitorSession: false
 # NOTE: Mail configuration has been moved to MailProvider CRD.
 # See config/samples/breakglass_v1alpha1_mailprovider.yaml for examples.
 # Documentation: docs/mail-provider.md

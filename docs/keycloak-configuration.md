@@ -160,7 +160,7 @@ Four Keycloak clients are required for a full breakglass deployment. Each serves
 | **Direct Access Grants** | Enabled (Resource Owner Password Credentials — for E2E tests) |
 | **Service Accounts** | Disabled |
 | **Redirect URIs** | `http://localhost:28081/*`, `*` (restrict in production) |
-| **Web Origins** | `http://localhost:28081`, `*` (restrict in production) |
+| **Web Origins** | `http://localhost:28081`, `*` (restrict in production). Must include the UI origin for session monitoring (`check_session_iframe`). |
 | **Access Token Lifespan** | `300` seconds (5 min) |
 | **Client Session Idle** | `300` seconds (5 min) |
 | **Client Session Max** | `3600` seconds (1 hr) |

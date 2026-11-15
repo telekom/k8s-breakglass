@@ -12,7 +12,7 @@ vi.mock("@/services/logger", () => ({
 }));
 
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect, __authTestHooks } from "./auth";
-import { User, type UserManager } from "oidc-client-ts";
+import { MetadataService, User, UserManager } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
 import type { MultiIDPConfig } from "@/model/multiIDP";
@@ -70,6 +70,40 @@ describe("AuthService", () => {
 
     it("does not request offline_access refresh-token scope", () => {
       expect(authService.userManager.settings.scope).toBe("openid profile email");
+    });
+
+    it("monitors the IdP session by default", () => {
+      expect(authService.userManager.settings.monitorSession).toBe(true);
+      expect(authService.userManager.settings.monitorAnonymousSession).toBe(false);
+    });
+
+    it("does not monitor the IdP session when monitorSession is false", () => {
+      const optedOut = new AuthService({
+        oidcAuthority: "https://example.com",
+        oidcClientID: "test-client",
+        monitorSession: false,
+      });
+      expect(optedOut.userManager.settings.monitorSession).toBe(false);
+    });
+
+    it("warns once when the IdP publishes no check_session_iframe", async () => {
+      const { warn } = await import("@/services/logger");
+      const warnMock = warn as Mock;
+      vi.spyOn(MetadataService.prototype, "getCheckSessionIframe").mockResolvedValue(undefined);
+      vi.spyOn(UserManager.prototype, "getUser").mockResolvedValue(null);
+      warnMock.mockClear();
+      try {
+        const service = new AuthService({ oidcAuthority: "https://example.com", oidcClientID: "test-client" });
+        const loaded = { profile: { sub: "u" }, session_state: "s" } as unknown as User;
+        await service.userManager.events.load(loaded);
+        await service.userManager.events.load(loaded);
+        await vi.waitFor(() =>
+          expect(warnMock).toHaveBeenCalledWith("AuthService", expect.stringContaining("no check_session_iframe")),
+        );
+        expect(warnMock.mock.calls.filter((c) => String(c[1]).includes("no check_session_iframe"))).toHaveLength(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it("does not silently renew real OIDC sessions", async () => {
@@ -601,6 +635,64 @@ describe("AuthService", () => {
 
       expect(userRef.value).toBeUndefined();
       await vi.waitFor(() => expect(removeUser).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  describe("IdP session end", () => {
+    const loadedUser = () =>
+      new User({
+        access_token: "access-token",
+        token_type: "Bearer",
+        session_state: "state-1",
+        profile: { sub: "12345", iss: "https://example.com", aud: "test-client", exp: 0, iat: 0 },
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+    // Signs a user in on a real UserManager whose IdP serves check_session_iframe from idpOrigin.
+    async function signedInService(idpOrigin: string) {
+      vi.spyOn(MetadataService.prototype, "getCheckSessionIframe").mockResolvedValue(`${idpOrigin}/check-session`);
+      const service = new AuthService({ oidcAuthority: "https://example.com", oidcClientID: "test-client" });
+      const removeUser = vi.spyOn(service.userManager, "removeUser").mockResolvedValue(undefined);
+      const loaded = service.userManager.events.load(loadedUser());
+      // The SessionMonitor injects the check_session_iframe; jsdom does not load it, so finish the load here.
+      const frame = await vi.waitFor(() => {
+        const el = document.querySelector<HTMLIFrameElement>(`iframe[src^="${idpOrigin}"]`);
+        expect(el).not.toBeNull();
+        return el as HTMLIFrameElement;
+      });
+      frame.onload?.(new Event("load"));
+      await loaded;
+      await vi.waitFor(() => expect(useUser().value?.profile.sub).toBe("12345"));
+      return { service, removeUser };
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("clears the user and the stored OIDC user when the IdP session ends", async () => {
+      const { service, removeUser } = await signedInService("https://idp-a.example.com");
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      window.dispatchEvent(new MessageEvent("message", { origin: "https://idp-a.example.com", data: "unchanged" }));
+
+      await service.userManager.events._raiseUserSignedOut();
+
+      expect(useUser().value).toBeUndefined();
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(removeUser).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the session when the iframe never saw the IdP session", async () => {
+      const { warn } = await import("@/services/logger");
+      const { service, removeUser } = await signedInService("https://idp-b.example.com");
+      // An "unchanged" from another origin does not count.
+      window.dispatchEvent(new MessageEvent("message", { origin: "https://other.example.com", data: "unchanged" }));
+
+      await service.userManager.events._raiseUserSignedOut();
+
+      expect(useUser().value?.profile.sub).toBe("12345");
+      expect(removeUser).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("AuthService", expect.stringContaining("third-party cookies blocked"));
     });
   });
 

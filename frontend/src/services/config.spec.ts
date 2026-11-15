@@ -44,6 +44,7 @@ describe("Config service", () => {
             frontend: {
               brandingName: "Breakglass Dev Preview",
               uiFlavour: "telekom",
+              monitorSession: false,
             },
           },
         });
@@ -57,6 +58,7 @@ describe("Config service", () => {
     expect(config.oidcClientID).toBe("ui");
     expect(config.brandingName).toBe("Breakglass Dev Preview");
     expect(config.uiFlavour).toBe("telekom");
+    expect(config.monitorSession).toBe(false);
     expect(mockedAxios.get).toHaveBeenCalledWith("/api/config");
   });
 
@@ -81,6 +83,8 @@ describe("Config service", () => {
     const config = await getConfig();
 
     expect(config.uiFlavour).toBe("oss");
+    // Absent from the payload: AuthService treats undefined as enabled.
+    expect(config.monitorSession).toBeUndefined();
     expect(window.localStorage.getItem("k8sBreakglassUiFlavourOverride")).toBe("oss");
   });
 

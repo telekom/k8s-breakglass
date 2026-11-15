@@ -676,6 +676,52 @@ frontend:
 
 **Note**: This controls the Scale UI components appearance (colors, styles). The actual theme must be built into the container image.
 
+#### `monitorSession` (Optional)
+
+End the UI session when the identity provider session ends.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `true` |
+| **Example** | `false` |
+
+```yaml
+frontend:
+  monitorSession: false  # transitional opt-out
+```
+
+The UI uses OIDC Session Management: it loads the `check_session_iframe` that
+the identity provider publishes in its discovery document in a hidden iframe and
+polls it every 2 seconds. When the user signs out at the identity provider (for
+example at the SSO portal or in another tab), the UI removes its tokens and
+shows the login page. With multiple identity providers the UI watches the one
+the user signed in with. The Content Security Policy already allows the
+identity provider origins in `frame-src`.
+
+Requirements and limits:
+
+- The identity provider must publish `check_session_iframe`. Keycloak does.
+  Without it the UI logs one warning and the session ends when the access token
+  expires.
+- The UI origin must be a Web Origin of the client. Keycloak answers the
+  iframe's `init` request with 403 otherwise.
+- The iframe reads the identity provider's session cookie in a third-party
+  context. Browsers that block or partition third-party cookies hide it:
+  Safari and Firefox by default, Chrome when the user blocks them. The UI detects this, logs one warning, stops
+  monitoring and keeps today's behaviour: the session ends when the access token
+  expires. The access token lifetime of the identity provider is then the upper
+  bound of the UI session.
+- The iframe sees the session cookie, not the server-side session. When an
+  administrator ends a session in the identity provider without the browser
+  being involved, the UI notices at token expiry.
+- The API is stateless. An access token that was issued before the logout stays
+  valid until it expires.
+
+`false` restores the previous behaviour, in which the UI session lasts until the
+access token expires. This is a transitional escape hatch and may be removed in
+a later release.
+
 ---
 
 ### `mail` (DEPRECATED - REMOVED)
