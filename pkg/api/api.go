@@ -407,7 +407,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 // buildCSP generates a Content-Security-Policy header value.
 // It includes 'self' for all directives and dynamically adds all configured OIDC authorities
-// to connect-src (for API calls) and frame-src (for silent token refresh via iframe).
+// to connect-src (for API calls) and frame-src (for the OIDC check_session_iframe and the
+// prompt=none session query that the UI loads in hidden iframes).
 // Supports multiple identity providers when using the IDP reconciler.
 func (s *Server) buildCSP() string {
 	// Base CSP with 'self' for all directives
@@ -1045,6 +1046,9 @@ type FrontendConfig struct {
 	OIDCClientID  string `json:"oidcClientID"`
 	BrandingName  string `json:"brandingName,omitempty"`
 	UIFlavour     string `json:"uiFlavour,omitempty"`
+	// MonitorSession tells the UI to watch the identity provider session
+	// (OIDC session management) and sign out when it ends.
+	MonitorSession bool `json:"monitorSession"`
 }
 
 type PublicConfig struct {
@@ -1128,10 +1132,11 @@ func (s *Server) getConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, PublicConfig{
 		Frontend: FrontendConfig{
-			OIDCAuthority: frontendAuthority,
-			OIDCClientID:  clientID,
-			BrandingName:  s.config.Frontend.BrandingName,
-			UIFlavour:     s.config.Frontend.UIFlavour,
+			OIDCAuthority:  frontendAuthority,
+			OIDCClientID:   clientID,
+			BrandingName:   s.config.Frontend.BrandingName,
+			UIFlavour:      s.config.Frontend.UIFlavour,
+			MonitorSession: s.config.Frontend.SessionMonitoringEnabled(),
 		},
 	})
 }

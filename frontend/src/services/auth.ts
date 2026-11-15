@@ -404,6 +404,77 @@ Log.setLogger({
   error: (...args: unknown[]) => logError("oidc-client", ...args),
 });
 
+// check_session_iframe URLs (one per IdP realm) that answered "unchanged" in this tab, i.e. can see the
+// IdP session cookie. Kept in sessionStorage so a reload after an IdP logout still counts as a logout.
+const CONFIRMED_CHECK_SESSION_STORAGE_KEY = "breakglass_check_session_confirmed";
+const checkSessionURLs = new WeakMap<UserManager, string>();
+
+function confirmedCheckSessionURLs(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      getBrowserStorageItem("sessionStorage", CONFIRMED_CHECK_SESSION_STORAGE_KEY) ?? "[]",
+    );
+    return Array.isArray(parsed) ? parsed.filter((u): u is string => typeof u === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function confirmCheckSessionURL(url: string) {
+  const urls = confirmedCheckSessionURLs();
+  if (!urls.includes(url)) {
+    setBrowserStorageItem("sessionStorage", CONFIRMED_CHECK_SESSION_STORAGE_KEY, JSON.stringify([...urls, url]));
+  }
+}
+
+/**
+ * Prepare session monitoring for a manager once a user is present (when oidc-client-ts starts its
+ * SessionMonitor): warn once if the IdP publishes no check_session_iframe, and record whether the
+ * iframe can see the IdP session at all. With third-party cookies blocked the iframe never answers
+ * "unchanged" and reports "changed" right away; see idpSessionConfirmed.
+ */
+function watchCheckSessionIframe(manager: UserManager) {
+  let checked = false;
+  const check = () => {
+    if (checked) return;
+    checked = true;
+    manager.metadataService
+      .getCheckSessionIframe()
+      .then((url) => {
+        if (!url) {
+          warn(
+            "AuthService",
+            "IdP metadata has no check_session_iframe; session monitoring is inactive and the UI session ends when the access token expires",
+          );
+          return;
+        }
+        // oidc-client-ts sets the iframe src to the normalized URL; compare against that form.
+        const { origin, href } = new URL(url);
+        checkSessionURLs.set(manager, url);
+        window.addEventListener("message", (event: MessageEvent) => {
+          if (event.origin !== origin || event.data !== "unchanged") return;
+          // Several realms can share a host: only count the answer of this realm's iframe.
+          const fromThisIframe = Array.from(document.querySelectorAll("iframe")).some(
+            (frame) => frame.src === href && frame.contentWindow === event.source,
+          );
+          if (fromThisIframe) confirmCheckSessionURL(url);
+        });
+      })
+      // Metadata errors are logged by oidc-client-ts (SessionMonitor) itself.
+      .catch(() => undefined);
+  };
+  manager.events.addUserLoaded(check);
+  void manager.getUser().then((u) => {
+    if (u) check();
+  });
+}
+
+/** True once the check_session_iframe of this manager's IdP realm has seen the IdP session in this tab. */
+function idpSessionConfirmed(manager: UserManager): boolean {
+  const url = checkSessionURLs.get(manager);
+  return url !== undefined && confirmedCheckSessionURLs().includes(url);
+}
+
 export const AuthRedirect = "/auth/callback";
 export const AuthSilentRedirect = "/auth/silent-renew";
 
@@ -1013,6 +1084,10 @@ export default class AuthService {
       accessTokenExpiringNotificationTimeInSeconds: 60,
       // Revoke provider-side tokens during sign-out when supported by the IdP
       revokeTokensOnSignout: true,
+      // OIDC Session Management: poll the IdP check_session_iframe and raise userSignedOut when the IdP
+      // session ends. The prompt=none query that follows a change does not store new tokens.
+      monitorSession: this.baseConfig.monitorSession !== false,
+      monitorAnonymousSession: false,
     };
 
     settings.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1027,7 +1102,11 @@ export default class AuthService {
       return fetch(input, nextInit);
     };
 
-    return new UserManager(settings);
+    const manager = new UserManager(settings);
+    if (settings.monitorSession && isBrowser) {
+      watchCheckSessionIframe(manager);
+    }
+    return manager;
   }
 
   private registerUserManagerEvents(manager: UserManager) {
@@ -1078,20 +1157,24 @@ export default class AuthService {
       });
     }
 
+    const endLocalSession = (reason: string) => {
+      user.value = undefined;
+      this.currentIDPName = undefined;
+      currentIDPName.value = undefined;
+      setStoredIdentityProviderName(undefined);
+      setActiveOIDCUserStorageKey(undefined);
+      setCurrentDirectAuthority(undefined);
+      manager.removeUser().catch((error: unknown) => {
+        logError("AuthService", `Failed to remove OIDC user after ${reason}`, error);
+      });
+    };
+
     // Token expired. Automatic silent renewal is disabled, so clear local auth state immediately.
     if (typeof events.addAccessTokenExpired === "function") {
       events.addAccessTokenExpired(() => {
         warn("AuthService", "Access token expired - clearing local session");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
-        user.value = undefined;
-        this.currentIDPName = undefined;
-        currentIDPName.value = undefined;
-        setStoredIdentityProviderName(undefined);
-        setActiveOIDCUserStorageKey(undefined);
-        setCurrentDirectAuthority(undefined);
-        manager.removeUser().catch((error: unknown) => {
-          logError("AuthService", "Failed to remove expired OIDC user", error);
-        });
+        endLocalSession("token expiry");
       });
     }
 
@@ -1108,16 +1191,20 @@ export default class AuthService {
       });
     }
 
-    // User session changed (e.g., another tab logged out)
+    // The IdP session ended (logout at the IdP or in another tab); raised by session monitoring.
     if (typeof events.addUserSignedOut === "function") {
       events.addUserSignedOut(() => {
-        debug("AuthService", "User signed out event (possibly from another tab)");
-        user.value = undefined;
-        this.currentIDPName = undefined;
-        currentIDPName.value = undefined;
-        setStoredIdentityProviderName(undefined);
-        setActiveOIDCUserStorageKey(undefined);
-        setCurrentDirectAuthority(undefined);
+        if (!idpSessionConfirmed(manager)) {
+          // The iframe never saw the IdP session (third-party cookies blocked): a "changed" report
+          // means nothing. oidc-client-ts has stopped polling, so the session ends at token expiry.
+          warn(
+            "AuthService",
+            "check_session_iframe cannot see the IdP session (third-party cookies blocked?); session monitoring stopped, the UI session ends when the access token expires",
+          );
+          return;
+        }
+        warn("AuthService", "Identity provider session ended - clearing local session");
+        endLocalSession("IdP sign-out");
       });
     }
   }

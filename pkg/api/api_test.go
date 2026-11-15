@@ -137,6 +137,34 @@ func TestServer_getConfig(t *testing.T) {
 	assert.Equal(t, cfg.Frontend.BrandingName, response.Frontend.BrandingName)
 }
 
+func TestServer_getConfig_MonitorSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	disabled, enabled := false, true
+
+	for name, tc := range map[string]struct {
+		setting *bool
+		want    bool
+	}{
+		"unset defaults to on": {nil, true},
+		"explicit on":          {&enabled, true},
+		"opt-out":              {&disabled, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := &Server{config: config.Config{Frontend: config.Frontend{MonitorSession: tc.setting}}}
+			router := gin.New()
+			router.GET("/config", server.getConfig)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config", nil))
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var raw map[string]map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+			assert.Equal(t, tc.want, raw["frontend"]["monitorSession"])
+		})
+	}
+}
+
 func TestServer_getIdentityProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -842,6 +870,26 @@ func TestBuildCSP_WithOIDC(t *testing.T) {
 	assert.Contains(t, csp, "connect-src 'self' https://keycloak.example.com")
 	// Should still have frame-ancestors 'self' to allow iframe-based silent token renewal
 	assert.Contains(t, csp, "frame-ancestors 'self'")
+}
+
+// The check_session_iframe of the identity provider must be allowed by
+// frame-src while session monitoring is on; the opt-out leaves the CSP as is.
+func TestBuildCSP_SessionMonitoringFrameSrc(t *testing.T) {
+	disabled := false
+	idp := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://ignored.example.com",
+		ClientID:  "test-client",
+		Keycloak:  &config.KeycloakRuntimeConfig{BaseURL: "https://sso.example.com", Realm: "test"},
+	}
+
+	on := &Server{log: zaptest.NewLogger(t)}
+	on.SetIdentityProvider(idp)
+	off := &Server{log: zaptest.NewLogger(t), config: config.Config{Frontend: config.Frontend{MonitorSession: &disabled}}}
+	off.SetIdentityProvider(idp)
+
+	assert.Contains(t, on.buildCSP(), "frame-src 'self' https://sso.example.com;")
+	assert.Equal(t, on.buildCSP(), off.buildCSP())
 }
 
 func TestNormalizeOrigin(t *testing.T) {

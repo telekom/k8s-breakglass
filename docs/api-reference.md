@@ -854,7 +854,8 @@ GET /api/config
     "oidcAuthority": "https://keycloak.example.com/realms/master",
     "oidcClientID": "breakglass-ui",
     "brandingName": "Breakglass",
-    "uiFlavour": "oss"
+    "uiFlavour": "oss",
+    "monitorSession": true
   }
 }
 ```

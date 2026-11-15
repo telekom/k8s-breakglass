@@ -178,6 +178,18 @@ type Frontend struct {
 	// If empty, defaults to "oss". This allows the UI appearance to be configured server-side
 	// without requiring a rebuild.
 	UIFlavour string `yaml:"uiFlavour"`
+	// MonitorSession makes the UI watch the identity provider session through
+	// the OIDC check_session_iframe and sign out when that session ends.
+	// Defaults to true. Set it to false to restore the previous behaviour, in
+	// which the UI session lasts until the access token expires. Transitional
+	// opt-out.
+	MonitorSession *bool `yaml:"monitorSession,omitempty"`
+}
+
+// SessionMonitoringEnabled reports whether the UI monitors the identity
+// provider session. Unset means enabled.
+func (f Frontend) SessionMonitoringEnabled() bool {
+	return f.MonitorSession == nil || *f.MonitorSession
 }
 
 type Server struct {
