@@ -11,7 +11,7 @@ Ports are the defaults from the flags in `pkg/cli/cli.go`, the server settings
 in `config.yaml` and the manifests in `config/deployment/`. If you change a
 flag or setting, change the rule with it.
 
-All flows are TCP.
+All flows are TCP, except DNS, which also uses UDP.
 
 ## Ingress
 
@@ -40,13 +40,13 @@ settings (see [Configuration Reference](configuration-reference.md#clientauth-op
 | Peer | Port | Used for | Set by | Required |
 |---|---|---|---|---|
 | Hub cluster kube-apiserver | 443 (Service `kubernetes.default`) or the apiserver port | Watches and writes all Breakglass resources, Secrets, leader-election Leases, Events | In-cluster config | Yes |
-| Target cluster kube-apiservers | The port in the server URL, usually 443 or 6443 | SubjectAccessReviews and impersonated checks for sessions, debug session workloads, `kubectl debug`, exec and port-forward, cluster health checks | ClusterConfig `spec.kubeconfigSecretRef` (server in the kubeconfig) or `spec.oidcAuth.server` | Yes, one per ClusterConfig |
+| Target cluster kube-apiservers | The port in the server URL, usually 443 or 6443 | SubjectAccessReviews and impersonated checks for sessions, debug session workloads, `kubectl debug`, exec and port-forward, cluster health checks | ClusterConfig `spec.kubeconfigSecretRef` (server in the kubeconfig), `spec.oidcAuth.server` or `spec.oidcFromIdentityProvider.server` | Yes, one per ClusterConfig |
 | OIDC issuer of each IdentityProvider | Port of the URL, usually 443 | Discovery and JWKS to verify user tokens; the OIDC proxy for the UI | IdentityProvider `spec.oidc.authority` (and `spec.oidc.discoveryURL`, `spec.oidc.jwksEndpoint` when set) | Yes |
 | Keycloak admin API | Port of the URL, usually 443 | Group sync: resolving approver group members | IdentityProvider `spec.keycloak.baseURL` with `spec.groupSyncProvider: Keycloak` | Optional |
 | OIDC issuer for cluster credentials | Port of the URL, usually 443 | Client credentials, refresh token or token exchange for the target cluster credentials | ClusterConfig `spec.oidcAuth.issuerURL`, or the IdentityProvider named in `spec.oidcFromIdentityProvider` | Only with OIDC cluster authentication |
 | SMTP server | MailProvider `spec.smtp.port` (for example 587 or 465) | Notification email | MailProvider `spec.smtp.host` | Optional |
 | Kafka brokers | Port in each broker address | Audit events | AuditConfig `spec.sinks[].kafka.brokers` | Optional |
-| Audit webhook | Port of the URL | Audit events | AuditConfig `spec.sinks[].webhook.url` | Optional |
+| Audit webhook | Port of each URL | Audit events | AuditConfig `spec.sinks[].webhook.url`, and `spec.sinks[].webhook.batchUrl` for batches when set | Optional |
 | Debug session audit webhook | Port of the URL | Debug session audit events | DebugSessionTemplate `spec.audit.destinations[].url` (type `webhook`) | Optional |
 | OTLP collector | 4317 by default (gRPC) | Traces | `telemetry.endpoint` or `--otel-endpoint`, with `telemetry.enabled` or `--otel-enabled` | Optional |
 | S3 endpoint | Port of the URL | Diagnostic artifact storage | `artifacts.s3.endpoint` with `artifacts.enabled` and `artifacts.backend: s3` | Optional |
@@ -94,9 +94,11 @@ networkPolicy:
 
 The admission webhook (9443) and the health port (8082) are open to every
 source because the hub kube-apiserver and the kubelet usually connect from the
-host network, which a `namespaceSelector` cannot match. If your API server
-connects from a known range, replace the rule with an `ipBlock` in your own
-policy.
+host network, which a `namespaceSelector` cannot match. NetworkPolicies are
+additive, so another policy cannot narrow these rules. To restrict them to a
+known range with `ipBlock`, set `networkPolicy.enabled: false` and write one
+complete policy of your own that keeps every required flow from the table
+above.
 
 Restricting `apiPort` to the ingress controller namespace also blocks target
 kube-apiservers or collector Jobs that connect to the pod directly. Send them
