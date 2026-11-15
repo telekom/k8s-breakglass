@@ -211,6 +211,11 @@ synchronous durable audit sink.
 
 ## Limitations
 
+- Validated environments: CI runs the end-to-end proof on Kind only
+  (kindnet, veth `eth0`, the `network-debug` image). The design covers veth
+  and other kernel netdevs, but Cilium, Calico, Multus secondary interfaces
+  and SR-IOV VFs are not yet validated; verify them before relying on a
+  mirror there.
 - Only traffic that passes the kernel datapath of the interface is visible:
   DPDK-bound SR-IOV VFs and hardware-offloaded flows are not mirrored.
 - Packets are mirrored by a tc clsact filter in the source network

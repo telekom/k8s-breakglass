@@ -41,6 +41,11 @@ gone() {
 	return 1
 }
 
+# bounded prints tool output as one short line that is safe in the JSON log.
+bounded() {
+	printf '%s' "$1" | tr '\n' ' ' | tr -d '\042\134' | cut -c1-200
+}
+
 log() {
 	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "${2:-}"
 }
@@ -359,8 +364,16 @@ attach() {
 	# comes up: until then the copies of a replaced interface reach a device
 	# that is down and are never captured.
 	require_identity
-	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact ||
-		fail unsupported-kernel "cannot add clsact to $MIRROR_INTERFACE (sch_ingress)"
+	qdiscs=$(in_target tc qdisc show dev "$MIRROR_INTERFACE" 2>&1) ||
+		fail inspect-failed "cannot list the qdiscs of $MIRROR_INTERFACE: $(bounded "$qdiscs")"
+	if ! printf '%s\n' "$qdiscs" | grep -q '^qdisc clsact '; then
+		# A legacy ingress qdisc of another tool holds the handle clsact needs.
+		if legacy=$(printf '%s\n' "$qdiscs" | grep '^qdisc ingress ffff:'); then
+			fail qdisc-conflict "$MIRROR_INTERFACE has a legacy ingress qdisc, so clsact cannot be added: $(bounded "$legacy")"
+		fi
+		out=$(in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact 2>&1) ||
+			fail unsupported-kernel "cannot add clsact to $MIRROR_INTERFACE (sch_ingress): $(bounded "$out")"
+	fi
 	for hook in $(hooks); do
 		# basic without an ematch matches every packet. Unlike matchall it is
 		# built on every kernel with tc, and unlike u32 its filters are per hook.

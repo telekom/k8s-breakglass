@@ -71,7 +71,7 @@ echo "tc $*" >> "$STATE/calls"
 case "$1 $2" in
 "filter show") cat "$NS.filters.$4.$5" 2>/dev/null; exit 0 ;;
 "filter del") rm -f "$NS.filters.$4.$5"; exit 0 ;;
-"qdisc show") echo "qdisc noqueue 0: root"; exit 0 ;;
+"qdisc show") cat "$NS.qdiscs.$4" 2>/dev/null || echo "qdisc noqueue 0: root"; exit 0 ;;
 esac
 exit 0`,
 }
@@ -452,4 +452,37 @@ case "$*" in *mirred*) echo "Error: Cannot find action mirred" >&2; exit 2 ;; es
 	require.Contains(t, output, `"event":"unsupported-kernel"`)
 	require.Contains(t, output, "act_mirred")
 	require.NotContains(t, h.calls(), "ip link set bgmirror0 up", "the capture never starts")
+}
+
+func TestTrafficMirrorHelperReportsWhyClsactCannotBeAdded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setup           func(h *helperHost)
+		event, detail   string
+		triesToAddQdisc bool
+	}{
+		"legacy ingress qdisc": {func(h *helperHost) {
+			require.NoError(h.t, os.WriteFile(filepath.Join(h.dir, "ns", "target.qdiscs.eth0"),
+				[]byte("qdisc noqueue 0: root refcnt 2\nqdisc ingress ffff: parent ffff:fff1 ----------------\n"), 0o644))
+		}, "qdisc-conflict", "qdisc ingress ffff:", false},
+		"kernel without sch_ingress": {func(h *helperHost) {
+			stub := filepath.Join(h.dir, "bin", "tc")
+			body, err := os.ReadFile(stub)
+			require.NoError(h.t, err)
+			missing := strings.Replace(string(body), `echo "tc $*" >> "$STATE/calls"`, `echo "tc $*" >> "$STATE/calls"
+case "$*" in "qdisc add dev eth0 clsact") echo "Error: Specified qdisc kind is unknown." >&2; exit 2 ;; esac`, 1)
+			require.NoError(h.t, os.WriteFile(stub, []byte(missing), 0o755))
+		}, "unsupported-kernel", "Error: Specified qdisc kind is unknown.", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHelperHost(t)
+			tc.setup(h)
+			code, output := h.run("attach")
+			require.Equal(t, 1, code, output)
+			require.Contains(t, output, `"event":"`+tc.event+`"`)
+			require.Contains(t, output, tc.detail, "the failure carries the tc output")
+			calls := h.calls()
+			require.Equal(t, tc.triesToAddQdisc, strings.Contains(calls, "tc qdisc add dev eth0 clsact"))
+			require.NotContains(t, calls, "tc filter add dev eth0", "no mirror filter is attached")
+		})
+	}
 }

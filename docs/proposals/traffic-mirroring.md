@@ -117,14 +117,18 @@ filter that returns a verdict on the same hook (for example a CNI's eBPF
 program on a Node device) runs first and hides those packets from the
 mirror; the `mirroring` state means attached, not observing.
 
-Because the mechanism is plain `tc` in the source network namespace, it works
-for the primary interface, Multus secondary interfaces and kernel-bound
-SR-IOV VFs alike. DPDK-bound VFs and offloaded traffic that never enters the
-kernel datapath are not visible; this is documented as a limitation.
+Because the mechanism is plain `tc` in the source network namespace, it is
+designed for veth and other kernel netdevs: the primary interface, Multus
+secondary interfaces and kernel-bound SR-IOV VFs. It is validated in CI on
+Kind only (kindnet, veth `eth0`); Cilium, Calico, Multus and SR-IOV are not
+yet validated, and a CNI's eBPF or tcx program can hide packets as described
+above. DPDK-bound VFs and offloaded traffic that never enters the kernel
+datapath are not visible; this is documented as a limitation.
 
 A CNI-specific path (Cilium Hubble, OVS port mirroring) was considered and
 rejected for the first version: it would need a pluggable interface and CNI
-CRDs, while `tc` already covers every CNI that hands packets to the kernel.
+CRDs, while `tc` is designed to work with any CNI that hands packets to the
+kernel (subject to the validation and eBPF caveats above).
 
 ### API
 
