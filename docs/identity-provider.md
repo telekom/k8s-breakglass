@@ -205,7 +205,7 @@ The new value is used:
 |----------|---------------------------|
 | Cluster clients (`ClusterConfig` OIDC) | Right away: the Secret update evicts the cached client and token of every ClusterConfig that uses the Secret, and the next client requests a token with the new value. |
 | Escalation approver group sync (`ApprovalGroupMembersResolved`) | Next escalation status update run, every `--escalation-status-update-interval` (default `10m`). |
-| `GroupSyncHealthy` condition, approver expansion for session notifications, debug session notification exclusions | Next IdentityProvider reconcile. The reconciler watches IdentityProviders, not Secrets, so a Secret-only change is picked up by the periodic resync, at most 10 minutes later. |
+| `GroupSyncHealthy` condition, approver expansion for session notifications | Next IdentityProvider reconcile. The reconciler watches IdentityProviders, not Secrets, so a Secret-only change is picked up by the periodic resync, at most 10 minutes later. |
 | Approver group checks in the authorization webhook | Next check: the IdentityProvider and its Secret are re-read on each check. |
 
 With `--enable-controllers=false` (for example a webhook-only instance) the

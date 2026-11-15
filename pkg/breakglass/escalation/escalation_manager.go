@@ -41,25 +41,6 @@ func (em *EscalationManager) GetResolver() breakglass.GroupMemberResolver {
 	return em.resolver
 }
 
-// LiveResolver returns a resolver that delegates every call to the resolver
-// current at call time, so a long-lived holder follows IdentityProvider and
-// client secret changes applied through SetResolver. It fails closed while
-// group sync is not configured, so callers cannot mistake that for an empty
-// group.
-func (em *EscalationManager) LiveResolver() breakglass.GroupMemberResolver {
-	return liveResolver{em: em}
-}
-
-type liveResolver struct{ em *EscalationManager }
-
-func (l liveResolver) Members(ctx context.Context, group string) ([]string, error) {
-	r := l.em.GetResolver()
-	if _, noop := r.(noopGroupMemberResolver); noop || r == nil {
-		return nil, fmt.Errorf("group sync is not configured")
-	}
-	return r.Members(ctx, group)
-}
-
 // getLogger returns the injected logger or falls back to the global logger.
 func (em *EscalationManager) getLogger() *zap.SugaredLogger {
 	if em.log != nil {

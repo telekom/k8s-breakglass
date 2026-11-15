@@ -119,16 +119,15 @@ func TestEscalationStatusUpdaterUsesRotatedClientSecret(t *testing.T) {
 	require.Equal(t, "rotated-secret", kc.lastUsed())
 }
 
-// TestLiveResolverFollowsReloadedClientSecret proves that a long-lived holder
-// of EscalationManager.LiveResolver (the debug session API) uses the rotated
-// secret once the IdentityProvider reload publishes a new resolver.
-func TestLiveResolverFollowsReloadedClientSecret(t *testing.T) {
+// TestReloadedResolverUsesRotatedClientSecret proves that the resolver the
+// IdentityProvider reconciler publishes on its next reconcile (onReload loads
+// the IdentityProvider and calls SetResolver) uses the rotated secret.
+func TestReloadedResolverUsesRotatedClientSecret(t *testing.T) {
 	kc, serverURL, ca := newRotatingKeycloak(t, "fixture-secret")
 	cli, _ := newMultiIDPStatusTestClient(t, serverURL, ca, breakglassv1alpha1.BreakglassEscalationStatus{})
 	log := zap.NewNop().Sugar()
 	ctx := context.Background()
 	loader := cfgpkg.NewIdentityProviderLoader(cli)
-	// reload mirrors the IdentityProvider reconciler's onReload callback.
 	em := &EscalationManager{Client: cli}
 	reload := func() {
 		idp, err := loader.LoadIdentityProviderByName(ctx, "idp-a")
@@ -136,24 +135,15 @@ func TestLiveResolverFollowsReloadedClientSecret(t *testing.T) {
 		em.SetResolver(SetupResolver(idp, log))
 	}
 	reload()
-	live := em.LiveResolver()
-
-	members, err := live.Members(ctx, "approvers")
+	members, err := em.GetResolver().Members(ctx, "approvers")
 	require.NoError(t, err)
 	require.Equal(t, []string{"approver@example.com"}, members)
 
 	kc.accept("rotated-secret")
 	rotateGroupSyncSecret(t, cli, "rotated-secret")
 	reload()
-	members, err = live.Members(ctx, "approvers")
+	members, err = em.GetResolver().Members(ctx, "approvers")
 	require.NoError(t, err)
 	require.Equal(t, []string{"approver@example.com"}, members)
 	require.Equal(t, "rotated-secret", kc.lastUsed())
-
-	em.SetResolver(SetupResolver(nil, log))
-	_, err = live.Members(ctx, "approvers")
-	require.Error(t, err, "live resolver must fail closed without group sync")
-	em.SetResolver(nil)
-	_, err = live.Members(ctx, "approvers")
-	require.Error(t, err)
 }

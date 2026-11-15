@@ -546,9 +546,11 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
 
-	// The live resolver follows IdentityProvider reloads (including rotated
-	// client secrets) and fails closed while group sync is not configured.
-	debugSessionAPICtrl.WithGroupMemberResolver(escalationManager.LiveResolver())
+	// Only supply an operational resolver; SetupResolver's no-op fallback cannot
+	// distinguish an empty group from unavailable group synchronization.
+	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" && !idpConfig.Keycloak.InsecureSkipVerify {
+		debugSessionAPICtrl.WithGroupMemberResolver(resolver)
+	}
 
 	var artifactReconciler *artifactcontroller.Reconciler
 	var artifactClose func() error
