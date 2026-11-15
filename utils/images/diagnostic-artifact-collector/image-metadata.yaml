@@ -9,10 +9,10 @@ platforms:
   - linux/arm64
 base:
   image: busybox:1.38
-  digest: sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+  digest: sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
 build:
-  image: golang:1.27.3
-  digest: sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b
+  image: golang:1.27.4
+  digest: sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
   purpose: static-stdlib-uploader-and-pinned-ca-bundle
 runtime:
   # The image default and all uploader/summary containers are unprivileged.
@@ -67,11 +67,11 @@ runtime:
 dependencies:
   - name: busybox
     version: 1.38
-    digest: sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+    digest: sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
     license: GPL-2.0-only
   - name: golang
-    version: 1.27.3
-    digest: sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b
+    version: 1.27.4
+    digest: sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d
     purpose: static uploader and safe-copy build toolchain
 contract:
   schema_version: diagnostic-artifact/v1

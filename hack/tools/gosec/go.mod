@@ -1,6 +1,6 @@
 module github.com/telekom/k8s-breakglass/hack/tools/gosec
 
-go 1.27.3
+go 1.27.4
 
 tool github.com/securego/gosec/v2/cmd/gosec
 
