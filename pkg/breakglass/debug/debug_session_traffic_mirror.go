@@ -55,6 +55,11 @@ var errTrafficMirrorDisabled = errors.New("trafficMirror is disabled on this con
 // errTrafficMirrorTeardownPending requeues cleanup while Pods terminate.
 var errTrafficMirrorTeardownPending = errors.New("traffic mirror teardown is pending")
 
+// trafficMirrorTeardownStallTimeout bounds how long a mirror Pod may
+// terminate or a teardown Pod may run before cleanup reports a failure and
+// backs off, for example while the source Node is NotReady.
+const trafficMirrorTeardownStallTimeout = 3 * time.Minute
+
 const (
 	trafficMirrorActiveRequeue  = 15 * time.Second
 	trafficMirrorTeardownSuffix = "-teardown"
@@ -750,6 +755,11 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 		return err
 	}
 	if !agentGone || !captureGone {
+		for _, name := range []string{status.OperationID, status.OperationID + trafficMirrorCaptureSuffix} {
+			if err := c.trafficMirrorStall(ctx, target, ds, name, "terminating"); err != nil {
+				return err
+			}
+		}
 		return fmt.Errorf("%w: mirror Pods are terminating", errTrafficMirrorTeardownPending)
 	}
 	teardownName := status.OperationID + trafficMirrorTeardownSuffix
@@ -796,6 +806,9 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 	if gone, err := deleteTrafficMirrorPod(ctx, target, ds, teardownName); err != nil {
 		return err
 	} else if !gone {
+		if err := c.trafficMirrorStall(ctx, target, ds, teardownName, "terminating"); err != nil {
+			return err
+		}
 		return fmt.Errorf("%w: teardown Pod is terminating", errTrafficMirrorTeardownPending)
 	}
 	if err := deleteTrafficMirrorNetworkPolicy(ctx, target, ds); err != nil {
@@ -862,7 +875,53 @@ func (c *DebugSessionController) runTrafficMirrorTeardown(ctx context.Context, t
 		}
 		return false, "", fmt.Errorf("trafficMirror %s", reason)
 	}
+	if err := c.trafficMirrorStall(ctx, target, ds, name, string(pod.Status.Phase)); err != nil {
+		return false, "", err
+	}
 	return false, "teardown Pod is running", nil
+}
+
+// trafficMirrorStall returns a teardown-stalled error once the named Pod has
+// waited longer than trafficMirrorTeardownStallTimeout: since its deletion
+// while it terminates, else since its creation. The reason is kept for the
+// CleanupFailed condition unless the teardown was already verified; a stall
+// never counts as a verified teardown.
+func (c *DebugSessionController) trafficMirrorStall(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, name, state string) error {
+	pod := &corev1.Pod{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: name}, pod); err != nil {
+		return ctrlclient.IgnoreNotFound(err)
+	}
+	since := pod.CreationTimestamp.Time
+	if pod.DeletionTimestamp != nil {
+		since = pod.DeletionTimestamp.Time
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	waited := now().Sub(since)
+	if since.IsZero() || waited < trafficMirrorTeardownStallTimeout {
+		return nil
+	}
+	readiness := "NotReady"
+	node := &corev1.Node{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.TrafficMirror.NodeName}, node); err != nil {
+		readiness = "unreadable: " + err.Error()
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			readiness = "Ready"
+		}
+	}
+	reason := fmt.Sprintf("teardown-stalled: Pod %s %s for %s on Node %s (%s)", name, state, waited.Round(time.Second), ds.Spec.TrafficMirror.NodeName, readiness)
+	if !ds.Status.TrafficMirror.TeardownVerified {
+		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) {
+			current.TeardownResult = truncate(reason, maxTrafficMirrorMessage)
+		}); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("trafficMirror %s", reason)
 }
 
 func trafficMirrorTerminationMessage(pod *corev1.Pod) string {

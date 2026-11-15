@@ -42,8 +42,9 @@ controller with `--disable-traffic-mirror`.
 - Use an image with `ip`, `tc`, `nsenter`, `timeout` and `tcpdump`, pinned
   by digest, for example the [network-debug](network-debug-image.md) utility.
 - The source Node kernel needs `sch_ingress` (`clsact`), `cls_basic`,
-  `act_mirred`, `act_gact` (drop), `sch_tbf` and `veth`. Nodes booted with
-  `ipv6.disable=1` are supported.
+  `act_mirred`, `act_gact` (drop), `sch_tbf` and `veth`. A missing one fails
+  the session with `unsupported-kernel` and the feature's name. Nodes booted
+  with `ipv6.disable=1` are supported.
 
 ## Template
 
@@ -177,7 +178,10 @@ name fails the teardown instead of being deleted), and succeeds only after
 verifying that none remain;
 an inspection error is a failure, never proof of absence. A failed teardown
 keeps its reason in `status.trafficMirror.teardownResult` and the
-`CleanupFailed` condition. The
+`CleanupFailed` condition. A mirror Pod that keeps terminating or a teardown
+Pod that has not finished after 3 minutes, for example on a NotReady Node,
+is reported the same way as `teardown-stalled` with the Node's readiness,
+and cleanup retries with the usual backoff. The
 session keeps its finalizer and the `CleanupFailed` condition until that
 verification succeeds, which also covers a controller restart and a crashed
 agent. A Node that was deleted and registered again is torn down like the

@@ -197,7 +197,9 @@ fails closed if any identity, label or the interface changed.
    Every inspection must succeed: a namespace or `tc` read error fails the
    teardown instead of counting as absence. A failed teardown Pod is
    replaced; the session keeps its finalizer and reports `CleanupFailed`
-   until the teardown succeeds. A Node that was deleted and registered again
+   until the teardown succeeds. Pods that terminate or a teardown that runs
+   longer than 3 minutes (a NotReady Node) are reported as
+   `teardown-stalled` with the cleanup backoff, never as verified. A Node that was deleted and registered again
    is torn down like the original (it may be the same kernel). A Node that
    is gone cannot be verified, so cleanup stays unresolved until an operator
    confirms the host is gone and removes the finalizer.

@@ -62,6 +62,19 @@ kubectl --kubeconfig "$proof_dir/kubeconfig" label namespace breakglass-node-mai
 	pod-security.kubernetes.io/enforce=privileged
 # The network-debug utility's pinned netshoot base provides ip, tc, nsenter and tcpdump.
 image="${TRAFFIC_MIRROR_IMAGE:-ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70}"
+# TRAFFIC_MIRROR_LOCAL_IMAGE names a locally built image, for example the
+# production utils/network-debug image. Templates require a digest
+# reference, so the image is loaded into the node and named there by its
+# containerd digest; nothing is pulled.
+if [[ -n "${TRAFFIC_MIRROR_LOCAL_IMAGE:-}" ]]; then
+	kind load docker-image --name "$cluster" "$TRAFFIC_MIRROR_LOCAL_IMAGE"
+	local_ref="docker.io/library/${TRAFFIC_MIRROR_LOCAL_IMAGE}"
+	digest=$(docker exec "$node_id" ctr --namespace k8s.io images ls "name==$local_ref" | awk 'NR == 2 { print $3 }')
+	[[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Loaded image $local_ref has no digest" >&2; exit 1; }
+	image="${local_ref%:*}@$digest"
+	docker exec "$node_id" ctr --namespace k8s.io images tag "$local_ref" "$image"
+fi
+printf 'Traffic mirror image: %s\n' "$image"
 TRAFFIC_MIRROR_KIND_KUBECONFIG="$PWD/$proof_dir/kubeconfig" \
 TRAFFIC_MIRROR_KIND_CONTAINER_ID="$node_id" \
 TRAFFIC_MIRROR_KIND_IMAGE="$image" \

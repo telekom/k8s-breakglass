@@ -348,21 +348,44 @@ func TestTrafficMirrorHelperAttachCopiesSourceMTU(t *testing.T) {
 }
 
 func TestTrafficMirrorHelperRescansWhenAPodProcessExits(t *testing.T) {
-	h := newHelperHost(t)
-	h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
-	h.ownVeth("target")
-	// PID 10 of the target Pod is scanned first and exits right after its
-	// namespace was inspected, like a short-lived process the Pod forks.
-	h.process(10, "0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod"+strings.ReplaceAll(helperTargetUID, "-", "_")+".slice/cri-containerd-c.scope", "target")
-	exit := "rm -rf " + filepath.Join(h.dir, "proc", "10")
-	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(exit+"\n"), 0o644))
-	code, output := h.run("teardown")
-	require.Equal(t, 0, code, output)
-	require.Contains(t, output, "teardown-verified")
+	ns := func(h *helperHost) string { return filepath.Join(h.dir, "proc", "10", "ns", "net") }
+	for name, exit := range map[string]func(h *helperHost){
+		// PID 10 is gone right after the scan inspected its namespace.
+		"exited after the scan": func(h *helperHost) {
+			hook := "rm -rf " + filepath.Join(h.dir, "proc", "10")
+			require.NoError(h.t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(hook+"\n"), 0o644))
+		},
+		// PID 10 is a zombie after the scan: /proc/10 stays, its namespace
+		// link does not resolve any more and its state is Z.
+		"zombie after the scan": func(h *helperHost) {
+			hook := "ln -sfn " + filepath.Join(h.dir, "ns", "gone") + " " + ns(h) + " && printf 'State:\\tZ (zombie)\\n' >" +
+				filepath.Join(h.dir, "proc", "10", "status")
+			require.NoError(h.t, os.WriteFile(filepath.Join(h.dir, "ns", "target.on-enter"), []byte(hook+"\n"), 0o644))
+		},
+		// PID 10 is already a zombie when the scan reaches it.
+		"zombie during the scan": func(h *helperHost) {
+			require.NoError(h.t, os.Remove(ns(h)))
+			require.NoError(h.t, os.Symlink(filepath.Join(h.dir, "ns", "gone"), ns(h)))
+			require.NoError(h.t, os.WriteFile(filepath.Join(h.dir, "proc", "10", "status"), []byte("State:\tZ (zombie)\n"), 0o644))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHelperHost(t)
+			h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+			h.ownVeth("target")
+			// PID 10 of the target Pod is scanned first, like a short-lived
+			// process the Pod forks.
+			h.process(10, "0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod"+strings.ReplaceAll(helperTargetUID, "-", "_")+".slice/cri-containerd-c.scope", "target")
+			exit(h)
+			code, output := h.run("teardown")
+			require.Equal(t, 0, code, output)
+			require.Contains(t, output, "teardown-verified")
+		})
+	}
 }
 
 func TestTrafficMirrorHelperNeverDeletesAForeignDevice(t *testing.T) {
-	for _, mode := range []string{"teardown", "attach"} {
+	for mode, reason := range map[string]string{"teardown": "teardown-unverifiable", "attach": "device-conflict"} {
 		t.Run(mode, func(t *testing.T) {
 			h := newHelperHost(t)
 			// Another tool owns a device of the mirror device's name.
@@ -370,6 +393,7 @@ func TestTrafficMirrorHelperNeverDeletesAForeignDevice(t *testing.T) {
 			code, output := h.run(mode)
 			require.Equal(t, 1, code, output)
 			require.Contains(t, output, "does not own")
+			require.Contains(t, output, `"event":"`+reason+`"`)
 			require.NotContains(t, h.calls(), "ip link del", "a foreign device is never deleted")
 			require.NotContains(t, h.calls(), "ip link add", "no mirror is attached next to it")
 		})
@@ -411,4 +435,21 @@ func TestTrafficMirrorHelperTeardownFailsOnUnreadableCgroup(t *testing.T) {
 	require.Equal(t, 1, code, output)
 	require.Contains(t, output, "inspect-failed")
 	require.NotContains(t, output, "teardown-verified", "a read error is never proof that the target is gone")
+}
+
+func TestTrafficMirrorHelperReportsAMissingKernelFeature(t *testing.T) {
+	h := newHelperHost(t)
+	// The kernel lacks act_mirred: adding the mirror filter fails.
+	stub := filepath.Join(h.dir, "bin", "tc")
+	body, err := os.ReadFile(stub)
+	require.NoError(t, err)
+	missing := strings.Replace(string(body), `echo "tc $*" >> "$STATE/calls"`,
+		`echo "tc $*" >> "$STATE/calls"
+case "$*" in *mirred*) echo "Error: Cannot find action mirred" >&2; exit 2 ;; esac`, 1)
+	require.NoError(t, os.WriteFile(stub, []byte(missing), 0o755))
+	code, output := h.run("attach")
+	require.Equal(t, 1, code, output)
+	require.Contains(t, output, `"event":"unsupported-kernel"`)
+	require.Contains(t, output, "act_mirred")
+	require.NotContains(t, h.calls(), "ip link set bgmirror0 up", "the capture never starts")
 }

@@ -30,6 +30,17 @@ ns_id() {
 	stat -L -c '%d:%i' "$1"
 }
 
+# gone PID succeeds when PID has exited: its /proc entry is gone, or it is a
+# zombie, which keeps the entry but no namespaces. A live process whose
+# namespace cannot be read is not gone.
+gone() {
+	[ -e "$proc/$1" ] || return 0
+	case "$(sed -n 's/^State:[[:space:]]*\([A-Z]\).*/\1/p' "$proc/$1/status" 2>/dev/null)" in
+	Z | X) return 0 ;;
+	esac
+	return 1
+}
+
 log() {
 	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "${2:-}"
 }
@@ -64,13 +75,13 @@ pod_pid() {
 		0) ;;
 		1) continue ;;
 		*)
-			[ -e "$proc/$pid" ] || continue
+			if gone "$pid"; then continue; fi
 			fail inspect-failed "cannot read the cgroup of PID $pid"
 			;;
 		esac
 		if ! addrs=$(nsenter --net="$proc/$pid/ns/net" -- ip -o addr show 2>&1); then
 			# The process may have exited since the scan; otherwise fail closed.
-			[ ! -e "$proc/$pid" ] && continue
+			if gone "$pid"; then continue; fi
 			fail inspect-failed "cannot inspect the network namespace of PID $pid: $addrs"
 		fi
 		found=1
@@ -117,8 +128,8 @@ pin() {
 		case "$pinned_pid" in "" | recreated) return 0 ;; esac
 		if eval "command exec $1<\"\$proc/\$pinned_pid/ns/net\"" 2>/dev/null; then
 			pinned_to "$1" "$pinned_pid" "$2" && return 0
-			[ ! -e "$proc/$pinned_pid" ] || confirm_pinned "$1" "$pinned_pid" "$2"
-		elif [ -e "$proc/$pinned_pid" ]; then
+			gone "$pinned_pid" || confirm_pinned "$1" "$pinned_pid" "$2"
+		elif ! gone "$pinned_pid"; then
 			fail inspect-failed "cannot open the network namespace of PID $pinned_pid"
 		fi
 	done
@@ -206,8 +217,12 @@ link_id() {
 # else: it is never deleted, and the script stops.
 owned_device() {
 	! link_absent "$MIRROR_VETH" || return 1
-	in_target ip -o link show dev "$MIRROR_VETH" | grep -F -q "alias bgmirror:$MIRROR_COOKIE" ||
-		fail teardown-unverifiable "a device named $MIRROR_VETH exists that this operation does not own"
+	in_target ip -o link show dev "$MIRROR_VETH" | grep -F -q "alias bgmirror:$MIRROR_COOKIE" && return 0
+	# Before an attach this is a name conflict; at teardown nothing proves
+	# that the operation's own device is gone.
+	reason=teardown-unverifiable
+	[ "$mode" != attach ] || reason=device-conflict
+	fail "$reason" "a device named $MIRROR_VETH exists that this operation does not own"
 }
 
 # require_identity stops the script when MIRROR_INTERFACE is no longer the
@@ -320,7 +335,10 @@ attach() {
 	trap 'detach' EXIT
 	trap 'detach; verify_detached; log mirror-stopped; exit 0' TERM INT
 	# The peer goes straight into the pinned capture namespace.
-	in_target ip link add name "$MIRROR_VETH" type veth peer name "$peer" netns /proc/self/fd/4
+	# A kernel without one of the required features fails here with its name
+	# instead of raw tc output.
+	in_target ip link add name "$MIRROR_VETH" type veth peer name "$peer" netns /proc/self/fd/4 ||
+		fail unsupported-kernel "cannot create the veth mirror device (veth)"
 	# The pair carries mirrored copies only, never a path into the source:
 	# no IPv6 link-local addresses, no ARP, and every frame arriving from the
 	# capture side is dropped before the source network stack.
@@ -329,24 +347,28 @@ attach() {
 	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off mtu "$mtu" alias "bgmirror:$MIRROR_COOKIE"
 	# shellcheck disable=SC2046
 	in_capture ip link set dev "$peer" $(addrgen) arp off mtu "$mtu"
-	in_target tc qdisc add dev "$MIRROR_VETH" clsact
-	in_target tc filter add dev "$MIRROR_VETH" ingress pref 1 protocol all basic action drop
+	in_target tc qdisc add dev "$MIRROR_VETH" clsact || fail unsupported-kernel "cannot add clsact to the mirror device (sch_ingress)"
+	in_target tc filter add dev "$MIRROR_VETH" ingress pref 1 protocol all basic action drop ||
+		fail unsupported-kernel "cannot add the drop filter to the mirror device (cls_basic, act_gact)"
 	in_target ip link set "$MIRROR_VETH" up
 	# Only the mirrored copies pass this bucket; excess copies are dropped.
-	in_target tc qdisc replace dev "$MIRROR_VETH" root tbf rate "${MIRROR_RATE_MBIT:?}mbit" burst 64kb latency 100ms
+	in_target tc qdisc replace dev "$MIRROR_VETH" root tbf rate "${MIRROR_RATE_MBIT:?}mbit" burst 64kb latency 100ms ||
+		fail unsupported-kernel "cannot add the rate limit to the mirror device (sch_tbf)"
 	# tc addresses the interface by name only, so the preflight identity is
 	# checked before the first change to it and again before the capture end
 	# comes up: until then the copies of a replaced interface reach a device
 	# that is down and are never captured.
 	require_identity
-	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact
+	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact ||
+		fail unsupported-kernel "cannot add clsact to $MIRROR_INTERFACE (sch_ingress)"
 	for hook in $(hooks); do
 		# basic without an ematch matches every packet. Unlike matchall it is
 		# built on every kernel with tc, and unlike u32 its filters are per hook.
 		# continue lets classification reach the filters at higher preferences;
 		# mirred's default pipe would end it here and bypass them.
 		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic \
-			action mirred egress mirror dev "$MIRROR_VETH" continue cookie "$MIRROR_COOKIE"
+			action mirred egress mirror dev "$MIRROR_VETH" continue cookie "$MIRROR_COOKIE" ||
+			fail unsupported-kernel "cannot add the $hook mirror filter to $MIRROR_INTERFACE (cls_basic, act_mirred)"
 	done
 	require_identity
 	# Bringing the capture side up last tells the capture Pod that the

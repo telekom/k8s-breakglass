@@ -93,6 +93,8 @@ type accountingLock struct {
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
+	// now is the controller's clock; nil means time.Now. Tests set it.
+	now                      func() time.Time
 	accountingMu             sync.Mutex
 	accountingLast           map[string]time.Time
 	accountingLocks          map[string]*accountingLock

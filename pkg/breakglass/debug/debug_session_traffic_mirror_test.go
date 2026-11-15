@@ -78,6 +78,7 @@ func newMirrorFixture(t *testing.T, request *breakglassv1alpha1.TrafficMirrorReq
 	spoke := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).
 		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			obj.SetUID(types.UID(obj.GetName() + "-uid"))
+			obj.SetCreationTimestamp(metav1.Now()) // as the API server does
 			return cl.Create(ctx, obj, opts...)
 		}}).Build()
 	controller.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return spoke, nil }
@@ -426,6 +427,44 @@ func TestTrafficMirrorPendingTeardownIsNotACleanupFailure(t *testing.T) {
 			require.NoError(t, f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), live))
 			require.False(t, cleanupConditionFailed(live), "a running teardown is not a failed cleanup")
 			require.Zero(t, f.c.cleanupBackoffRemaining(f.ds))
+		})
+	}
+}
+
+func TestTrafficMirrorStalledTeardownIsACleanupFailure(t *testing.T) {
+	for name, stall := range map[string]func(t *testing.T, f *mirrorFixture){
+		// The teardown Pod never starts, for example on a NotReady Node.
+		"teardown Pod pending": func(t *testing.T, f *mirrorFixture) {},
+		// The agent Pod stays terminating and the teardown never starts.
+		"mirror Pod terminating": func(t *testing.T, f *mirrorFixture) {
+			agent := f.pod(t, f.ds.Status.TrafficMirror.OperationID)
+			agent.Finalizers = []string{"example.com/kubelet-gone"}
+			require.NoError(t, f.spoke.Update(t.Context(), agent))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+			require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+			f.runCapture(t)
+			stall(t, f)
+			now := time.Now()
+			f.c.now = func() time.Time { return now }
+			result, err := f.c.handleCleanup(t.Context(), f.ds)
+			require.NoError(t, err)
+			require.Equal(t, time.Second, result.RequeueAfter, "a fresh wait is polled")
+
+			now = now.Add(trafficMirrorTeardownStallTimeout + time.Minute)
+			result, err = f.c.handleCleanup(t.Context(), f.ds)
+			require.NoError(t, err)
+			require.Greater(t, result.RequeueAfter, time.Second, "a stalled teardown backs off like any failed cleanup")
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), live))
+			require.True(t, cleanupConditionFailed(live), "a stalled teardown is a failed cleanup")
+			condition := live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+			require.Contains(t, condition.Message, "teardown-stalled")
+			require.Contains(t, condition.Message, "Node node-a (NotReady)")
+			require.False(t, live.Status.TrafficMirror.TeardownVerified, "a stall never counts as a verified teardown")
+			require.False(t, live.Status.TrafficMirror.Released)
 		})
 	}
 }

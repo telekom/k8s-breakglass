@@ -9,6 +9,7 @@ on:
       - "config/crd/**"
       - "pkg/breakglass/debug/**"
       - "hack/traffic-mirror-kind.sh"
+      - "utils/network-debug/**"
       - ".github/workflows/traffic-mirror.yml"
   push:
     branches: [main]
@@ -47,5 +48,10 @@ jobs:
           printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
           chmod +x kubectl
           echo "$PWD" >> "$GITHUB_PATH"
+      # The proof runs on the documented production image, not its base.
+      - name: Build the production network-debug image
+        run: docker build --file utils/network-debug/Dockerfile --tag network-debug:traffic-mirror utils/network-debug
       - name: Prove mirroring into the capture Pod and zero residual tc state
+        env:
+          TRAFFIC_MIRROR_LOCAL_IMAGE: network-debug:traffic-mirror
         run: bash hack/traffic-mirror-kind.sh
