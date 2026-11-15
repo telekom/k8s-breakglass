@@ -2,7 +2,8 @@
 
 ## Reporting Security Vulnerabilities
 
-**DO NOT** open a public GitHub issue for security vulnerabilities. Instead, please report security issues directly to:
+**DO NOT** open a public GitHub issue for security vulnerabilities. Instead, report them privately with
+[GitHub private vulnerability reporting](https://github.com/telekom/k8s-breakglass/security/advisories/new) or directly to:
 
 📧 **[maximilian.rink@telekom.de](mailto:maximilian.rink@telekom.de)**
 
@@ -155,14 +156,29 @@ This project adheres to:
 
 ---
 
-## Version Support
+## Supported Versions
 
-Only the latest version receives security updates. We recommend:
+Security fixes land on `main` and ship in the next release. There are no
+maintenance branches and no backports: a release is supported until the next
+one is published, and then only the newer release receives fixes.
 
-- Staying on the latest stable release
-- Monitoring GitHub releases for security patches
+| Version | Supported |
+| ------- | --------- |
+| Newest `v0.3.0-rc.N` prerelease | :white_check_mark: |
+| Older `v0.3.0-rc.N` prereleases | :x: upgrade to the newest |
+| `v0.1.0-*` and `v0.0.x` | :x: |
+
+When the first stable `vX.Y.Z` release is published, the newest stable release
+takes over as the supported version.
+
+Fixed vulnerabilities are published as
+[GitHub Security Advisories](https://github.com/telekom/k8s-breakglass/security/advisories)
+for this repository, with the affected and fixed versions. The [changelog](CHANGELOG.md) entry
+of the fixing release names the advisory. We recommend:
+
+- Staying on the newest release
+- Watching this repository's releases and security advisories on GitHub
 - Testing updates in a staging environment before production deployment
-- Subscribing to GitHub notifications for critical security updates
 
 ---
 
@@ -174,6 +190,6 @@ For other inquiries: See [Contributing Guidelines](./CONTRIBUTING.md)
 
 ---
 
-**Last Updated:** November 14, 2025
+**Last Updated:** November 15, 2026
 
 This security policy is subject to change. Check back regularly for updates.
