@@ -595,14 +595,17 @@ The controller closes that gap instead, with or without the policy. On every
 cleanup attempt that reaches the target cluster it finds the session's Pods:
 those the session status records as deployed Pods (read by name and matched
 by UID), and those that descend from a tracked workload (Deployment,
-ReplicaSet, ReplicationController, StatefulSet, DaemonSet, Job or CronJob) by
-owner reference UID, as the garbage collector sees them. Labels play no part,
+ReplicaSet, ReplicationController, StatefulSet, DaemonSet, Job or CronJob)
+through controller references (other owner references, which anyone who may
+create a Pod can add, are ignored). Labels play no part,
 so stripping them hides nothing. Application Pods a session only injected an
 ephemeral container into, and resources an auxiliary template retains with
 `deleteAfter: false` (and their Pods), are left alone. Before it deletes any owner, it records these Pods in the
 session status, so a restart cannot lose the ones it could only find through
 their owners, and it shortens any pending deletion to the Pod's own
-`terminationGracePeriodSeconds` with a UID precondition. After the owners are
+`terminationGracePeriodSeconds` with a UID precondition. It also records the
+ReplicaSets and Jobs between a workload and its Pods, so their Pods stay
+discoverable after the garbage collector removes them. After the owners are
 deleted it looks again, for Pods created or evicted in the meantime, and
 keeps a deleted owner tracked while its dependents are torn down; an owner
 whose delete failed, or whose dependents are held more than two minutes past
@@ -613,8 +616,10 @@ over to the same tracking when the kubectl-debug cleanup deletes it.
 Cleanup completes only once every tracked Pod is gone: NotFound, or replaced
 by an object with another UID; terminating is not gone. While the Pods
 terminate within their deadline, cleanup is in progress, not failed:
-`CleanupFailed` is not set, no `debug_session.cleanup_failed` event is
-emitted, and cleanup is retried every second, shortening a pending deletion
+`CleanupFailed` is `False` with reason `CleanupInProgress` (or
+`CleanupRecovering` after an earlier failure), no
+`debug_session.cleanup_failed` event is emitted, `cleanup_recovered` is
+emitted only once the inventory is empty, and cleanup is retried every second, shortening a pending deletion
 again each time. A Pod still terminating two minutes after its shortened
 deletion deadline is force-deleted with a zero grace period, but only if its
 Node is Ready; either way it is recorded on `CleanupFailed`, with the normal
@@ -622,8 +627,11 @@ backoff and audit. On a Node that is NotReady, Unknown or gone a force delete
 would only remove the API object while the kubelet may keep the containers
 running, so the Pod stays a residual and the cleanup error names it as
 `node-unreachable: <node>`. Fence, drain or reboot such a node; cleanup
-completes once the Pod is really gone. Cleanup tracks at most 256 Pods per
-session; beyond that it fails closed and keeps its inventory. If any step
+completes once the Pod is really gone. Cleanup records at most 256 Pods per
+session. Beyond that it still deletes the owners and shortens every pending
+deletion, but fails closed: it keeps the inventory, reports `CleanupFailed`
+with a "pod tracking capacity exceeded" error, and completes only once a
+sweep finds the Pods gone. If any step
 fails, cleanup keeps its inventory and retries.
 
 `--disable-debug-session-pod-grace-enforcement`
