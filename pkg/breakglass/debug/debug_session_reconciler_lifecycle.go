@@ -604,8 +604,20 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	// Before anything is deleted: once the tracked workloads are gone, a Pod's
 	// lineage can no longer be verified, so keep the inventory for a retry.
-	if err := c.enforcePodGrace(ctx, targetClient, ds); err != nil {
+	sessionPods, err := c.enforcePodGrace(ctx, targetClient, ds)
+	if err != nil {
 		return finishCleanup(errors.Join(append(cleanupErrors, err)...))
+	}
+	// A Pod evicted with a long grace period while this attempt deletes the
+	// workloads keeps it: recheck before the inventory is retired, and keep the
+	// inventory if that fails.
+	finishWithPodGrace := func() error {
+		if err := recheckPodGrace(ctx, targetClient, sessionPods); err != nil {
+			ds.Status.DeployedResources = cleanupBaseline.DeployedResources
+			ds.Status.AllowedPods = cleanupBaseline.AllowedPods
+			cleanupErrors = append(cleanupErrors, err)
+		}
+		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
 	// Cleanup auxiliary resources first using the manager
@@ -628,13 +640,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		return finishCleanup(errors.Join(cleanupErrors...))
+		return finishWithPodGrace()
 	}
 
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	return finishCleanup(errors.Join(cleanupErrors...))
+	return finishWithPodGrace()
 }
 
 const (

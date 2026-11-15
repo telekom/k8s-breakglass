@@ -536,15 +536,24 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 	deleteLong("forged")
 
 	disabled := (&DebugSessionController{}).WithPodGraceEnforcement(false)
-	require.NoError(t, disabled.enforcePodGrace(ctx, target, ds))
+	_, err = disabled.enforcePodGrace(ctx, target, ds)
+	require.NoError(t, err)
 	assert.Equal(t, ptr.To(long), pendingGrace("deleted"), "the opt-out leaves pending deletions alone")
 	assert.Equal(t, ptr.To(long), pendingGrace("evicted"))
 
-	require.NoError(t, (&DebugSessionController{}).enforcePodGrace(ctx, target, ds))
+	verified, err := (&DebugSessionController{}).enforcePodGrace(ctx, target, ds)
+	require.NoError(t, err)
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("deleted"), "a delete with a long grace period is shortened")
 	assert.Equal(t, ptr.To[int64](30), pendingGrace("evicted"), "an eviction with a long grace period is shortened")
 	assert.Nil(t, pendingGrace("running"), "Pods that are not being deleted are left alone")
 	assert.Equal(t, ptr.To(long), pendingGrace("forged"), "a Pod with a forged session label is not the session's")
+	assert.Len(t, verified, 3, "the forged Pod is not verified")
+
+	// Evicted after the sweep, while cleanup deletes the workloads.
+	require.NoError(t, kube.PolicyV1().Evictions(ns).Evict(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: ns},
+		DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: ptr.To(long)}}))
+	require.NoError(t, recheckPodGrace(ctx, target, verified))
+	assert.Equal(t, ptr.To[int64](30), pendingGrace("running"), "the recheck shortens a later eviction")
 
 	// A recorded Pod replaced under the same name after the controller read it.
 	stale := newPod("replaced")

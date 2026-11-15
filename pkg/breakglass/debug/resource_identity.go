@@ -667,27 +667,11 @@ func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.D
 	return ""
 }
 
-// shortenPendingPodDeletions re-deletes the session's Pods whose pending
-// deletion outlasts their own terminationGracePeriodSeconds, for example after
-// an eviction or a delete with a long grace period: a debug container that
-// ignores SIGTERM would otherwise keep running after the session, and the
-// garbage collector does not re-delete Pods that are already terminating.
-// owned must confirm that a Pod belongs to the session, because without the
-// label reservation policy anyone may set the session label.
-func shortenPendingPodDeletions(ctx context.Context, target client.Client, sessionName string, owned func(*corev1.Pod) bool) error {
-	pods := &corev1.PodList{}
-	if err := target.List(ctx, pods, client.MatchingLabels{DebugSessionLabelKey: sessionName}); err != nil {
-		return fmt.Errorf("list debug session pods: %w", err)
-	}
-	var errs []error
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if podDeletionOutlastsGrace(pod) && owned(pod) {
-			errs = append(errs, shortenPendingPodDeletion(ctx, target, pod))
-		}
-	}
-	return errors.Join(errs...)
-}
+// A debug container that ignores SIGTERM keeps running for the whole grace
+// period of a pending deletion, and the garbage collector does not re-delete
+// Pods that are already terminating. Session cleanup therefore shortens the
+// pending deletion of the session's Pods (for example after an eviction or a
+// delete with a long grace period) to their own terminationGracePeriodSeconds.
 
 // shortenTrackedPodDeletion shortens the pending deletion of the Pod at
 // namespace/name if it is still the recorded instance uid.
@@ -726,4 +710,19 @@ func shortenPendingPodDeletion(ctx context.Context, target client.Client, pod *c
 		return fmt.Errorf("shorten pending deletion of pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	return nil
+}
+
+// readErrorRecorder records reads that fail other than with NotFound, so an
+// ownership check that could not read an owner is not taken for a mismatch.
+type readErrorRecorder struct {
+	client.Client
+	err error
+}
+
+func (r *readErrorRecorder) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	err := r.Client.Get(ctx, key, obj, opts...)
+	if err != nil && !apierrors.IsNotFound(err) {
+		r.err = errors.Join(r.err, err)
+	}
+	return err
 }

@@ -1960,7 +1960,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 			expectedUID = cp.CopyUID
 		}
 		// A copy evicted or deleted with a long grace period would otherwise
-		// keep running after the session; see shortenPendingPodDeletions.
+		// keep running after the session; see shortenTrackedPodDeletion.
 		if !h.disablePodGraceEnforcement {
 			if err := shortenTrackedPodDeletion(ctx, targetClient, cp.CopyNamespace, cp.CopyName, expectedUID); err != nil {
 				remainingCopiedPods = append(remainingCopiedPods, cp)
