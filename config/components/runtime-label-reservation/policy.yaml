@@ -186,6 +186,19 @@ spec:
     expression: "has(object.metadata.finalizers) ? object.metadata.finalizers : []"
   - name: oldFinalizers
     expression: "oldObject == null || !has(oldObject.metadata.finalizers) ? [] : oldObject.metadata.finalizers"
+  # A ControllerRevision's data is raw JSON that the StatefulSet controller
+  # decodes with encoding/json, which matches field names case-insensitively
+  # (with Unicode folding: "Spec" and "\u017fpec" both mean spec). The
+  # policy reads the exact names only, so it refuses other spellings along
+  # the path to the template metadata.
+  - name: crData
+    expression: "object != null && object.kind == 'ControllerRevision' && has(object.data) && type(object.data) == map ? object.data : {}"
+  - name: crSpec
+    expression: "has(variables.crData.spec) && type(variables.crData.spec) == map ? variables.crData.spec : {}"
+  - name: crTemplate
+    expression: "has(variables.crSpec.template) && type(variables.crSpec.template) == map ? variables.crSpec.template : {}"
+  - name: crTemplateMeta
+    expression: "has(variables.crTemplate.metadata) && type(variables.crTemplate.metadata) == map ? variables.crTemplate.metadata : {}"
   - name: exempt
     expression: >-
       request.userInfo.username in variables.controllerUsers ||
@@ -262,6 +275,22 @@ spec:
     messageExpression: >-
       'the ControllerRevisions of breakglass debug workloads are reserved for the kube-controller-manager; '
       + request.userInfo.username + ' may not delete them'
+    reason: Forbidden
+  # Only revisions the StatefulSet controller can use (owned by a
+  # StatefulSet, or orphans it may adopt) are checked, so other operators'
+  # ControllerRevisions are unaffected.
+  - expression: >-
+      request.operation == 'DELETE' || variables.exempt || object.kind != 'ControllerRevision' ||
+      (has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(r,
+        has(r.controller) && r.controller && !(r.kind == 'StatefulSet' && r.apiVersion.startsWith('apps/')))) ||
+      (variables.crData.all(k, k.matches('^[[:ascii:]]*$') && (k == 'spec' || k.lowerAscii() != 'spec')) &&
+       variables.crSpec.all(k, k.matches('^[[:ascii:]]*$') && (k == 'template' || k.lowerAscii() != 'template')) &&
+       variables.crTemplate.all(k, k.matches('^[[:ascii:]]*$') && (k == 'metadata' || k.lowerAscii() != 'metadata')) &&
+       variables.crTemplateMeta.all(k, k.matches('^[[:ascii:]]*$') &&
+         (k in ['labels', 'annotations'] || !(k.lowerAscii() in ['labels', 'annotations']))))
+    messageExpression: >-
+      'ControllerRevision data must spell spec, template, metadata, labels and annotations exactly, in ASCII; '
+      + request.userInfo.username + ' may not use other spellings'
     reason: Forbidden
   # A delete with a grace period longer than the Pod's own keeps a marked Pod
   # running past the session (a debug container that ignores SIGTERM runs

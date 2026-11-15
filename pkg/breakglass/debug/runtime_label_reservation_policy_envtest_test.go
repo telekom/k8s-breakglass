@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -249,6 +250,29 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		}
 		denied(t, forger.Create(ctx, revision("forged-rev", selected), client.DryRunAll))
 		assert.NoError(t, forger.Create(ctx, revision("plain-rev", map[string]string{"app": "w"}), client.DryRunAll))
+		// The StatefulSet controller decodes revision data with encoding/json,
+		// which folds field-name case (and Unicode, e.g. U+017F for s), so
+		// other spellings of the path to the template labels must be refused.
+		rawRevision := func(name, data string, owners ...metav1.OwnerReference) *appsv1.ControllerRevision {
+			return &appsv1.ControllerRevision{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, OwnerReferences: owners},
+				Revision: 1, Data: runtime.RawExtension{Raw: []byte(data)}}
+		}
+		reservedLabels := `{"` + DebugSessionLabelKey + `":"forged"}`
+		for i, data := range []string{
+			`{"Spec":{"template":{"metadata":{"labels":` + reservedLabels + `}}}}`,
+			`{"\u017fpec":{"template":{"metadata":{"labels":` + reservedLabels + `}}}}`,
+			`{"spec":{"Template":{"metadata":{"labels":` + reservedLabels + `}}}}`,
+			`{"spec":{"template":{"METADATA":{"labels":` + reservedLabels + `}}}}`,
+			`{"spec":{"template":{"metadata":{"Labels":` + reservedLabels + `}}}}`,
+			`{"spec":{"template":{"metadata":{"annotations":{},"Annotations":` + reservedLabels + `}}}}`,
+		} {
+			err := forger.Create(ctx, rawRevision(fmt.Sprintf("folded-rev-%d", i), data), client.DryRunAll)
+			require.Error(t, err, data)
+			assert.Contains(t, err.Error(), "ControllerRevision data must spell spec, template, metadata, labels and annotations exactly", data)
+		}
+		otherOwner := metav1.OwnerReference{APIVersion: "example.com/v1", Kind: "VirtualMachine", Name: "vm", UID: "u1", Controller: ptr.To(true)}
+		assert.NoError(t, forger.Create(ctx, rawRevision("other-operator-rev", `{"Spec":{}}`, otherOwner), client.DryRunAll),
+			"revisions other controllers own are not StatefulSet history")
 		statefulSetController, _ := as("system:serviceaccount:kube-system:statefulset-controller")
 		assert.NoError(t, statefulSetController.Create(ctx, revision("genuine-rev", selected), client.DryRunAll),
 			"the StatefulSet controller records revisions of reserved templates")

@@ -637,7 +637,11 @@ revision without metadata would inherit the reserved labels. For the same
 reason nobody else may delete a marked ControllerRevision: the StatefulSet
 controller looks its current revision up by name only, so a deleted revision
 could be recreated under that name with a spec-only patch carrying another
-image. A foreign finalizer would otherwise hold
+image. A revision's data is raw JSON that the StatefulSet controller
+decodes case-insensitively (`Spec`, or `spec` spelled with a Unicode long s,
+both mean `spec`), so for revisions owned by a StatefulSet or adoptable by one
+the policy also refuses any spelling of `spec`, `template`, `metadata`,
+`labels` or `annotations` other than the exact ASCII one. A foreign finalizer would otherwise hold
 a deleted debug workload while its Pods keep running; independently of the
 policy, cleanup switches a delete that such a finalizer holds to Foreground, so
 the garbage collector removes the Pods anyway. Orphaning deletes
