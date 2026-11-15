@@ -1254,7 +1254,7 @@ This provides defense-in-depth: RBAC allows the operations directly, and the web
 
 1. **Restrict to specific namespaces** if possible: Use RoleBindings instead of ClusterRoleBindings if debug sessions are limited to specific namespaces
 2. **Audit access**: Enable Kubernetes audit logging for the OIDC identity
-3. **Rotate credentials**: Regularly rotate the OIDC client secret
+3. **Rotate credentials**: Regularly rotate the OIDC client secret (see [Rotating Client Secrets](identity-provider.md#rotating-client-secrets))
 4. **Monitor usage**: Set up alerts for unexpected resource creation by the OIDC identity
 
 ## Troubleshooting
