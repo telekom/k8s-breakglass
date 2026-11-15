@@ -249,7 +249,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 347 | 370 | 271 | 0 | 0 | 0 |
+| controller | 468 | 347 | 371 | 271 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Message catalogue
@@ -1059,6 +1059,7 @@ variable part of a concatenated message.
 | warn | `Failed to parse GVK for pod template resource` | `apiVersion`, `error`, `kind` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to parse GVK for resource` | `apiVersion`, `error`, `kind` | auxiliary_resource_manager.go |
 | warn | `Failed to parse RejectDebugSession request` | `error` | debug_session_api_session_ops.go |
+| warn | `Failed to record the ReplicaSets and Jobs of debug session workloads` | `error` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to recover prepared kubectl-debug operations` | `error` | debug_session_reconciler.go |
 | warn | `Failed to release unused terminal recording reservation` | `error`, `recordingId`, `session` | terminal_recording_api.go |
 | warn | `Failed to repair optional pod template usage; periodic reconciliation will retry` | `error`, `podTemplate` | debug_session_reconciler_lifecycle.go |

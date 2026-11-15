@@ -877,3 +877,118 @@ func TestDiscoverSessionPodsListsEachNamespaceOnce(t *testing.T) {
 	assert.Equal(t, []string{"pa", "pb"}, podNames(found.pods))
 	assert.Equal(t, 1, podLists)
 }
+
+// Workloads tracked only by the pod-template cleanup are followed too.
+func TestCleanupFollowsPodTemplateWorkloads(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "tpl", Namespace: f.pod.Namespace, UID: "tpl-uid"}}
+	require.NoError(t, f.target.Create(ctx, rs))
+	pod := ownedPod("tpl-pod", rs)
+	pod.Namespace = rs.Namespace
+	require.NoError(t, f.target.Create(ctx, pod))
+	f.live.Status.PodTemplateResourceStatuses = append(f.live.Status.PodTemplateResourceStatuses, breakglassv1alpha1.PodTemplateResourceStatus{
+		APIVersion: "apps/v1", Kind: "ReplicaSet", ResourceName: rs.Name, Namespace: rs.Namespace, UID: string(rs.UID), Created: true})
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.Contains(t, f.shortened(), "tpl-pod")
+}
+
+// A kubectl-debug cleanup error does not stop the workload cleanup.
+func TestCleanupDeletesWorkloadDespiteKubectlDebugError(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.live.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+		{CopyName: "copy", CopyNamespace: f.pod.Namespace, UID: "copy-uid"},
+	}}
+	failing := interceptor.NewClient(f.target.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if key.Name == "copy" {
+				return apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, key.Name, errors.New("denied"))
+			}
+			return cl.Get(ctx, key, obj, opts...)
+		},
+	})
+	f.c.targetClients = &mockClientProvider{clients: map[string]client.Client{f.live.Spec.Cluster: failing}}
+	require.Error(t, f.c.cleanupResources(ctx, f.live))
+	assert.True(t, apierrors.IsNotFound(f.target.Get(ctx, client.ObjectKey{Namespace: f.deployment.Namespace, Name: f.deployment.Name}, &appsv1.Deployment{})),
+		"the debug Deployment is still deleted")
+}
+
+// The ReplicaSets of the session's workloads are recorded while the session
+// is active, so a Pod evicted with a long grace period keeps its lineage when
+// its Deployment and ReplicaSet are deleted before cleanup.
+func TestActiveSessionRecordsReplicaSetsForCleanup(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.lineagePod(t, "lineage")
+	watching, err := f.c.targetClientFactory(nil)
+	require.NoError(t, err)
+	require.NoError(t, f.c.recordSessionIntermediates(ctx, watching, f.live))
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return ref.UID == "rs-uid" }))
+
+	f.evicted = true
+	require.NoError(t, f.target.Delete(ctx, &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: f.deployment.Namespace}}))
+	require.NoError(t, f.target.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: f.deployment.Name, Namespace: f.deployment.Namespace}}))
+	_ = f.c.cleanupResources(ctx, f.live)
+	assert.Contains(t, f.shortened(), "lineage", "found through the ReplicaSet recorded while active")
+}
+
+// A failed status write is not reported as progress.
+func TestCleanupStatusWriteFailureIsNotProgress(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(30 * time.Second), 30 }
+	fail := func() error { return apierrors.NewServiceUnavailable("status unavailable") }
+	f.c.client = interceptor.NewClient(f.c.client.(client.WithWatch), interceptor.Funcs{
+		SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return fail()
+		},
+		SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+			return fail()
+		},
+	})
+	err := f.c.cleanupResources(ctx, f.live)
+	require.ErrorContains(t, err, "status unavailable")
+	assert.False(t, cleanupInProgress(err))
+}
+
+// With one genuine residual and a Pod terminating within its grace period,
+// unchanged retries emit cleanup_failed once.
+func TestCleanupFailedAuditIgnoresTerminatingPods(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	inner := f.c.targetClientFactory
+	f.c.targetClientFactory = func(cfg *rest.Config) (client.Client, error) {
+		cl, err := inner(cfg)
+		return interceptor.NewClient(cl.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				if obj.GetName() == f.deployment.Name {
+					return apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, obj.GetName(), errors.New("denied"))
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}), err
+	}
+	for range 3 {
+		require.Error(t, f.c.cleanupResources(ctx, f.live))
+	}
+	failed := 0
+	for _, event := range f.auditTypes(t) {
+		if event == "debug_session.cleanup_failed" {
+			failed++
+		}
+	}
+	assert.Equal(t, 1, failed)
+}
+
+// A terminating Pod that is also listed by the pod-template cleanup is
+// progress there too.
+func TestCleanupTerminatingPodInPodTemplateInventoryIsProgress(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(30 * time.Second), 30 }
+	f.live.Status.PodTemplateResourceStatuses = append(f.live.Status.PodTemplateResourceStatuses, breakglassv1alpha1.PodTemplateResourceStatus{
+		APIVersion: "v1", Kind: "Pod", ResourceName: f.pod.Name, Namespace: f.pod.Namespace, UID: string(f.pod.UID), Created: true})
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
+	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+}

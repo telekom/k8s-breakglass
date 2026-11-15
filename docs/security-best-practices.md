@@ -604,8 +604,11 @@ ephemeral container into, and resources an auxiliary template retains with
 session status, so a restart cannot lose the ones it could only find through
 their owners, and it shortens any pending deletion to the Pod's own
 `terminationGracePeriodSeconds` with a UID precondition. It also records the
-ReplicaSets and Jobs between a workload and its Pods, so their Pods stay
-discoverable after the garbage collector removes them. After the owners are
+ReplicaSets and Jobs between a workload and its Pods, already while the
+session is active, so their Pods stay discoverable after the garbage
+collector removes them (for example when a workload is deleted before
+cleanup). Workloads that the auxiliary and pod-template cleanup track are
+followed the same way. After the owners are
 deleted it looks again, for Pods created or evicted in the meantime, and
 keeps a deleted owner tracked while its dependents are torn down; an owner
 whose delete failed, or whose dependents are held more than two minutes past

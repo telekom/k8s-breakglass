@@ -184,6 +184,11 @@ func (c *DebugSessionController) refreshAllowedPods(ctx context.Context, ds *bre
 		}
 	}
 
+	if !c.disablePodGraceEnforcement {
+		if err := c.recordSessionIntermediates(ctx, targetClient, ds); err != nil {
+			log.Warnw("Failed to record the ReplicaSets and Jobs of debug session workloads", "error", err)
+		}
+	}
 	ds.Status.AllowedPods = allowedPods
 	patchAuxiliaryResourceStatuses := c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0
 	if err := c.updateAuxiliaryResourceReadiness(ctx, ds, targetClient); err != nil {
@@ -556,8 +561,10 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// whose dependents are still there: inventory, but cleanup in progress
 	// rather than failed.
 	var inProgress []breakglassv1alpha1.DeployedResourceRef
+	persisted := true
 	finishCleanup := func(operationErr error) error {
 		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline, inProgress...)
+		persisted = patchErr == nil
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -626,12 +633,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// and the garbage collector does not shorten it. Record them before their
 	// owners are deleted, because afterwards their lineage can no longer be
 	// verified, and shorten any pending deletion.
-	var trackedResources []breakglassv1alpha1.DeployedResourceRef
+	var trackedResources, sweepInputs []breakglassv1alpha1.DeployedResourceRef
 	retained := func(ref breakglassv1alpha1.DeployedResourceRef) bool {
 		return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
 	}
 	if !c.disablePodGraceEnforcement {
-		found, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, retained)
+		var enforceErrs []error
+		found, err := discoverSessionPods(ctx, targetClient, append(slices.Clone(ds.Status.DeployedResources), specializedCleanupRefs(ds)...), retained)
 		if err != nil {
 			return finishCleanup(errors.Join(append(cleanupErrors, err)...))
 		}
@@ -646,7 +654,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 				ds.Status.DeployedResources, _ = trackSessionPod(ds.Status.DeployedResources, &found.pods[i])
 			}
 			if err := shortenPendingPodDeletion(ctx, targetClient, &found.pods[i]); err != nil {
-				cleanupErrors = append(cleanupErrors, err)
+				enforceErrs = append(enforceErrs, err)
 			}
 		}
 		if len(ds.Status.DeployedResources) > before {
@@ -659,10 +667,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status, ds.ResourceVersion = persist.Status, persist.ResourceVersion
 			cleanupBaseline = ds.Status.DeepCopy()
 		}
-		if len(cleanupErrors) > 0 {
-			return finishCleanup(errors.Join(cleanupErrors...))
+		// Only enforcement errors stop the workload cleanup; earlier ones,
+		// for example from the kubectl-debug cleanup, are reported at the end.
+		if len(enforceErrs) > 0 {
+			return finishCleanup(errors.Join(append(cleanupErrors, enforceErrs...)...))
 		}
 		trackedResources = slices.Clone(ds.Status.DeployedResources)
+		sweepInputs = append(slices.Clone(trackedResources), specializedCleanupRefs(ds)...)
 	}
 	// Within their grace period, terminating Pods and owners whose dependents
 	// are still there are progress, not a failure.
@@ -670,7 +681,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if !c.disablePodGraceEnforcement {
 			// Discover again from the recorded owners and Pods, for Pods
 			// created or evicted while this attempt deleted the owners.
-			found, err := discoverSessionPods(ctx, targetClient, trackedResources, retained)
+			found, err := discoverSessionPods(ctx, targetClient, sweepInputs, retained)
 			if err == nil && len(found.pods) > maxTrackedSessionPods {
 				for i := range found.pods {
 					if shortenErr := shortenPendingPodDeletion(ctx, targetClient, &found.pods[i]); shortenErr != nil {
@@ -713,7 +724,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			}
 		}
 		err := finishCleanup(errors.Join(cleanupErrors...))
-		if len(inProgress) > 0 && !cleanupConditionFailed(ds) {
+		if persisted && len(inProgress) > 0 && !cleanupConditionFailed(ds) {
 			return errors.Join(fmt.Errorf("%w: %d debug session resources", errDebugPodsTerminating, len(inProgress)), err)
 		}
 		return err
@@ -956,8 +967,13 @@ func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *b
 		// The condition message names the residual set. Emit once per
 		// distinct set rather than on every retry (#1663); the recovered
 		// event is the final event.
-		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
-			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+		// Compare the residual sets the two conditions name, both without
+		// the resources still in progress.
+		current := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != residualSetDigestFromMessage(current.Message) {
+			var residuals []string
+			withoutInProgress(ds, inProgress, func() { residuals = cleanupResidualIdentities(ds) })
+			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, residuals)
 		}
 	} else if wasRecovering && len(inProgress) == 0 {
 		auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
@@ -986,12 +1002,7 @@ func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 // controller cannot remove something.
 func setCleanupConditionExcept(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef) {
 	recovering := cleanupRecovering(ds)
-	inventory := ds.Status.DeployedResources
-	ds.Status.DeployedResources = slices.DeleteFunc(slices.Clone(inventory), func(ref breakglassv1alpha1.DeployedResourceRef) bool {
-		return slices.ContainsFunc(inProgress, func(p breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(p, ref) })
-	})
-	setCleanupCondition(ds)
-	ds.Status.DeployedResources = inventory
+	withoutInProgress(ds, inProgress, func() { setCleanupCondition(ds) })
 	if len(inProgress) == 0 || cleanupConditionFailed(ds) {
 		return
 	}
@@ -1005,6 +1016,60 @@ func setCleanupConditionExcept(ds *breakglassv1alpha1.DebugSession, inProgress [
 	}
 	condition.Message = fmt.Sprintf("Cleanup in progress; waiting for %d debug session resources to be removed.", len(inProgress))
 	ds.SetCondition(*condition)
+}
+
+// withoutInProgress runs fn while ds's inventories omit the given resources,
+// in every representation (deployed resources, auxiliary and pod-template
+// statuses), then restores them: they stay durable records but are not
+// residuals.
+func withoutInProgress(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef, fn func()) {
+	if len(inProgress) == 0 {
+		fn()
+		return
+	}
+	matches := func(kind, namespace, name, uid string) bool {
+		return slices.ContainsFunc(inProgress, func(p breakglassv1alpha1.DeployedResourceRef) bool {
+			return sameResource(p, breakglassv1alpha1.DeployedResourceRef{Kind: kind, Namespace: namespace, Name: name, UID: uid})
+		})
+	}
+	saved := ds.Status.DeepCopy()
+	ds.Status.DeployedResources = slices.DeleteFunc(slices.Clone(ds.Status.DeployedResources), func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return matches(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+	})
+	ds.Status.PodTemplateResourceStatuses = slices.DeleteFunc(slices.Clone(ds.Status.PodTemplateResourceStatuses), func(s breakglassv1alpha1.PodTemplateResourceStatus) bool {
+		return matches(s.Kind, s.Namespace, s.ResourceName, s.UID)
+	})
+	auxiliary := slices.Clone(ds.Status.AuxiliaryResourceStatuses)
+	for i := range auxiliary {
+		auxiliary[i].AdditionalResources = slices.DeleteFunc(slices.Clone(auxiliary[i].AdditionalResources), func(r breakglassv1alpha1.AdditionalResourceRef) bool {
+			return matches(r.Kind, r.Namespace, r.ResourceName, r.UID)
+		})
+	}
+	ds.Status.AuxiliaryResourceStatuses = slices.DeleteFunc(auxiliary, func(s breakglassv1alpha1.AuxiliaryResourceStatus) bool {
+		return matches(s.Kind, s.Namespace, s.ResourceName, s.UID)
+	})
+	fn()
+	conditions := ds.Status.Conditions
+	ds.Status = *saved
+	ds.Status.Conditions = conditions
+}
+
+// specializedCleanupRefs returns the UID-backed resources that auxiliary and
+// pod-template cleanup track outside status.deployedResources, so their Pods
+// are followed too.
+func specializedCleanupRefs(ds *breakglassv1alpha1.DebugSession) []breakglassv1alpha1.DeployedResourceRef {
+	var refs []breakglassv1alpha1.DeployedResourceRef
+	for _, s := range ds.Status.AuxiliaryResourceStatuses {
+		source := "auxiliary:" + s.Name
+		refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: s.APIVersion, Kind: s.Kind, Namespace: s.Namespace, Name: s.ResourceName, UID: s.UID, Source: source})
+		for _, r := range s.AdditionalResources {
+			refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: r.APIVersion, Kind: r.Kind, Namespace: r.Namespace, Name: r.ResourceName, UID: r.UID, Source: source})
+		}
+	}
+	for _, s := range ds.Status.PodTemplateResourceStatuses {
+		refs = append(refs, breakglassv1alpha1.DeployedResourceRef{APIVersion: s.APIVersion, Kind: s.Kind, Namespace: s.Namespace, Name: s.ResourceName, UID: s.UID, Source: "pod-template"})
+	}
+	return refs
 }
 
 const (
