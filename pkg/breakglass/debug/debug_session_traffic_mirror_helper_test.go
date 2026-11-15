@@ -398,3 +398,17 @@ func TestTrafficMirrorHelperAttachRefusesInterfaceReplacedDuringAttach(t *testin
 		})
 	}
 }
+
+func TestTrafficMirrorHelperTeardownFailsOnUnreadableCgroup(t *testing.T) {
+	h := newHelperHost(t)
+	h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+	// The target's cgroup cannot be read (a directory makes grep fail), so
+	// the scan cannot tell whether PID 100 belongs to the Pod.
+	cgroup := filepath.Join(h.dir, "proc", "100", "cgroup")
+	require.NoError(t, os.Remove(cgroup))
+	require.NoError(t, os.Mkdir(cgroup, 0o755))
+	code, output := h.run("teardown")
+	require.Equal(t, 1, code, output)
+	require.Contains(t, output, "inspect-failed")
+	require.NotContains(t, output, "teardown-verified", "a read error is never proof that the target is gone")
+}

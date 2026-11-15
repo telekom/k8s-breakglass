@@ -54,9 +54,20 @@ pod_pid() {
 	alt=$(printf '%s' "$uid" | tr - _)
 	found=""
 	for cgroup in "$proc"/[0-9]*/cgroup; do
-		grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null || continue
 		pid=${cgroup#"$proc"/}
 		pid=${pid%/cgroup}
+		# An unreadable cgroup of a live process is never taken for another
+		# Pod's, so a running target cannot look gone.
+		rc=0
+		grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null || rc=$?
+		case "$rc" in
+		0) ;;
+		1) continue ;;
+		*)
+			[ -e "$proc/$pid" ] || continue
+			fail inspect-failed "cannot read the cgroup of PID $pid"
+			;;
+		esac
 		if ! addrs=$(nsenter --net="$proc/$pid/ns/net" -- ip -o addr show 2>&1); then
 			# The process may have exited since the scan; otherwise fail closed.
 			[ ! -e "$proc/$pid" ] && continue
