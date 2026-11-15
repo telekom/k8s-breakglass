@@ -840,3 +840,33 @@ func TestGetClientset_MissingClusterConfig(t *testing.T) {
 	assert.Nil(t, cs)
 	assert.Contains(t, err.Error(), "get REST config for clientset")
 }
+
+func TestGetRESTConfigForCleanupOperationAcceptsDeletingClusterConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	now := metav1.Now()
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid",
+			Finalizers: []string{"test.example/finalizer"}, DeletionTimestamp: &now},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"}},
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default", ResourceVersion: "1"}, Data: map[string][]byte{"value": mustBuildKubeconfigYAML("https://10.0.0.10:6443")}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cc.DeepCopy(), secret.DeepCopy()).Build()
+	provider := NewClientProvider(client, zaptest.NewLogger(t).Sugar()).WithLiveReader(client)
+
+	_, _, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.ErrorContains(t, err, "being deleted", "privileged writers never use a deleting ClusterConfig")
+
+	_, snapshot, err := provider.GetRESTConfigForCleanupOperation(context.Background(), "default/privileged")
+	require.NoError(t, err, "cleanup must not deadlock with the ClusterConfig deletion it blocks")
+	require.NoError(t, provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot))
+
+	// The credential fence still applies to cleanup snapshots.
+	changed := &corev1.Secret{}
+	require.NoError(t, client.Get(context.Background(), ctrlclient.ObjectKeyFromObject(secret), changed))
+	changed.Data["value"] = []byte("changed")
+	require.NoError(t, client.Update(context.Background(), changed))
+	require.ErrorContains(t, provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot), "changed")
+	provider.ReleasePrivilegedOperationClusterConfig(snapshot)
+}

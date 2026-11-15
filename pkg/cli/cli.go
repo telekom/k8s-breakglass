@@ -51,6 +51,7 @@ type Config struct {
 	BreakglassNamespace     string
 	DisableEmail            bool
 	DisableSessionRateLimit bool
+	DisableTrafficMirror    bool
 	// RequireSyncedApproverGroups denies approval by approver groups that have
 	// not been synced yet instead of falling back to token groups.
 	RequireSyncedApproverGroups bool
@@ -205,6 +206,8 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.DisableTrafficMirror, "disable-traffic-mirror", getEnvBool("BREAKGLASS_DISABLE_TRAFFIC_MIRROR", false),
+		"Refuse new trafficMirror debug sessions; existing mirrors are still removed")
 	flag.BoolVar(&config.DisableDebugSessionUnservedKindHandling, "disable-debug-session-unserved-kind-handling",
 		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", false),
 		"Transitional escape hatch: skip the DebugSession activation preflight that fails a session early when a required auxiliary resource kind is not served by the target cluster")
@@ -300,6 +303,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"disable_traffic_mirror", c.DisableTrafficMirror,
 		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
 		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
 		"allow_legacy_identity_cleanup_acknowledgement", c.AllowLegacyIdentityCleanupAcknowledgement,
