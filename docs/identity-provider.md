@@ -187,6 +187,78 @@ When `groupSyncProvider: Keycloak` is set, the `keycloak` section configures how
 > - `spec.keycloak.baseURL` — The Keycloak server root URL (e.g., `https://keycloak.example.com`)
 > - `spec.issuer` — Must match the `iss` claim in JWT tokens (for Keycloak: `https://keycloak.example.com/realms/{realm}`)
 
+## Rotating Client Secrets
+
+Breakglass holds two kinds of confidential OIDC client secrets. The user login
+client (`spec.oidc.clientID`) is a public client and has no secret.
+
+| Secret | Referenced by |
+|--------|---------------|
+| Keycloak group-sync client secret | `IdentityProvider` `spec.keycloak.clientSecretRef` |
+| Cluster OIDC client secret | `ClusterConfig` `spec.oidcAuth.clientSecretRef` or `spec.oidcFromIdentityProvider.clientSecretRef`; without either, `oidcFromIdentityProvider` falls back to the IdentityProvider's `spec.keycloak.clientSecretRef` |
+
+Update the referenced Secret **in place** (same name and key). No restart is
+needed when the manager runs with `--enable-controllers=true` (the default).
+The new value is used:
+
+| Consumer | When the new value is used |
+|----------|---------------------------|
+| Cluster clients (`ClusterConfig` OIDC) | Right away: the Secret update evicts the cached client and token of every ClusterConfig that uses the Secret, and the next client requests a token with the new value. |
+| Escalation approver group sync (`ApprovalGroupMembersResolved`) | Next escalation status update run, every `--escalation-status-update-interval` (default `10m`). |
+| `GroupSyncHealthy` condition, approver expansion for session notifications | Next IdentityProvider reconcile. The reconciler watches IdentityProviders, not Secrets, so a Secret-only change is picked up by the periodic resync, at most 10 minutes later. |
+| Approver group checks in the authorization webhook | Next check: the IdentityProvider and its Secret are re-read on each check. |
+
+With `--enable-controllers=false` (for example a webhook-only instance) the
+Secret watch, the IdentityProvider reconciler and the escalation status updater
+do not run. Cluster tokens then
+switch to the new value when the cached token expires, and the approver
+expansion keeps the startup value. **Restart these instances** after a rotation.
+
+### Procedure
+
+1. **Add a new secret at the IdP and keep the old one valid.** Keycloak's
+   client secret rotation client policy keeps the previous secret valid as the
+   "rotated secret" for a configured period. For an IdP that cannot keep two
+   secrets valid, create a second client instead and switch `clientID` together
+   with the Secret reference.
+2. **Update the Secret in place:**
+
+   ```bash
+   kubectl -n <namespace> create secret generic <secret-name> \
+     --from-literal=<key>=<new-secret> --dry-run=client -o yaml \
+     | kubectl apply -f -
+   ```
+
+3. **Verify** (see below). Wait at least one IdentityProvider resync (10 minutes)
+   and one `--escalation-status-update-interval`, or restart the manager.
+4. **Revoke the old secret** at the IdP.
+
+Revoking the old secret before the Secret is updated breaks every new token
+request until the update lands: cluster connections fail once their cached
+token expires, and group sync reports `GroupSyncFailed` on escalations and
+`GroupSyncHealthy=False` with reason `KeycloakAuthenticationFailed` on the
+IdentityProvider. Tokens issued before the switch stay valid until they expire.
+
+### Verification
+
+```bash
+# Group-sync client secret: must be True with reason GroupSyncOperational after the next resync
+kubectl get identityprovider <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="GroupSyncHealthy")]}'
+
+# Approver group sync on escalations
+kubectl get breakglassescalation -A \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")].reason}{"\n"}{end}'
+
+# Cluster OIDC client secret: the Secret update invalidates the cluster cache
+kubectl logs -n <breakglass-namespace> deploy/<manager> | grep 'Invalidated cluster caches due to OIDC secret change'
+```
+
+The metric `breakglass_cluster_cache_invalidations_total{reason="oidc_secret_update"}`
+counts the cluster cache evictions caused by OIDC Secret updates. Failed
+group-sync health checks emit the `GroupSyncKeycloakHealthCheckFailed` event
+on the IdentityProvider.
+
 ## Cross-Namespace Secrets
 
 IdentityProvider is cluster-scoped, meaning it can reference secrets in any namespace. Specify the namespace in `SecretKeyReference`:
