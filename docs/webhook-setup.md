@@ -605,7 +605,7 @@ If you're experiencing this issue, you'll see:
 
 - [ ] TLS certificates configured and valid
 - [ ] Strong authentication tokens generated
-- [ ] Network policies restrict webhook access
+- [ ] Network policies restrict webhook access (see [Network flows](./network-flows.md))
 - [ ] Token rotation scheduled
 - [ ] Webhook timeout set (3-5s)
 - [ ] Failure policy set to Deny
@@ -619,6 +619,7 @@ If you're experiencing this issue, you'll see:
 ## Related Resources
 
 - [ClusterConfig](./cluster-config.md) - Cluster configuration
+- [Network flows](./network-flows.md) - Ports and peers for NetworkPolicies and firewalls
 - [BreakglassSession](./breakglass-session.md) - Session management
 - [DenyPolicy](./deny-policy.md) - Access restrictions
 - [API Reference](./api-reference.md) - REST API documentation

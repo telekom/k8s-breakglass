@@ -19,6 +19,9 @@ The breakglass configuration file controls:
 - **OIDC/IDP authentication** - Configured via **IdentityProvider CRDs**. See [Identity Provider documentation](identity-provider.md).
 - **Email notifications** - Configured via **MailProvider CRDs**. See [Mail Provider documentation](mail-provider.md).
 
+For the ports these settings open and the peers the manager connects to, see
+[Network flows](network-flows.md).
+
 ## Configuration File Format
 
 ```yaml
