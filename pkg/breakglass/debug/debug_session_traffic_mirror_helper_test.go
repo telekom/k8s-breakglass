@@ -60,6 +60,10 @@ case "$1 $2" in
 	: >"$(readlink -f "${11}").link.$9"
 	exit 0 ;;
 "link del") rm -f "$NS.link.$3"; exit 0 ;;
+"link set")
+	# link set dev DEV ... alias ALIAS records the alias like ip -o shows it.
+	case " $* " in *" alias "*) alias=${*##* alias }; printf '\\    alias %s\n' "${alias%% *}" >>"$NS.link.$4" ;; esac
+	exit 0 ;;
 esac
 exit 0`,
 	"tc": `#!/bin/sh
@@ -132,6 +136,15 @@ func helperLink(index int, name string) string {
 	return fmt.Sprintf("%d: %s: <BROADCAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default \\    link/ether 02:00:00:00:00:%02x brd ff:ff:ff:ff:ff:ff\n", index, name, index)
 }
 
+// ownVeth marks the namespace's mirror device as this operation's.
+func (h *helperHost) ownVeth(namespace string) {
+	h.t.Helper()
+	file, err := os.OpenFile(filepath.Join(h.dir, "ns", namespace+".link."+helperVeth), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(h.t, err)
+	_, err = file.WriteString("\\    alias bgmirror:0123456789abcdef0123456789abcdef\n")
+	require.NoError(h.t, errors.Join(err, file.Close()))
+}
+
 // process places a fake PID with a cgroup in a namespace.
 func (h *helperHost) process(pid int, cgroup, namespace string) {
 	h.t.Helper()
@@ -169,6 +182,7 @@ func (h *helperHost) calls() string {
 func TestTrafficMirrorHelperTeardownVerifiesCleanTarget(t *testing.T) {
 	h := newHelperHost(t)
 	h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+	h.ownVeth("target")
 	code, output := h.run("teardown")
 	require.Equal(t, 0, code, output)
 	require.Contains(t, output, "teardown-verified")
@@ -280,6 +294,7 @@ func TestTrafficMirrorHelperTeardownFindsRenamedInterface(t *testing.T) {
 	h := newHelperHost(t)
 	// eth0 was renamed to net1 after the attach; its mirror filters moved along.
 	h.namespace("target", "3: net1    inet "+helperTargetIP+"/24 scope global net1", "net1", helperVeth)
+	h.ownVeth("target")
 	filter := "filter protocol all pref 50001 basic chain 0 handle 0x1 \n\taction order 1: mirred (Egress Mirror to device " +
 		helperVeth + ") continue\n\tcookie 0123456789abcdef0123456789abcdef\n"
 	for _, hook := range []string{"ingress", "egress"} {
@@ -335,6 +350,7 @@ func TestTrafficMirrorHelperAttachCopiesSourceMTU(t *testing.T) {
 func TestTrafficMirrorHelperRescansWhenAPodProcessExits(t *testing.T) {
 	h := newHelperHost(t)
 	h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+	h.ownVeth("target")
 	// PID 10 of the target Pod is scanned first and exits right after its
 	// namespace was inspected, like a short-lived process the Pod forks.
 	h.process(10, "0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod"+strings.ReplaceAll(helperTargetUID, "-", "_")+".slice/cri-containerd-c.scope", "target")
@@ -343,4 +359,19 @@ func TestTrafficMirrorHelperRescansWhenAPodProcessExits(t *testing.T) {
 	code, output := h.run("teardown")
 	require.Equal(t, 0, code, output)
 	require.Contains(t, output, "teardown-verified")
+}
+
+func TestTrafficMirrorHelperNeverDeletesAForeignDevice(t *testing.T) {
+	for _, mode := range []string{"teardown", "attach"} {
+		t.Run(mode, func(t *testing.T) {
+			h := newHelperHost(t)
+			// Another tool owns a device of the mirror device's name.
+			h.namespace("target", "3: eth0    inet "+helperTargetIP+"/24 scope global eth0", "eth0", helperVeth)
+			code, output := h.run(mode)
+			require.Equal(t, 1, code, output)
+			require.Contains(t, output, "does not own")
+			require.NotContains(t, h.calls(), "ip link del", "a foreign device is never deleted")
+			require.NotContains(t, h.calls(), "ip link add", "no mirror is attached next to it")
+		})
+	}
 }

@@ -523,6 +523,12 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	}
 	if ds.Status.TrafficMirror != nil && !ds.Status.TrafficMirror.Released {
 		if err := c.cleanupTrafficMirror(ctx, ds); err != nil {
+			// Terminating mirror Pods or a running teardown are progress: the
+			// caller requeues without recording a failure, and an existing
+			// CleanupFailed condition stays until the teardown is verified.
+			if errors.Is(err, errTrafficMirrorTeardownPending) {
+				return err
+			}
 			setCleanupCondition(ds)
 			if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
 				return errors.Join(err, patchErr)

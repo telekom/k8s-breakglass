@@ -190,6 +190,15 @@ link_id() {
 		awk '{ id = $1; for (i = 2; i < NF; i++) if ($i ~ /^link\//) id = id " " $(i + 1); print id }'
 }
 
+# owned_device succeeds when the mirror device exists and carries this
+# operation's alias. A device of that name without it belongs to someone
+# else: it is never deleted, and the script stops.
+owned_device() {
+	! link_absent "$MIRROR_VETH" || return 1
+	in_target ip -o link show dev "$MIRROR_VETH" | grep -F -q "alias bgmirror:$MIRROR_COOKIE" ||
+		fail teardown-unverifiable "a device named $MIRROR_VETH exists that this operation does not own"
+}
+
 # show_filters DEV HOOK prints the filters of one hook; a missing device has none.
 show_filters() {
 	if out=$(in_target tc filter show dev "$1" "$2" 2>&1); then
@@ -236,7 +245,7 @@ detach() {
 			fi
 		done
 	done
-	if [ "${1:-}" != keep-device ] && ! link_absent "$MIRROR_VETH"; then
+	if [ "${1:-}" != keep-device ] && owned_device; then
 		in_target ip link del "$MIRROR_VETH" || fail teardown-failed "cannot delete $MIRROR_VETH"
 	fi
 	# The clsact qdisc is left in place: another tool may own it or be about
@@ -299,7 +308,8 @@ attach() {
 	# no IPv6 link-local addresses, no ARP, and every frame arriving from the
 	# capture side is dropped before the source network stack.
 	# shellcheck disable=SC2046 # addrgen prints nothing or two words.
-	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off mtu "$mtu"
+	# The alias marks the device as this operation's for detach and teardown.
+	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off mtu "$mtu" alias "bgmirror:$MIRROR_COOKIE"
 	# shellcheck disable=SC2046
 	in_capture ip link set dev "$peer" $(addrgen) arp off mtu "$mtu"
 	in_target tc qdisc add dev "$MIRROR_VETH" clsact

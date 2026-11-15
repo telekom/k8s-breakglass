@@ -963,6 +963,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
+			if errors.Is(err, errTrafficMirrorTeardownPending) {
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
 			retryAfter := c.recordCleanupFailure(ds)
 			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
 				"error", err, "retryAfter", retryAfter)
@@ -1122,6 +1125,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
+		if errors.Is(err, errTrafficMirrorTeardownPending) {
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		}
 		retryAfter := c.recordCleanupFailure(ds)
 		log.Errorw("Failed to cleanup debug session resources", "error", err, "retryAfter", retryAfter)
 		return ctrl.Result{RequeueAfter: retryAfter}, nil

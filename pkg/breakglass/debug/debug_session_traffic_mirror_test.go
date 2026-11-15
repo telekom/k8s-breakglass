@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -404,6 +405,29 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted, audit.EventDebugSessionTrafficMirrorStopped}, f.eventTypes())
 	require.NoError(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "cleanup is idempotent")
 	require.Len(t, f.sink.Events(), 2)
+}
+
+func TestTrafficMirrorPendingTeardownIsNotACleanupFailure(t *testing.T) {
+	for name, handle := range map[string]func(*DebugSessionController, context.Context, *breakglassv1alpha1.DebugSession) (ctrl.Result, error){
+		"expired or terminated": (*DebugSessionController).handleCleanup,
+		"failed":                (*DebugSessionController).handleFailedCleanup,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+			require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+			f.runCapture(t)
+			// The terminal cleanup deletes the mirror Pods and starts the
+			// teardown Pod, which has not finished yet.
+			result, err := handle(f.c, t.Context(), f.ds)
+			require.NoError(t, err)
+			require.NotNil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix))
+			require.Equal(t, time.Second, result.RequeueAfter, "a running teardown is polled, not backed off")
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), live))
+			require.False(t, cleanupConditionFailed(live), "a running teardown is not a failed cleanup")
+			require.Zero(t, f.c.cleanupBackoffRemaining(f.ds))
+		})
+	}
 }
 
 func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {

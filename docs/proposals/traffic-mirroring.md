@@ -59,7 +59,10 @@ with `hostPID`, created only after the capture Pod runs.
   `basic action drop` ingress filter on the source-side end drops every
   frame sent from the capture side before the source network stack. Both
   ends take the source interface's MTU, so a jumbo frame's copy is not
-  dropped at the mirror device. The agent puts a
+  dropped at the mirror device. The source-side end carries the alias
+  `bgmirror:<operation cookie>`; detach and teardown delete only a device
+  with that alias and fail closed on a foreign device of the same name. The
+  agent puts a
   `tbf` on the mirror device (`maxBandwidthMbps`; excess copies are dropped,
   the original traffic is never shaped), adds `clsact` if absent and one
   `basic` (no ematch, so match-all) filter per direction with

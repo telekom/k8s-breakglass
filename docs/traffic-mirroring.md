@@ -171,8 +171,10 @@ or plain-text credentials.
 On expiry, termination, failure or deletion the controller deletes the
 agent and capture Pods (the agent detaches), then runs a teardown Pod on the Node that
 removes only `tc` filters carrying the session's action cookie, from every
-link of the source network namespace, and the mirror device (the `clsact`
-qdisc stays), and succeeds only after verifying that none remain;
+link of the source network namespace, and the mirror device marked with the
+operation's alias (the `clsact` qdisc stays; a foreign device of the same
+name fails the teardown instead of being deleted), and succeeds only after
+verifying that none remain;
 an inspection error is a failure, never proof of absence. A failed teardown
 keeps its reason in `status.trafficMirror.teardownResult` and the
 `CleanupFailed` condition. The
