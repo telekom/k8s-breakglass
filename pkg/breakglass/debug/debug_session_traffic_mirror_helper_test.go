@@ -5,6 +5,7 @@ package debug
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -134,6 +135,22 @@ func (h *helperHost) namespace(name, addrs string, links ...string) {
 // helperLink renders an "ip -o link show" line.
 func helperLink(index int, name string) string {
 	return fmt.Sprintf("%d: %s: <BROADCAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default \\    link/ether 02:00:00:00:00:%02x brd ff:ff:ff:ff:ff:ff\n", index, name, index)
+}
+
+// helperEvent returns the parsed JSON log line of event; the line must be
+// valid JSON.
+func helperEvent(t *testing.T, output, event string) map[string]string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.HasPrefix(line, `{"event":"`+event+`"`) {
+			continue
+		}
+		var parsed map[string]string
+		require.NoError(t, json.Unmarshal([]byte(line), &parsed), "the event line is valid JSON: %q", line)
+		return parsed
+	}
+	require.Failf(t, "event not logged", "no %s event in %q", event, output)
+	return nil
 }
 
 // ownVeth marks the namespace's mirror device as this operation's.
@@ -478,11 +495,29 @@ case "$*" in "qdisc add dev eth0 clsact") echo "Error: Specified qdisc kind is u
 			tc.setup(h)
 			code, output := h.run("attach")
 			require.Equal(t, 1, code, output)
-			require.Contains(t, output, `"event":"`+tc.event+`"`)
-			require.Contains(t, output, tc.detail, "the failure carries the tc output")
+			require.Contains(t, helperEvent(t, output, tc.event)["detail"], tc.detail, "the failure detail carries the tc output")
 			calls := h.calls()
 			require.Equal(t, tc.triesToAddQdisc, strings.Contains(calls, "tc qdisc add dev eth0 clsact"))
 			require.NotContains(t, calls, "tc filter add dev eth0", "no mirror filter is attached")
 		})
 	}
+}
+
+func TestTrafficMirrorHelperLogsToolOutputAsValidJSON(t *testing.T) {
+	h := newHelperHost(t)
+	// The target namespace cannot be entered, and nsenter's error, which
+	// the detail quotes unshortened, holds a tab, a line break, quotes, a
+	// backslash and an escape character.
+	require.NoError(t, os.Remove(filepath.Join(h.dir, "ns", "target")))
+	stub := filepath.Join(h.dir, "bin", "nsenter")
+	body, err := os.ReadFile(stub)
+	require.NoError(t, err)
+	noisy := strings.Replace(string(body), `echo "nsenter: cannot open $ref" >&2`,
+		`printf 'nsenter:\tbad "ns" \\ here\033\nsecond line\n' >&2`, 1)
+	require.NotEqual(t, string(body), noisy)
+	require.NoError(t, os.WriteFile(stub, []byte(noisy), 0o755))
+	code, output := h.run("teardown")
+	require.Equal(t, 1, code, output)
+	require.Equal(t, "cannot inspect the network namespace of PID 100: nsenter: bad ns  here second line",
+		helperEvent(t, output, "inspect-failed")["detail"])
 }

@@ -197,6 +197,20 @@ replaced or now points at another cluster (its `breakglass-node-maintenance`
 namespace is not the one recorded at activation): clean up the original
 cluster by hand, then remove the finalizer.
 
+A Node reboot ends a running mirror. `tc` filters, qdiscs and veth devices
+live only in the kernel, so nothing of the mirror survives on the host
+interfaces, and a Pod source comes back in a new network namespace with its
+recreated sandbox. The agent and capture Pods do not restart
+(`restartPolicy: Never`), so the mirror ends with a failed session or at the
+approved expiry, and cleanup proceeds as above: while the Node is NotReady it reports `teardown-stalled` and backs
+off, and once the Node is Ready the teardown Pod verifies the Node
+namespace, or the Pod namespace that owns the approved Pod IP, and the
+session releases its finalizer. An operator acts only when the teardown
+cannot be verified: the Node never returns (confirm the reprovisioning as
+above), or the recreated Pod got another IP (`teardown-unverifiable`; a
+rebooted kernel holds none of the old filters, so confirm the reboot, check
+the Node, and remove the finalizer).
+
 ## Audit
 
 | Event | When |

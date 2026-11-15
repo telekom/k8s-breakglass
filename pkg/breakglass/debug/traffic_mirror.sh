@@ -41,13 +41,22 @@ gone() {
 	return 1
 }
 
-# bounded prints tool output as one short line that is safe in the JSON log.
-bounded() {
-	printf '%s' "$1" | tr '\n' ' ' | tr -d '\042\134' | cut -c1-200
+# clean TEXT [MAX] prints TEXT as one line of at most MAX characters that is
+# safe inside a JSON string: tabs and line breaks become spaces; other
+# control characters, quotes and backslashes are removed.
+clean() {
+	printf '%s' "$1" | tr '\t\n\r' '   ' | tr -d '\000-\010\013\014\016-\037\042\134' | cut -c"1-${2:-1024}"
 }
 
+# bounded shortens tool output quoted in a failure detail.
+bounded() {
+	clean "$1" 200
+}
+
+# log prints one JSON event; every detail, including quoted tool output,
+# passes through clean.
 log() {
-	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "${2:-}"
+	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "$(clean "${2:-}")"
 }
 
 fail() {
