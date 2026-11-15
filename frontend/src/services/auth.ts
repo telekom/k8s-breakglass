@@ -448,13 +448,14 @@ function watchCheckSessionIframe(manager: UserManager) {
           );
           return;
         }
-        const origin = new URL(url).origin;
+        // oidc-client-ts sets the iframe src to the normalized URL; compare against that form.
+        const { origin, href } = new URL(url);
         checkSessionURLs.set(manager, url);
         window.addEventListener("message", (event: MessageEvent) => {
           if (event.origin !== origin || event.data !== "unchanged") return;
           // Several realms can share a host: only count the answer of this realm's iframe.
           const fromThisIframe = Array.from(document.querySelectorAll("iframe")).some(
-            (frame) => frame.src === url && frame.contentWindow === event.source,
+            (frame) => frame.src === href && frame.contentWindow === event.source,
           );
           if (fromThisIframe) confirmCheckSessionURL(url);
         });

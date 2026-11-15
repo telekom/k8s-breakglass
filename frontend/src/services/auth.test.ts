@@ -649,8 +649,8 @@ describe("AuthService", () => {
       });
 
     // Signs a user in on a real UserManager whose IdP serves check_session_iframe from idpOrigin.
-    async function signedInService(idpOrigin: string) {
-      vi.spyOn(MetadataService.prototype, "getCheckSessionIframe").mockResolvedValue(`${idpOrigin}/check-session`);
+    async function signedInService(idpOrigin: string, checkSessionURL = `${idpOrigin}/check-session`) {
+      vi.spyOn(MetadataService.prototype, "getCheckSessionIframe").mockResolvedValue(checkSessionURL);
       const service = new AuthService({ oidcAuthority: "https://example.com", oidcClientID: "test-client" });
       const removeUser = vi.spyOn(service.userManager, "removeUser").mockResolvedValue(undefined);
       const loaded = service.userManager.events.load(loadedUser());
@@ -686,6 +686,27 @@ describe("AuthService", () => {
 
       expect(useUser().value).toBeUndefined();
       expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(removeUser).toHaveBeenCalledTimes(1);
+    });
+
+    it("counts the answer of an iframe whose discovery URL is not in canonical form", async () => {
+      // The iframe src is the normalized URL (default port dropped, host lower-cased).
+      const { service, removeUser } = await signedInService(
+        "https://idp-d.example.com",
+        "https://IDP-D.example.com:443/check-session",
+      );
+      const frame = document.querySelector<HTMLIFrameElement>('iframe[src^="https://idp-d.example.com"]');
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://idp-d.example.com",
+          data: "unchanged",
+          source: frame?.contentWindow ?? null,
+        }),
+      );
+
+      await service.userManager.events._raiseUserSignedOut();
+
+      expect(useUser().value).toBeUndefined();
       expect(removeUser).toHaveBeenCalledTimes(1);
     });
 

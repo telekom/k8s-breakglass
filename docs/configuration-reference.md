@@ -706,6 +706,10 @@ Requirements and limits:
   expires.
 - The UI origin must be a Web Origin of the client. Keycloak answers the
   iframe's `init` request with 403 otherwise.
+- The `check_session_iframe` origin must be in `frame-src`, which lists the
+  origins of the configured authorities (for Keycloak, `baseURL`). If the
+  identity provider publishes a different public hostname in its discovery
+  document, the browser blocks the iframe and the session ends at token expiry.
 - The iframe reads the identity provider's session cookie in a third-party
   context. Browsers that block or partition third-party cookies hide it:
   Safari and Firefox by default, Chrome when the user blocks them. The UI detects this, logs one warning, stops

@@ -76,9 +76,13 @@ test.describe("IdP session end", () => {
     await idpTab.close();
 
     // The UI notices within the polling interval (2s) plus the prompt=none session query.
-    await expect(page.locator('scale-button:has-text("Log In"), button:has-text("Log In")').first()).toBeVisible({
-      timeout: 30_000,
-    });
+    const loginButton = page.locator('scale-button:has-text("Log In"), button:has-text("Log In")').first();
+    await expect(loginButton).toBeVisible({ timeout: 30_000 });
+    expect(await storedOIDCUser(page)).toBeNull();
+
+    // A reload must not restore the session from browser storage.
+    await page.reload();
+    await expect(loginButton).toBeVisible({ timeout: 30_000 });
     expect(await storedOIDCUser(page)).toBeNull();
 
     // The API is stateless: the old access token stays valid until it expires, then it is rejected.
