@@ -538,7 +538,7 @@ func TestPlatformCleanupShortensPendingPodGraceEnvtest(t *testing.T) {
 
 	// Labels play no part: the forged Pod carries the label but is neither
 	// recorded nor owned by a tracked workload.
-	verified, _, err := discoverSessionPods(ctx, target, recorded, func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
+	verified, _, _, err := discoverSessionPods(ctx, target, recorded, func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
 	require.NoError(t, err)
 	for i := range verified {
 		require.NoError(t, shortenPendingPodDeletion(ctx, target, &verified[i]))

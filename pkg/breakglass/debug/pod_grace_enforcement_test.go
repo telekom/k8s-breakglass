@@ -654,7 +654,7 @@ func TestDiscoverSessionPodsFollowsAllPodCreators(t *testing.T) {
 	rc := &corev1.ReplicationController{ObjectMeta: meta("rc")}
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cron, job, rs, rc,
 		ownedPod("from-job", job), ownedPod("from-rs", rs), ownedPod("from-rc", rc), &corev1.Pod{ObjectMeta: meta("unrelated")}).Build()
-	pods, owners, err := discoverSessionPods(context.Background(), target,
+	pods, owners, _, err := discoverSessionPods(context.Background(), target,
 		[]breakglassv1alpha1.DeployedResourceRef{trackedRef("CronJob", cron), trackedRef("ReplicaSet", rs), trackedRef("ReplicationController", rc)},
 		func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
 	require.NoError(t, err)
@@ -672,7 +672,7 @@ func TestDiscoverSessionPodsSkipsRetainedResources(t *testing.T) {
 	keptPod := ownedPod("kept-pod", kept)
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(kept, removed, keptPod, ownedPod("removed-pod", removed)).Build()
 	keptRef := trackedRef("ReplicaSet", kept)
-	pods, _, err := discoverSessionPods(context.Background(), target,
+	pods, _, _, err := discoverSessionPods(context.Background(), target,
 		[]breakglassv1alpha1.DeployedResourceRef{keptRef, trackedRef("ReplicaSet", removed), trackedRef("Pod", keptPod)},
 		func(ref breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(ref, keptRef) })
 	require.NoError(t, err)
@@ -696,11 +696,12 @@ func TestDiscoverSessionPodsTreatsHeldDependentsAsStuck(t *testing.T) {
 				rs.DeletionTimestamp = &metav1.Time{Time: time.Now().Add(-tc.deletedAgo)}
 			}
 			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(rs).Build()
-			_, owners, err := discoverSessionPods(context.Background(), target,
+			_, owners, stuck, err := discoverSessionPods(context.Background(), target,
 				[]breakglassv1alpha1.DeployedResourceRef{trackedRef("Deployment", deployment)},
 				func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
 			require.NoError(t, err)
 			assert.Equal(t, tc.progressing, len(owners) == 1)
+			assert.Equal(t, !tc.progressing, len(stuck) == 1)
 		})
 	}
 }
@@ -740,4 +741,47 @@ func TestCleanupOwnerWhoseDeleteFailedIsNotProgress(t *testing.T) {
 	assert.False(t, cleanupInProgress(err))
 	assert.True(t, cleanupConditionFailed(f.live))
 	assert.Contains(t, f.live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, f.deployment.Name)
+}
+
+// A deleted owner whose ReplicaSet is held by a finalizer past the deadline
+// stays a CleanupFailed residual, even once its Pods are gone.
+func TestCleanupKeepsOwnerOfStuckDependentAsResidual(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	owner := &appsv1.Deployment{}
+	require.NoError(t, f.target.Get(ctx, client.ObjectKey{Namespace: f.deployment.Namespace, Name: f.deployment.Name}, owner))
+	held := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "held", Namespace: owner.Namespace, UID: "held-uid",
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: owner.Name, UID: owner.UID, Controller: ptr.To(true)}}}}
+	require.NoError(t, f.target.Create(ctx, held))
+	// The fake client cannot backdate a deletion; report one held by a
+	// finalizer since before the deadline.
+	inner := f.c.targetClientFactory
+	f.c.targetClientFactory = func(cfg *rest.Config) (client.Client, error) {
+		cl, err := inner(cfg)
+		return interceptor.NewClient(cl.(client.WithWatch), interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if err := c.List(ctx, list, opts...); err != nil {
+					return err
+				}
+				if replicaSets, ok := list.(*appsv1.ReplicaSetList); ok {
+					for i := range replicaSets.Items {
+						if replicaSets.Items[i].Name == held.Name {
+							replicaSets.Items[i].Finalizers = []string{"example.com/hold"}
+							replicaSets.Items[i].DeletionTimestamp = &metav1.Time{Time: time.Now().Add(-podForceDeleteAfter - time.Minute)}
+						}
+					}
+				}
+				return nil
+			},
+		}), err
+	}
+	f.live.Status.DeployedResources = slices.DeleteFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return ref.Kind == "Pod" })
+
+	err := f.c.cleanupResources(ctx, f.live)
+	require.ErrorContains(t, err, "held past their deletion deadline")
+	assert.False(t, cleanupInProgress(err))
+	require.True(t, apierrors.IsNotFound(f.target.Get(ctx, client.ObjectKey{Namespace: owner.Namespace, Name: owner.Name}, &appsv1.Deployment{})),
+		"the owner itself was deleted")
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool { return sameResource(ref, f.deployment) }))
+	assert.True(t, cleanupConditionFailed(f.live))
 }

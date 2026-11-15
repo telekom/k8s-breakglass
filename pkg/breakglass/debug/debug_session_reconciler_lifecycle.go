@@ -631,7 +631,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
 	}
 	if !c.disablePodGraceEnforcement {
-		pods, _, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, retained)
+		pods, _, _, err := discoverSessionPods(ctx, targetClient, ds.Status.DeployedResources, retained)
 		if err != nil {
 			return finishCleanup(errors.Join(append(cleanupErrors, err)...))
 		}
@@ -665,7 +665,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if !c.disablePodGraceEnforcement {
 			// Discover again from the recorded owners and Pods, for Pods
 			// created or evicted while this attempt deleted the owners.
-			pods, owners, err := discoverSessionPods(ctx, targetClient, trackedResources, retained)
+			pods, owners, stuckOwners, err := discoverSessionPods(ctx, targetClient, trackedResources, retained)
 			if err != nil {
 				ds.Status.DeployedResources = trackedResources
 				cleanupErrors = append(cleanupErrors, err)
@@ -677,6 +677,11 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 					ds.Status.DeployedResources = append(ds.Status.DeployedResources, owner)
 					inProgress = append(inProgress, owner)
 				}
+			}
+			// A dependent held past the deadline keeps its owner as a residual.
+			for _, owner := range stuckOwners {
+				ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, owner)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("dependents of %s %s/%s are held past their deletion deadline", owner.Kind, owner.Namespace, owner.Name))
 			}
 			for i := range pods {
 				pod := &pods[i]

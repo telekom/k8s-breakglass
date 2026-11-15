@@ -606,7 +606,8 @@ their owners, and it shortens any pending deletion to the Pod's own
 deleted it looks again, for Pods created or evicted in the meantime, and
 keeps a deleted owner tracked while its dependents are torn down; an owner
 whose delete failed, or whose dependents are held more than two minutes past
-their deletion, is a `CleanupFailed` residual. A copied Pod is handed
+their deletion (for example by a finalizer), is a `CleanupFailed` residual,
+also once its Pods are gone. A copied Pod is handed
 over to the same tracking when the kubectl-debug cleanup deletes it.
 
 Cleanup completes only once every tracked Pod is gone: NotFound, or replaced
