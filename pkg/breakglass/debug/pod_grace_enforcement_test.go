@@ -853,3 +853,25 @@ func TestCleanupRecoveredOnlyOnceInventoryIsEmpty(t *testing.T) {
 	}
 	assert.Equal(t, 1, recovered, "exactly one cleanup_recovered, after the inventory is empty")
 }
+
+// Pods are listed once per namespace and sweep, however many tracked
+// references share the namespace.
+func TestDiscoverSessionPodsListsEachNamespaceOnce(t *testing.T) {
+	meta := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: "ns", UID: types.UID(name + "-uid")} }
+	a, b := &appsv1.ReplicaSet{ObjectMeta: meta("a")}, &appsv1.ReplicaSet{ObjectMeta: meta("b")}
+	deployment := &appsv1.Deployment{ObjectMeta: meta("d")}
+	podLists := 0
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(a, b, ownedPod("pa", a), ownedPod("pb", b)).
+		WithInterceptorFuncs(interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*corev1.PodList); ok {
+				podLists++
+			}
+			return cl.List(ctx, list, opts...)
+		}}).Build()
+	found, err := discoverSessionPods(context.Background(), target,
+		[]breakglassv1alpha1.DeployedResourceRef{trackedRef("ReplicaSet", a), trackedRef("ReplicaSet", b), trackedRef("Deployment", deployment)},
+		func(breakglassv1alpha1.DeployedResourceRef) bool { return false })
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pa", "pb"}, podNames(found.pods))
+	assert.Equal(t, 1, podLists)
+}

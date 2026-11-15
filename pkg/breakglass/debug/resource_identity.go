@@ -22,6 +22,7 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -835,27 +836,16 @@ type sessionPodDiscovery struct {
 // through controller references, as the garbage collector sees them, to d.
 // An intermediate object deleted more than podForceDeleteAfter ago, for
 // example one held by a finalizer, is stuck rather than progress.
-func descendants(ctx context.Context, target client.Client, ref breakglassv1alpha1.DeployedResourceRef, now time.Time, d *sessionPodDiscovery) (progressing, stuck bool, err error) {
+func descendants(ctx context.Context, lists *namespaceLists, ref breakglassv1alpha1.DeployedResourceRef, now time.Time, d *sessionPodDiscovery) (progressing, stuck bool, err error) {
 	owners := []types.UID{types.UID(ref.UID)}
 	var intermediates []client.Object
 	apiVersion := "apps/v1"
-	switch podCreatorKinds[ref.Kind] {
-	case "ReplicaSet":
-		list := &appsv1.ReplicaSetList{}
-		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
-			return false, false, fmt.Errorf("list replicasets of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+	if kind := podCreatorKinds[ref.Kind]; kind != "" {
+		if kind == "Job" {
+			apiVersion = "batch/v1"
 		}
-		for i := range list.Items {
-			intermediates = append(intermediates, &list.Items[i])
-		}
-	case "Job":
-		apiVersion = "batch/v1"
-		list := &batchv1.JobList{}
-		if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
-			return false, false, fmt.Errorf("list jobs of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
-		}
-		for i := range list.Items {
-			intermediates = append(intermediates, &list.Items[i])
+		if intermediates, err = lists.get(ctx, ref.Namespace, kind); err != nil {
+			return false, false, err
 		}
 	}
 	for _, obj := range intermediates {
@@ -871,17 +861,56 @@ func descendants(ctx context.Context, target client.Client, ref breakglassv1alph
 			progressing = true
 		}
 	}
-	list := &corev1.PodList{}
-	if err := target.List(ctx, list, client.InNamespace(ref.Namespace)); err != nil {
-		return false, false, fmt.Errorf("list pods of %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+	pods, err := lists.get(ctx, ref.Namespace, "Pod")
+	if err != nil {
+		return false, false, err
 	}
-	for i := range list.Items {
-		if controlledBy(&list.Items[i], owners) {
-			d.addPod(list.Items[i])
+	for _, obj := range pods {
+		if controlledBy(obj, owners) {
+			d.addPod(*obj.(*corev1.Pod))
 			progressing = true // bounded by settlePodDeletion's own deadline
 		}
 	}
 	return progressing && !stuck, stuck, nil
+}
+
+// namespaceLists lists Pods, ReplicaSets and Jobs once per namespace and
+// sweep, however many tracked references share the namespace.
+type namespaceLists struct {
+	target client.Client
+	cache  map[[2]string][]client.Object
+}
+
+func (l *namespaceLists) get(ctx context.Context, namespace, kind string) ([]client.Object, error) {
+	key := [2]string{namespace, kind}
+	if objs, ok := l.cache[key]; ok {
+		return objs, nil
+	}
+	var list client.ObjectList
+	switch kind {
+	case "Pod":
+		list = &corev1.PodList{}
+	case "ReplicaSet":
+		list = &appsv1.ReplicaSetList{}
+	default:
+		list = &batchv1.JobList{}
+	}
+	if err := l.target.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list %s in namespace %s: %w", kind, namespace, err)
+	}
+	items, err := meta.ExtractList(list)
+	if err != nil {
+		return nil, err
+	}
+	objs := make([]client.Object, 0, len(items))
+	for _, item := range items {
+		objs = append(objs, item.(client.Object))
+	}
+	if l.cache == nil {
+		l.cache = map[[2]string][]client.Object{}
+	}
+	l.cache[key] = objs
+	return objs, nil
 }
 
 func (d *sessionPodDiscovery) addPod(pod corev1.Pod) {
@@ -899,6 +928,7 @@ func (d *sessionPodDiscovery) addPod(pod corev1.Pod) {
 // their descendants are left alone.
 func discoverSessionPods(ctx context.Context, target client.Client, refs []breakglassv1alpha1.DeployedResourceRef, retained func(breakglassv1alpha1.DeployedResourceRef) bool) (sessionPodDiscovery, error) {
 	now := time.Now()
+	lists := &namespaceLists{target: target}
 	var d, kept sessionPodDiscovery
 	for _, ref := range refs {
 		if ref.UID == "" {
@@ -906,7 +936,7 @@ func discoverSessionPods(ctx context.Context, target client.Client, refs []break
 		}
 		if retained(ref) {
 			if _, creator := podCreatorKinds[ref.Kind]; creator {
-				if _, _, err := descendants(ctx, target, ref, now, &kept); err != nil {
+				if _, _, err := descendants(ctx, lists, ref, now, &kept); err != nil {
 					return d, err
 				}
 			}
@@ -929,7 +959,7 @@ func discoverSessionPods(ctx context.Context, target client.Client, refs []break
 		if _, creator := podCreatorKinds[ref.Kind]; !creator {
 			continue
 		}
-		progressing, stuck, err := descendants(ctx, target, ref, now, &d)
+		progressing, stuck, err := descendants(ctx, lists, ref, now, &d)
 		if err != nil {
 			return d, err
 		}
