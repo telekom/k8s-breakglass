@@ -711,7 +711,9 @@ Requirements and limits:
   Safari and Firefox by default, Chrome when the user blocks them. The UI detects this, logs one warning, stops
   monitoring and keeps today's behaviour: the session ends when the access token
   expires. The access token lifetime of the identity provider is then the upper
-  bound of the UI session.
+  bound of the UI session. The UI counts the iframe as working once it has
+  confirmed the session in the browser tab; a logout within the first poll
+  (about 2 seconds) after the first login in a tab is noticed at token expiry.
 - The iframe sees the session cookie, not the server-side session. When an
   administrator ends a session in the identity provider without the browser
   being involved, the UI notices at token expiry.
