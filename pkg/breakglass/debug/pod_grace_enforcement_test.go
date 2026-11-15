@@ -603,12 +603,16 @@ func TestCopiedPodEvictedAfterDeleteIsTrackedUntilGone(t *testing.T) {
 
 	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
 	assert.Contains(t, f.shortened(), f.pod.Name, "the eviction after the copy's delete is shortened")
-	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "the copy is tracked until it is gone")
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return sameResource(ref, f.podResidual()) && ref.Source == copiedPodSource
+	}), "the copy is tracked until it is gone, still marked as a copy")
 	assert.False(t, cleanupConditionFailed(f.live))
 
 	require.NoError(t, f.target.Delete(ctx, f.pod.DeepCopy()))
 	_ = f.c.cleanupResources(ctx, f.live)
-	assert.NotContains(t, f.live.Status.DeployedResources, f.podResidual(), "retired once the copy is gone")
+	assert.False(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return sameResource(ref, f.podResidual())
+	}), "retired once the copy is gone")
 }
 
 // More Pods than the status budget allows: cleanup fails closed, keeps the
@@ -667,6 +671,8 @@ func TestDiscoverSessionPodsFollowsAllPodCreators(t *testing.T) {
 	assert.Len(t, found.progressing, 3)
 	require.Len(t, found.intermediates, 1, "the CronJob's Job is recorded")
 	assert.Equal(t, string(job.UID), found.intermediates[0].UID)
+	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: found.intermediates}}
+	assert.False(t, hasTrackedDebugJob(ds), "a discovered Job is not the session's debug Job")
 }
 
 // Intentionally retained resources and their descendants are left alone,
@@ -991,4 +997,69 @@ func TestCleanupTerminatingPodInPodTemplateInventoryIsProgress(t *testing.T) {
 		APIVersion: "v1", Kind: "Pod", ResourceName: f.pod.Name, Namespace: f.pod.Namespace, UID: string(f.pod.UID), Created: true})
 	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
 	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+}
+
+// A copied Pod handed over to Pod tracking can no more be acknowledged than
+// the copy record itself.
+func TestHandedOverCopiedPodIsNotAcknowledgeable(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{
+		{APIVersion: "v1", Kind: "Pod", Namespace: "ns", Name: "copy", UID: "copy-uid", Source: copiedPodSource},
+	}}}
+	assert.Empty(t, outstandingCleanupResiduals(ds))
+}
+
+// A legacy copy record without a UID: the instance verified through its
+// source-session annotation is handed over by its live UID.
+func TestLegacyCopiedPodIsHandedOverByLiveUID(t *testing.T) {
+	ds := newEphemeralOperationTestSession()
+	ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+		{CopyName: "copy", CopyNamespace: "default"},
+	}}
+	copied := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: "default", UID: "live-uid",
+		Annotations: map[string]string{sourceSessionUIDAnnotation: string(ds.UID)}}}
+	scheme := newKubectlTestScheme()
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(copied).Build()
+	h := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}})
+	require.NoError(t, h.CleanupKubectlDebugResources(context.Background(), ds))
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
+	assert.Contains(t, live.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+		APIVersion: "v1", Kind: "Pod", Namespace: "default", Name: "copy", UID: "live-uid", Source: copiedPodSource})
+}
+
+// When discovery fails, owners known only to the pod-template cleanup are
+// kept for the retry as well.
+func TestCleanupKeepsPodTemplateOwnersWhenDiscoveryFails(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	defer func(limit int) { maxTrackedSessionPods = limit }(maxTrackedSessionPods)
+	maxTrackedSessionPods = 2
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "tpl", Namespace: f.pod.Namespace, UID: "tpl-uid"}}
+	require.NoError(t, f.target.Create(ctx, rs))
+	for _, name := range []string{"tpl-a", "tpl-b"} {
+		pod := ownedPod(name, rs)
+		pod.Namespace = rs.Namespace
+		require.NoError(t, f.target.Create(ctx, pod))
+	}
+	f.live.Status.PodTemplateResourceStatuses = append(f.live.Status.PodTemplateResourceStatuses, breakglassv1alpha1.PodTemplateResourceStatus{
+		APIVersion: "apps/v1", Kind: "ReplicaSet", ResourceName: rs.Name, Namespace: rs.Namespace, UID: string(rs.UID), Created: true})
+	require.ErrorContains(t, f.c.cleanupResources(ctx, f.live), "pod tracking capacity exceeded")
+	assert.True(t, slices.ContainsFunc(f.live.Status.DeployedResources, func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return ref.UID == "tpl-uid" && ref.Source == podTrackingSource
+	}), "%+v", f.live.Status.DeployedResources)
+}
+
+// An in-progress auxiliary resource does not hide its siblings: a failed
+// ConfigMap from the same template stays a residual.
+func TestInProgressAuxiliaryResourceKeepsSiblingResiduals(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+		Name: "tools", APIVersion: "apps/v1", Kind: "DaemonSet", ResourceName: "ds", Namespace: "ns", UID: "ds-uid", Created: true,
+		AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "ConfigMap", ResourceName: "cm", Namespace: "ns", UID: "cm-uid"}},
+	}}}}
+	setCleanupConditionExcept(ds, []breakglassv1alpha1.DeployedResourceRef{{Kind: "DaemonSet", Namespace: "ns", Name: "ds", UID: "ds-uid"}})
+	require.True(t, cleanupConditionFailed(ds), "conditions=%+v", ds.Status.Conditions)
+	assert.Contains(t, ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, "cm")
+	assert.NotContains(t, ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, "ds-uid")
+	assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted, "the durable record is restored")
 }

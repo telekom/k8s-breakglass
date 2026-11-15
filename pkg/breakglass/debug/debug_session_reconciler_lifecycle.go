@@ -692,7 +692,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 				found = sessionPodDiscovery{}
 			}
 			if err != nil {
+				// Keep every owner the sweeps started from, including those
+				// only the specialized cleanups tracked, until discovery works.
 				ds.Status.DeployedResources = trackedResources
+				for _, ref := range sweepInputs {
+					if _, creator := podCreatorKinds[ref.Kind]; creator && ref.UID != "" && !retained(ref) {
+						ref.Source = podTrackingSource
+						ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, ref)
+					}
+				}
 				cleanupErrors = append(cleanupErrors, err)
 			}
 			for _, owner := range found.progressing {
@@ -1039,15 +1047,19 @@ func withoutInProgress(ds *breakglassv1alpha1.DebugSession, inProgress []breakgl
 	ds.Status.PodTemplateResourceStatuses = slices.DeleteFunc(slices.Clone(ds.Status.PodTemplateResourceStatuses), func(s breakglassv1alpha1.PodTemplateResourceStatus) bool {
 		return matches(s.Kind, s.Namespace, s.ResourceName, s.UID)
 	})
-	auxiliary := slices.Clone(ds.Status.AuxiliaryResourceStatuses)
-	for i := range auxiliary {
-		auxiliary[i].AdditionalResources = slices.DeleteFunc(slices.Clone(auxiliary[i].AdditionalResources), func(r breakglassv1alpha1.AdditionalResourceRef) bool {
-			return matches(r.Kind, r.Namespace, r.ResourceName, r.UID)
-		})
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		s := &ds.Status.AuxiliaryResourceStatuses[i]
+		// Only the matched identity counts as done; its other children
+		// stay classified.
+		if matches(s.Kind, s.Namespace, s.ResourceName, s.UID) {
+			s.Deleted = true
+		}
+		for j := range s.AdditionalResources {
+			if r := &s.AdditionalResources[j]; matches(r.Kind, r.Namespace, r.ResourceName, r.UID) {
+				r.Deleted = true
+			}
+		}
 	}
-	ds.Status.AuxiliaryResourceStatuses = slices.DeleteFunc(auxiliary, func(s breakglassv1alpha1.AuxiliaryResourceStatus) bool {
-		return matches(s.Kind, s.Namespace, s.ResourceName, s.UID)
-	})
 	fn()
 	conditions := ds.Status.Conditions
 	ds.Status = *saved

@@ -800,6 +800,17 @@ func nodeReady(node *corev1.Node) bool {
 	return false
 }
 
+const (
+	// podTrackingSource marks inventory entries that cleanup adds for Pod
+	// tracking: intermediates between workloads and their Pods, and owners
+	// kept for a retry. The workload logic (for example Job deadlines) keys
+	// on other sources and leaves them alone.
+	podTrackingSource = "pod-tracking"
+	// copiedPodSource marks a kubectl-debug copied Pod handed over to Pod
+	// tracking; like the copy record, it cannot be acknowledged.
+	copiedPodSource = "copied-pod"
+)
+
 // maxTrackedSessionPods bounds the Pods cleanup records in status. Beyond it
 // cleanup still deletes the owners but keeps its inventory, failing closed.
 // ponytail: fixed; a variable so tests can lower it.
@@ -854,7 +865,7 @@ func descendants(ctx context.Context, lists *namespaceLists, ref breakglassv1alp
 		}
 		owners = append(owners, obj.GetUID())
 		d.intermediates = append(d.intermediates, breakglassv1alpha1.DeployedResourceRef{APIVersion: apiVersion, Kind: podCreatorKinds[ref.Kind],
-			Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID()), Source: "debug-pod"})
+			Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID()), Source: podTrackingSource})
 		if ts := obj.GetDeletionTimestamp(); ts != nil && now.After(ts.Add(podForceDeleteAfter)) {
 			stuck = true
 		} else {

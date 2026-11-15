@@ -1977,14 +1977,24 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				continue
 			}
 		}
+		// A legacy record has no UID; deleteOwnedResource verifies the copy by
+		// its source-session annotation instead, so hand over that instance.
+		handOverUID := expectedUID
+		if handOverUID == "" && !h.disablePodGraceEnforcement {
+			live := &corev1.Pod{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(pod), live); err == nil &&
+				ds.UID != "" && live.Annotations[sourceSessionUIDAnnotation] == string(ds.UID) {
+				handOverUID = string(live.UID)
+			}
+		}
 		if err := deleteOwnedResource(ctx, targetClient, pod, expectedUID, ds); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
 		}
-		if !h.disablePodGraceEnforcement && expectedUID != "" {
+		if !h.disablePodGraceEnforcement && handOverUID != "" {
 			handedOver = append(handedOver, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "Pod",
-				Namespace: cp.CopyNamespace, Name: cp.CopyName, UID: expectedUID, Source: "debug-pod"})
+				Namespace: cp.CopyNamespace, Name: cp.CopyName, UID: handOverUID, Source: copiedPodSource})
 		}
 	}
 
