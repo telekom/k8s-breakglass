@@ -645,8 +645,10 @@ of such workloads are denied too: deletes must set `propagationPolicy`
 `Background` (the `kubectl delete` default) or `Foreground`, because Jobs and
 ReplicationControllers orphan their Pods when no policy is given, and the
 exempt garbage collector would carry out the orphaning. Scaling, kubelet status
-updates, annotation edits and cascading deletes stay allowed;
-`kubectl rollout restart` and `kubectl debug` against debug workloads are
+updates, annotation edits and cascading deletes stay allowed, and so does
+`kubectl rollout restart`: it only sets the unreserved
+`kubectl.kubernetes.io/restartedAt` template annotation, so the new Pods run
+the same spec under the same markers. `kubectl debug` against debug Pods is
 denied. The `scale` subresource carries only a replica count, so scaling a
 debug workload stays allowed and cannot change what its Pods run or how they
 are marked.
