@@ -1,6 +1,6 @@
 module github.com/telekom/k8s-breakglass/hack/tools/kustomize
 
-go 1.27.3
+go 1.27.4
 
 tool sigs.k8s.io/kustomize/kustomize/v5
 

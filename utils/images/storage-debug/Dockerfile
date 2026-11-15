@@ -3,7 +3,7 @@
 
 # Build natively and cross-compile: running the Go toolchain under QEMU for
 # foreign targets takes long enough to exhaust CI job timeouts.
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS kubestr-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d AS kubestr-builder
 
 ARG TARGETARCH
 
@@ -41,7 +41,7 @@ RUN set -eux; \
     awk 'NR == FNR { tracked[$1] = $2; next } ($1 == "dep" || $1 == "mod") && tracked[$2] != $3 { print "linked " $2 " " $3 " differs from kubestr/go.mod"; bad = 1 } END { exit bad }' \
         /tmp/tracked-modules /out/kubestr-build-info
 
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 ARG VERSION=dev
 ARG VCS_REF=unknown
@@ -56,7 +56,7 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24" \
-      org.opencontainers.image.base.digest="sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
+      org.opencontainers.image.base.digest="sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf" \
       io.telekom.breakglass.intent="storage-diagnostics" \
       io.telekom.breakglass.image.role="debug-storage"
 
