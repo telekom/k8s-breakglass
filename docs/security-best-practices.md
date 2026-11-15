@@ -599,14 +599,17 @@ and a UID precondition; copied Pods get the same treatment before they are
 deleted. An explicit shorter grace period overrides the pending one. A Pod
 counts as the session's only when its UID is recorded or it belongs to a
 tracked workload, not because of its label, and Pods that are not being
-deleted are left alone. Cleanup then waits until every Pod it verified is
-gone (NotFound, or replaced by an object with another UID; terminating is not
-gone): until then the Pods stay in the inventory as residuals, the session
-reports `CleanupFailed`, and every retry, with the cleanup backoff, shortens a
-pending deletion again, so an eviction that lands between attempts is covered
-too. A Pod still terminating two minutes after its shortened deletion
-deadline is force-deleted with a zero grace period and named on
-`CleanupFailed`. If any step fails, or an owner cannot be read, cleanup keeps
+deleted are left alone. Cleanup then waits for every Pod it verified to
+terminate, up to its grace period, before it completes (gone means NotFound,
+or replaced by an object with another UID; terminating is not gone). While
+the Pods terminate within their deadline, cleanup is in progress, not failed:
+they stay in the inventory, `CleanupFailed` is not set, no
+`debug_session.cleanup_failed` event is emitted, and cleanup is retried
+every second, shortening a pending deletion again each time, so an eviction
+between attempts is covered too. Only a Pod still terminating two minutes
+after its shortened deletion deadline is force-deleted with a zero grace
+period and recorded as a residual on `CleanupFailed`, with the normal backoff
+and audit. If any step fails, or an owner cannot be read, cleanup keeps
 its inventory and retries. With `--disable-debug-session-pod-grace-enforcement`
 none of this happens, and a marked Pod evicted or deleted with a long grace
 period can keep running after the session. `--disable-debug-session-pod-grace-enforcement`

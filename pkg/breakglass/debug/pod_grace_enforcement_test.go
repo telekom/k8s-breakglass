@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -120,12 +122,30 @@ type podCleanupFixture struct {
 	pending    func() (time.Time, int64)
 	deletes    []*client.DeleteOptions
 	failDelete bool
+
+	audit        *cleanupAuditCaptureSink
+	auditManager *audit.Manager
+}
+
+// auditTypes flushes the audit manager and returns the emitted event types.
+func (f *podCleanupFixture) auditTypes(t *testing.T) []string {
+	t.Helper()
+	require.NoError(t, f.auditManager.Close())
+	var types []string
+	for _, e := range f.audit.Events() {
+		types = append(types, string(e.Type))
+	}
+	return types
 }
 
 func newPodCleanupFixture(t *testing.T) *podCleanupFixture {
 	t.Helper()
-	f := &podCleanupFixture{pending: func() (time.Time, int64) { return time.Now(), 1_000_000 }}
+	f := &podCleanupFixture{pending: func() (time.Time, int64) { return time.Now(), 1_000_000 }, audit: &cleanupAuditCaptureSink{}}
 	c, ds, template, target := newDeploymentFenceFixture(t)
+	auditManager := audit.NewManager(f.audit, audit.ManagerConfig{QueueSize: 32, WorkerCount: 1}, zap.NewNop())
+	t.Cleanup(func() { _ = auditManager.Close() })
+	c.WithAuditManager(auditManager)
+	f.auditManager = auditManager
 	f.c, f.target = c, target
 	f.live, f.deployment = deployedFixtureDeployment(t, c, ds, template, target)
 	f.pod = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "recorded", Namespace: f.deployment.Namespace, UID: "recorded-uid",
@@ -196,14 +216,14 @@ func TestCleanupWaitsForEvictedPodBeforeRetiringInventory(t *testing.T) {
 	ctx := context.Background()
 	f := newPodCleanupFixture(t)
 
-	require.Error(t, f.c.cleanupResources(ctx, f.live))
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
 	require.True(t, f.evicted, "the workload was deleted")
 	assert.Equal(t, []*int64{ptr.To[int64](30)}, f.graces(t), "the eviction after the sweep is shortened")
 	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "the terminating Pod keeps the inventory")
-	assert.True(t, cleanupConditionFailed(f.live))
+	assert.False(t, cleanupConditionFailed(f.live), "a shortened, terminating Pod is progress")
 
 	f.deletes = nil
-	require.Error(t, f.c.cleanupResources(ctx, f.live))
+	require.ErrorIs(t, f.c.cleanupResources(ctx, f.live), errDebugPodsTerminating)
 	assert.Contains(t, f.graces(t), ptr.To[int64](30), "the retry shortens the pending deletion again")
 	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual())
 
@@ -211,6 +231,27 @@ func TestCleanupWaitsForEvictedPodBeforeRetiringInventory(t *testing.T) {
 	_ = f.c.cleanupResources(ctx, f.live)
 	assert.NotContains(t, f.live.Status.DeployedResources, f.podResidual(), "retired once the Pod is gone")
 	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+}
+
+// A normal cleanup: the Pods terminate within their grace period. That is
+// progress, not CleanupFailed, and emits no cleanup_failed audit.
+func TestCleanupWithTerminatingPodsIsNotAFailure(t *testing.T) {
+	ctx := context.Background()
+	f := newPodCleanupFixture(t)
+	f.pending = func() (time.Time, int64) { return time.Now().Add(30 * time.Second), 30 }
+
+	err := f.c.cleanupResources(ctx, f.live)
+	require.ErrorIs(t, err, errDebugPodsTerminating)
+	assert.True(t, cleanupInProgress(err), "requeued as progress")
+	assert.Empty(t, f.graces(t), "a Pod terminating within its grace period is left alone")
+	assert.Contains(t, f.live.Status.DeployedResources, f.podResidual(), "cleanup waits for the Pod")
+	assert.False(t, cleanupConditionFailed(f.live), "conditions=%+v", f.live.Status.Conditions)
+
+	require.NoError(t, f.target.Delete(ctx, f.pod.DeepCopy()))
+	require.NoError(t, f.c.cleanupResources(ctx, f.live))
+	assert.Empty(t, f.live.Status.DeployedResources)
+	assert.False(t, cleanupConditionFailed(f.live))
+	assert.NotContains(t, f.auditTypes(t), "debug_session.cleanup_failed")
 }
 
 // A failed recheck keeps the Pod in the inventory as well.
@@ -232,6 +273,7 @@ func TestCleanupForceDeletesPodPastItsDeadline(t *testing.T) {
 	assert.Equal(t, f.pod.UID, *f.deletes[len(f.deletes)-1].Preconditions.UID)
 	assert.True(t, cleanupConditionFailed(f.live))
 	assert.Contains(t, f.live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message, f.pod.Name)
+	assert.Contains(t, f.auditTypes(t), "debug_session.cleanup_failed")
 }
 
 // A same-name replacement of a verified Pod is a different object: it is

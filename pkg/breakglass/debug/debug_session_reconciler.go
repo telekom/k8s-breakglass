@@ -1012,7 +1012,7 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
-			if errors.Is(err, errTrafficMirrorTeardownPending) {
+			if cleanupInProgress(err) {
 				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			retryAfter := c.recordCleanupFailure(ds)
@@ -1174,7 +1174,7 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
-		if errors.Is(err, errTrafficMirrorTeardownPending) {
+		if cleanupInProgress(err) {
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		retryAfter := c.recordCleanupFailure(ds)

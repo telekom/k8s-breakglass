@@ -552,8 +552,11 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
+	// Session Pods still terminating within their grace period: inventory, but
+	// cleanup in progress rather than failed.
+	var terminatingPods []breakglassv1alpha1.DeployedResourceRef
 	finishCleanup := func(operationErr error) error {
-		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline)
+		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline, terminatingPods...)
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -627,19 +630,28 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// sweep, and the garbage collector does not shorten it. So every Pod the
 	// sweep verified must be gone before this attempt retires its inventory;
 	// one that is still there stays in the inventory as a Pod resource, is
-	// shortened again on every retry and retired once it is gone.
+	// shortened again on every retry and retired once it is gone. Within its
+	// grace period that is progress, not a failure.
 	finishWithPodGrace := func() error {
 		for i := range sessionPods {
 			pod := &sessionPods[i]
-			present, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
-			if err != nil {
+			state, err := settlePodDeletion(ctx, targetClient, pod, time.Now())
+			if state == podGone {
+				continue
+			}
+			ref := podResidualRef(pod)
+			ds.Status.DeployedResources = appendDeployedRef(ds.Status.DeployedResources, ref)
+			if state == podTerminating {
+				terminatingPods = append(terminatingPods, ref)
+			} else {
 				cleanupErrors = append(cleanupErrors, err)
 			}
-			if present {
-				ds.Status.DeployedResources = appendPodResidual(ds.Status.DeployedResources, pod)
-			}
 		}
-		return finishCleanup(errors.Join(cleanupErrors...))
+		err := finishCleanup(errors.Join(cleanupErrors...))
+		if len(terminatingPods) > 0 && !cleanupConditionFailed(ds) {
+			return errors.Join(fmt.Errorf("%w: %d debug session Pods", errDebugPodsTerminating, len(terminatingPods)), err)
+		}
+		return err
 	}
 
 	// Cleanup auxiliary resources first using the manager
@@ -860,10 +872,10 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 // inventory and audits the transition: cleanup_failed once per distinct
 // residual set, cleanup_recovered when a failure clears. Every cleanup path,
 // including deletion, uses it.
-func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus) error {
-	setCleanupCondition(ds)
+func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, inProgress ...breakglassv1alpha1.DeployedResourceRef) error {
+	setCleanupConditionExcept(ds, inProgress)
 	var previous metav1.Condition
-	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous, inProgress...); err != nil {
 		return err
 	}
 	liveWasFailed := previous.Status == metav1.ConditionTrue
@@ -900,6 +912,19 @@ func appliedCleanupAcknowledgements(ds *breakglassv1alpha1.DebugSession) []break
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// setCleanupConditionExcept classifies the inventory without the given Pods,
+// which are still terminating within their grace period: they stay in the
+// inventory but are not residuals, because CleanupFailed means the
+// controller cannot remove something.
+func setCleanupConditionExcept(ds *breakglassv1alpha1.DebugSession, inProgress []breakglassv1alpha1.DeployedResourceRef) {
+	inventory := ds.Status.DeployedResources
+	ds.Status.DeployedResources = slices.DeleteFunc(slices.Clone(inventory), func(ref breakglassv1alpha1.DeployedResourceRef) bool {
+		return slices.Contains(inProgress, ref)
+	})
+	setCleanupCondition(ds)
+	ds.Status.DeployedResources = inventory
 }
 
 func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
@@ -1096,7 +1121,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 // patchDebugSessionCleanupStatusWithTransition stores into previous (when
 // non-nil) the live CleanupFailed condition observed before the patch, or the
 // zero condition when none existed.
-func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
+func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition, inProgress ...breakglassv1alpha1.DeployedResourceRef) error {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
@@ -1147,7 +1172,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			retireIdentities(current, completed, acknowledgedAbsentReason)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
-				setCleanupCondition(current)
+				setCleanupConditionExcept(current, inProgress)
 			}
 
 			if current.Generation > 0 {
