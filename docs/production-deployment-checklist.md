@@ -32,7 +32,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
   - [ ] Kubeconfig secrets created with minimal required permissions
   - [ ] Service account tokens rotated and have proper RBAC
   - [ ] Network connectivity verified to target cluster API servers
-  - [ ] Target API servers reject IdP tokens with escalated groups (see [Reject escalated groups from the identity provider](webhook-setup.md#reject-escalated-groups-from-the-identity-provider))
+  - [ ] Target API servers reject IdP tokens that carry any configured escalated group or a `system:` group or username (see [Reject escalated groups from the identity provider](webhook-setup.md#reject-escalated-groups-from-the-identity-provider))
 - [ ] Test authorization webhook connectivity
 
 ### Circuit Breaker (Optional)
