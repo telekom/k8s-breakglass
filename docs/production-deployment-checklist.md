@@ -32,6 +32,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
   - [ ] Kubeconfig secrets created with minimal required permissions
   - [ ] Service account tokens rotated and have proper RBAC
   - [ ] Network connectivity verified to target cluster API servers
+  - [ ] Target API servers reject IdP tokens that carry any configured escalated group or a `system:` group or username (see [Reject escalated groups from the identity provider](webhook-setup.md#reject-escalated-groups-from-the-identity-provider))
 - [ ] Test authorization webhook connectivity
 
 ### Circuit Breaker (Optional)
@@ -59,6 +60,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 - [ ] Ingress/Gateway rate limiting enabled
 - [ ] CORS origins properly configured (`--frontend-base-url`)
 - [ ] Webhook endpoint secured with client certificate or network policy
+- [ ] Ingress and egress match the [network flows](network-flows.md) of the manager
 
 ### RBAC & Permissions
 

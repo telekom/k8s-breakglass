@@ -325,6 +325,7 @@ For the complete RBAC setup, see [RBAC Requirements for OIDC Authentication](clu
 1. **Use group claims** - Prefer group-based authorization over user-based
 2. **Minimize group scope** - Request only necessary group claims
 3. **Regular audits** - Periodically review group memberships in your IDP
+4. **Reject escalated groups on target clusters** - Configure every target API server to refuse IdP tokens that already carry any configured escalated group (every `escalatedGroup`, for example groups with a `breakglass:` prefix), a `system:` group or a `system:` username; see [Reject escalated groups from the identity provider](webhook-setup.md#reject-escalated-groups-from-the-identity-provider)
 
 ## Network Security
 
