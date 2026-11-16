@@ -15,17 +15,29 @@ updates:
       # Versions dictated by kubestr v0.4.49 (indirect in this tool module).
       # kanister: the only tag (v0.113.0-alpha.1) is older than kubestr's
       # pseudo-version and changes NewSnapshotter's signature; it moves when
-      # kubestr is bumped. gnostic-models >= 0.7 switches to go.yaml.in/yaml/v3,
-      # which the kube-openapi kubestr pulls in can't compile against.
+      # kubestr is bumped.
       - dependency-name: "github.com/kanisterio/kanister"
-      - dependency-name: "github.com/google/gnostic-models"
-        versions: [">= 0.7.0"]
+      # kube-openapi follows k8s.io/apimachinery: snapshots from 2026-10 on use
+      # structured-merge-diff/v7, which k8s.io 0.37 can't compile against, and
+      # kustomize v0.21.3 requires such a snapshot. Drop both entries once the
+      # kubernetes group moves k8s.io to 0.38.
+      - dependency-name: "k8s.io/kube-openapi"
+      - dependency-name: "sigs.k8s.io/kustomize/*"
+        versions: [">= 0.21.3"]
     schedule:
       interval: "daily"
     cooldown:
       default-days: 3
       semver-major-days: 14
     groups:
+      # k8s.io and sigs.k8s.io modules (and openshift, which pins them) share
+      # structured-merge-diff and kube-openapi; bumped one at a time they don't
+      # compile, so each directory gets them in one PR.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+          - "github.com/openshift/*"
       utility-go-tools:
         group-by: dependency-name
         patterns:
