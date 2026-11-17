@@ -64,6 +64,7 @@ artifacts:
     - name: collector-registry
   controllerURL: https://breakglass.example.com
   uploadMaxBytes: 67108864
+  # terminalRecordingSegmentBytes: 4194304 # optional: flush terminal recordings incrementally
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
   s3:
@@ -141,7 +142,9 @@ own directories or sentinels at startup. Provision an empty volume once with
 `stagingDir` as well. See [diagnostic artifacts](diagnostic-artifacts.md) for
 reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed
-generation readiness requirement.
+generation readiness requirement. `terminalRecordingSegmentBytes` (default
+off, 65536 to 67108864 when set) enables
+[incremental recording flush](terminal-recording.md#incremental-flush-opt-in).
 
 ### `server`
 

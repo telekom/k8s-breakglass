@@ -315,6 +315,22 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
+	// Opt-in incremental flush: bounded memory and crash-durable evidence.
+	var flushErr error
+	segmented := c.recordingSegmentBytes > 0
+	if segmented {
+		writer := c.recordingArtifacts.NewSegmentWriter(reservation)
+		recorder = NewSegmentedTerminalRecorder(reservation.MaxBytes, c.recordingSegmentBytes, func(data []byte, head [sha256.Size]byte, final bool) error {
+			// Detached: a disconnecting client must not abort evidence persistence.
+			flushCtx, flushCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
+			defer flushCancel()
+			err := writer.Append(flushCtx, data, head, final)
+			if err != nil && flushErr == nil {
+				flushErr = err
+			}
+			return err
+		})
+	}
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
@@ -356,20 +372,30 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	// The durable reservation, not a now-revoked stream lease, fences this write.
 	var published backend.PublicRecord
 	for attempt := 0; attempt < 3; attempt++ {
-		published, err = c.recordingArtifacts.FinalizeRecording(finalizeCtx, reservation, bytes.NewReader(recording.Bytes), metadata)
+		if segmented {
+			published, err = c.recordingArtifacts.FinalizeRecordingFromSegments(finalizeCtx, reservation, metadata)
+		} else {
+			published, err = c.recordingArtifacts.FinalizeRecording(finalizeCtx, reservation, bytes.NewReader(recording.Bytes), metadata)
+		}
 		if err == nil || finalizeCtx.Err() != nil {
 			break
 		}
 	}
 	ctx.Header("X-Breakglass-Recording-ID", reservation.ArtifactID)
 	recordingDetails["frames"] = metadata.Frames
-	recordingDetails["bytes"] = len(recording.Bytes)
+	recordingDetails["bytes"] = recording.Size
 	recordingDetails["complete"] = metadata.Complete
 	if streamErr != nil {
 		recordingDetails["streamError"] = "stream aborted"
 		// Name the fence that ended the stream without leaking credential or
 		// Secret names: the bounded reason code identifies what changed.
 		recordingDetails["abortReason"] = terminalRecordingAbortReason(streamErr)
+	}
+	if flushErr != nil {
+		// The stream was stopped fail-closed; flushed segments stay committed.
+		flushDetails := maps.Clone(recordingDetails)
+		flushDetails["stage"] = "flush"
+		_ = c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFailed, session, identity, flushDetails)
 	}
 	if err != nil {
 		recordingDetails["stage"] = "finalize"

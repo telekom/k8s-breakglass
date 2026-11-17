@@ -211,6 +211,37 @@ reservations and records the framing in `formatVersion` (2 for new recordings,
 1 for recordings made before timing was added). This identifies framing and
 metadata; it does not redact or alter the authorized terminal stream bytes.
 
+### Incremental flush (opt-in)
+
+By default a stream's framed bytes are held in memory (up to 512 MiB) and
+published when the stream ends, so a controller crash, OOM kill or node loss
+mid-stream leaves only an empty reservation. Set
+`artifacts.terminalRecordingSegmentBytes` (65536 to 67108864; `0`/unset keeps
+the default behavior) to persist the recording while it runs:
+
+- Frames are flushed at frame boundaries once about that many bytes are
+  buffered. Per-stream memory is bounded by one segment plus one frame.
+- Each segment is a separate create-only object in the configured artifact
+  backend (local PVC or S3). After each segment a numbered manifest object is
+  written that lists every segment (index, size, SHA-256) and the SHA-256 chain
+  head. The latest manifest is the commit point; bytes after it are unproven
+  and ignored. At most 4096 segments are written per recording.
+- If a flush fails, the stream is stopped (fail closed: no unrecorded bytes
+  pass), the recording is published as incomplete from what was committed, and
+  `debug_session.terminal_recording_failed` is emitted with `stage: flush`
+  (and `stage: finalize` if publication fails as well).
+- At the end of a stream the controller verifies the committed segments (sizes,
+  digests, frame hash chain, chain head) and publishes them as the usual single
+  recording artifact, so listing, replay and retention are unchanged. The
+  segment objects are then deleted. With the local backend the volume must
+  briefly hold the segments and the assembled object (about twice the
+  recording size).
+- If the controller dies mid-stream, the artifact controller publishes the
+  committed prefix as an incomplete recording (`complete: false`) once the
+  stream's binding has expired. Until then the segments and manifests stay in
+  the backend. Segments of recordings that are never published are removed with
+  the reservation at retention expiry.
+
 ### Revocation and in-flight output
 
 Authorization is checked before each transport write. Kubernetes revocation and

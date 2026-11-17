@@ -280,10 +280,14 @@ type Artifacts struct {
 	CollectorImagePullSecrets []corev1.LocalObjectReference `yaml:"collectorImagePullSecrets,omitempty"`
 	ControllerURL             string                        `yaml:"controllerURL,omitempty"`
 	UploadMaxBytes            int64                         `yaml:"uploadMaxBytes,omitempty"`
-	TokenSecretName           string                        `yaml:"tokenSecretName,omitempty"`
-	TokenSignerKeyID          string                        `yaml:"tokenSignerKeyID,omitempty"`
-	S3                        *ArtifactS3                   `yaml:"s3,omitempty"`
-	Local                     *ArtifactLocal                `yaml:"local,omitempty"`
+	// TerminalRecordingSegmentBytes opts in to incremental terminal recording
+	// flush: frames are persisted as segments of about this size plus a hash
+	// chain manifest while the stream runs. Zero (default) disables it.
+	TerminalRecordingSegmentBytes int64          `yaml:"terminalRecordingSegmentBytes,omitempty"`
+	TokenSecretName               string         `yaml:"tokenSecretName,omitempty"`
+	TokenSignerKeyID              string         `yaml:"tokenSignerKeyID,omitempty"`
+	S3                            *ArtifactS3    `yaml:"s3,omitempty"`
+	Local                         *ArtifactLocal `yaml:"local,omitempty"`
 }
 
 // ArtifactS3 contains administrator-owned S3 settings. The credential Secret

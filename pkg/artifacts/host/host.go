@@ -83,6 +83,12 @@ type Components struct {
 
 // Build constructs the complete enabled artifact host. Disabled artifacts
 // return nil without reading Secrets or contacting a provider.
+// Bounds for config.Artifacts.TerminalRecordingSegmentBytes when enabled.
+const (
+	MinTerminalRecordingSegmentBytes = 64 << 10
+	MaxTerminalRecordingSegmentBytes = 64 << 20
+)
+
 func Build(ctx context.Context, artifactConfig config.Artifacts, namespace string, deps Dependencies) (*Components, error) {
 	if !artifactConfig.Enabled {
 		return nil, nil
@@ -114,6 +120,9 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if artifactConfig.Backend == "local" && artifactConfig.Local != nil && artifactConfig.Local.MaximumObjectBytes > 0 && artifactConfig.UploadMaxBytes > artifactConfig.Local.MaximumObjectBytes {
 		return nil, errors.New("artifact upload maximum exceeds local storage object limit")
 	}
+	if seg := artifactConfig.TerminalRecordingSegmentBytes; seg != 0 && (seg < MinTerminalRecordingSegmentBytes || seg > MaxTerminalRecordingSegmentBytes) {
+		return nil, errors.New("terminal recording segment size is outside the bounded contract")
+	}
 	issuer, err := controllerOrigin(artifactConfig.ControllerURL)
 	if err != nil {
 		return nil, err
@@ -133,7 +142,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(artifactConfig.UploadMaxBytes)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(artifactConfig.UploadMaxBytes).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()

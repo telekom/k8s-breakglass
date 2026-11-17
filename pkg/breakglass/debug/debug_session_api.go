@@ -85,6 +85,7 @@ type DebugSessionAPIController struct {
 	recordingStreams        atomic.Int32
 	recordingArtifacts      *backend.Service
 	recordingMaxBytes       int64
+	recordingSegmentBytes   int64
 	recordingConnections    TerminalRecordingConnectionProvider
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
@@ -94,6 +95,14 @@ type DebugSessionAPIController struct {
 // terminal recording reservations.
 func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64) *DebugSessionAPIController {
 	c.recordingMaxBytes = maxBytes
+	return c
+}
+
+// WithTerminalRecordingSegmentBytes opts in to incremental recording flush:
+// frames are persisted in segments of about this size while the stream runs.
+// Zero (the default) keeps the whole recording in memory until it ends.
+func (c *DebugSessionAPIController) WithTerminalRecordingSegmentBytes(segmentBytes int64) *DebugSessionAPIController {
+	c.recordingSegmentBytes = segmentBytes
 	return c
 }
 

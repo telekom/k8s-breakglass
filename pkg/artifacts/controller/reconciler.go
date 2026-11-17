@@ -29,6 +29,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
@@ -119,6 +120,16 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		}
 		if record.State == backend.StateUploading || record.State == backend.StateUnknown {
 			if _, err := reconciler.Service.RecoverRecording(ctx, record); err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
+		if record.State == backend.StatePending && record.Recording != nil && !now().Before(record.Recording.StreamExpiresAt) {
+			// The stream can no longer be running: publish whatever incremental
+			// flush committed (opt-in) as incomplete evidence. Without segments
+			// there is nothing to recover and the reservation stays as before.
+			recovered := *record.Recording
+			recovered.Complete, recovered.FinishedAt = false, recovered.StreamExpiresAt
+			if _, err := reconciler.Service.FinalizeRecordingFromSegments(ctx, record, recovered); err != nil && !errors.Is(err, storage.ErrNotFound) {
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
 		}
