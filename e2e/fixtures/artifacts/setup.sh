@@ -171,6 +171,7 @@ artifacts:
   collectorImage: '''+collector_image+'''
   controllerURL: https://artifact-e2e.breakglass-system.svc:8444
   uploadMaxBytes: 16777216
+  terminalRecordingSegmentBytes: 65536
   tokenSecretName: artifact-e2e-signing
   tokenSignerKeyID: kind
   local:

@@ -269,6 +269,13 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 
 // recordedSession creates an active recorded workload session on cluster.
 func recordedSession(t *testing.T, ctx context.Context, s *helpers.TestSetup, requester *helpers.APIClient, groups []string, cluster string) (*breakglassv1alpha1.DebugSession, breakglassv1alpha1.AllowedPodRef) {
+	return recordedSessionFor(t, ctx, s, requester, groups, cluster, "30m", "1h")
+}
+
+// recordedSessionFor is recordedSession with an explicit session duration and
+// recording retention, so tests can reach the real stream and retention
+// deadlines in minutes instead of waiting for the defaults.
+func recordedSessionFor(t *testing.T, ctx context.Context, s *helpers.TestSetup, requester *helpers.APIClient, groups []string, cluster, duration, retention string) (*breakglassv1alpha1.DebugSession, breakglassv1alpha1.AllowedPodRef) {
 	t.Helper()
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("terminal-recording")},
@@ -276,12 +283,12 @@ func recordedSession(t *testing.T, ctx context.Context, s *helpers.TestSetup, re
 			Mode: breakglassv1alpha1.DebugSessionModeWorkload, TargetNamespace: s.Namespace,
 			Allowed:              &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{cluster}, Groups: groups},
 			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: ptr.To(true)},
-			Audit:                &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true, RecordingRetention: "1h"},
+			Audit:                &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true, RecordingRetention: retention},
 			PodTemplateString:    recordedPodTemplate,
 		},
 	}
 	require.NoError(t, s.CreateResource(template))
-	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: cluster, RequestedDuration: "30m", Reason: "terminal recording e2e"})
+	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: cluster, RequestedDuration: duration, Reason: "terminal recording e2e"})
 	require.NoError(t, err)
 	s.Cleanup.Add(session)
 	t.Cleanup(func() { _ = requester.TerminateDebugSession(context.Background(), t, session.Name) })

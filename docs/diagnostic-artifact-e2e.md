@@ -84,6 +84,20 @@ to the Kind lane; it does not reproduce manager-cache timing or spoke transport.
 Completed ephemeral-operation replay records its existing reference once while
 preserving the separate Active-only allowed-Pod update.
 
+## Incremental recording flush
+
+The fixture config sets `artifacts.terminalRecordingSegmentBytes: 65536`, so
+`TestDebugSessionTerminalRecordingIncrementalE2E` runs in the same local and S3
+lanes. It uses the existing fault hooks (`/artifacts/provider-outage` for S3,
+`chmod 000 /artifacts/objects` for local) to fail the backend mid-stream and
+requires a fail-closed stream, a `terminal_recording_failed` event with
+`stage: flush`, and no complete recording. It then force-deletes the controller
+Pod mid-stream, waits for the replacement and the API port-forward, and requires
+the committed prefix to appear as an incomplete, hash-chain-verified recording
+once the session (stream binding) expired. The template's 1 minute
+`recordingRetention` then requires the recording, segments and manifests to be
+gone from the backend. Sessions last 3 to 10 minutes; all waits are bounded polls.
+
 ## Explicit backend and lifecycle matrix
 
 The same named test runs separately with `E2E_ARTIFACT_BACKEND=local` and `s3`.
