@@ -64,6 +64,10 @@ RUN_ELEVATED="${REFERENCE_RUN_ELEVATED:-false}"
 VERIFY_SUPPLY_CHAIN="${REFERENCE_VERIFY_SUPPLY_CHAIN:-true}"
 VERIFY_GH_ATTESTATION="${REFERENCE_VERIFY_GH_ATTESTATION:-false}"
 PUBLISHED_IMAGE_DIGEST_REF=""
+# Optional evidence export: JUnit + JSON rows and the artifact digests used.
+REFERENCE_EVIDENCE_DIR="${REFERENCE_EVIDENCE_DIR:-}"
+PHASE=""
+ROWS=() # "name<TAB>status<TAB>detail"
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-usage.XXXXXX")"
 
 KUBECONFIG_FILE="${REFERENCE_KUBECONFIG:-${KUBECONFIG:-}}"
@@ -78,6 +82,38 @@ ESCALATION_NAME="reference-restricted-${REFERENCE_RUN_ID}"
 
 die() { printf 'reference-usage: %s\n' "$*" >&2; exit 1; }
 log() { printf 'reference-usage: %s\n' "$*"; }
+
+# begin names the running phase; a die while it runs is recorded as its failure.
+begin() { PHASE="$1"; }
+pass() { ROWS+=("${PHASE}"$'\t'pass$'\t'); PHASE=""; }
+skip() { ROWS+=("$1"$'\t'skipped$'\t'"$2"); }
+
+write_evidence() {
+  local code="$1" row name status detail
+  [[ -n "${REFERENCE_EVIDENCE_DIR}" ]] || return 0
+  [[ -z "${PHASE}" ]] || ROWS+=("${PHASE}"$'\t'failed$'\t'"exit ${code}")
+  [[ "${code}" -eq 0 || " ${ROWS[*]-} " == *failed* ]] || ROWS+=("exit"$'\t'failed$'\t'"exit ${code}")
+  mkdir -p "${REFERENCE_EVIDENCE_DIR}"
+  local rows_json='[]' tests=0 failures=0 skipped=0 cases=''
+  for row in "${ROWS[@]-}"; do
+    [[ -n "${row}" ]] || continue
+    IFS=$'\t' read -r name status detail <<<"${row}"
+    rows_json="$(jq -c --arg n "${name}" --arg s "${status}" --arg d "${detail}" '. + [{name:$n,status:$s,detail:$d}]' <<<"${rows_json}")"
+    tests=$((tests + 1))
+    case "${status}" in
+      failed) failures=$((failures + 1)); cases+="<testcase name=\"${name}\"><failure message=\"${detail}\"/></testcase>" ;;
+      skipped) skipped=$((skipped + 1)); cases+="<testcase name=\"${name}\"><skipped message=\"${detail}\"/></testcase>" ;;
+      *) cases+="<testcase name=\"${name}\"/>" ;;
+    esac
+  done
+  jq -n --arg mode "${MODE}" --arg image "${PUBLISHED_IMAGE_DIGEST_REF}" --arg chart "${CATALOGUE_CHART}" \
+    --arg chart_version "${CATALOGUE_VERSION}" --arg chart_digest "${CATALOGUE_CHART_DIGEST}" \
+    --argjson rows "${rows_json}" \
+    '{mode:$mode,image_digest_ref:$image,catalogue_chart:$chart,catalogue_version:$chart_version,catalogue_digest:$chart_digest,rows:$rows}' \
+    >"${REFERENCE_EVIDENCE_DIR}/reference-usage.json"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="reference-usage-%s" tests="%d" failures="%d" skipped="%d">%s</testsuite>\n' \
+    "${MODE}" "${tests}" "${failures}" "${skipped}" "${cases}" >"${REFERENCE_EVIDENCE_DIR}/junit.xml"
+}
 
 delete_created_debug_namespace() {
   [[ "${DEBUG_NAMESPACE_CREATED}" == true ]] || return 0
@@ -207,7 +243,9 @@ on_exit() {
   local exit_code=$?
   trap - EXIT
   cleanup "${exit_code}"
-  exit "$?"
+  exit_code=$?
+  write_evidence "${exit_code}"
+  exit "${exit_code}"
 }
 trap on_exit EXIT
 
@@ -756,13 +794,20 @@ main() {
   [[ "${MODE}" == source || "${MODE}" == published ]] || die "REFERENCE_MODE must be source or published"
   validate_inputs
   require_commands
-  prepare_image
-  verify_public_artifacts
-  install_stack
-  configure_reference
-  reference_flow
-  debug_session_flow
-  assert_zero_residual
+  begin prepare-image; prepare_image; pass
+  if [[ "${MODE}" == published ]]; then
+    if [[ "${VERIFY_SUPPLY_CHAIN}" == true ]]; then
+      begin verify-supply-chain; verify_public_artifacts; pass
+    else
+      skip verify-supply-chain "REFERENCE_VERIFY_SUPPLY_CHAIN is not true"
+    fi
+  fi
+  begin install-stack; install_stack; pass
+  begin configure-reference; configure_reference; pass
+  begin request-approve-use-deny-terminate; reference_flow; pass
+  begin debug-session; debug_session_flow; pass
+  [[ "${RUN_ELEVATED}" != true ]] || skip elevated-debug-session "disabled: catalogue lacks the controller-issued approval tuple"
+  begin zero-residue; assert_zero_residual; pass
   log "Reference usage passed (${MODE} mode)"
 }
 

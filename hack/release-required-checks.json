@@ -9,6 +9,7 @@
   "Helm Chart Lint",
   "Build Image",
   "Single-Cluster E2E Tests",
+  "Reference usage (source)",
   "OIDC Comprehensive E2E Tests",
   "UI E2E Tests",
   "Multi-Cluster E2E Tests",

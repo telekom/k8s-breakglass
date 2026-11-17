@@ -278,4 +278,20 @@ REFERENCE_KUBECTL_LOG="${log_file}" REFERENCE_KUBECTL_STDIN_LOG="${stdin_log_fil
   ' bash "${script_without_main}"
 grep -F "kubectl create namespace reference-debug --request-timeout 60s -o json" "${log_file}" >/dev/null
 
+evidence_dir="${test_root}/evidence"
+if REFERENCE_EVIDENCE_DIR="${evidence_dir}" bash -c '
+    source "$1"
+    MODE=published
+    CATALOGUE_CHART_DIGEST=sha256:abc
+    begin first; pass
+    skip second "not wired"
+    begin third
+    exit 9
+  ' bash "${script_without_main}"; then
+  echo "expected failing phase to fail" >&2
+  exit 1
+fi
+jq -e '.catalogue_digest == "sha256:abc" and ([.rows[].status] == ["pass","skipped","failed"])' "${evidence_dir}/reference-usage.json" >/dev/null
+grep -Fq 'tests="3" failures="1" skipped="1"' "${evidence_dir}/junit.xml"
+
 echo "reference usage script checks passed"

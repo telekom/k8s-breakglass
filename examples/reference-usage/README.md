@@ -52,6 +52,37 @@ fixtures. Standalone consumers can set `REFERENCE_SETUP_SCRIPT` (or provide
 not require a checked-out chart or audit YAML. It does not accept credentials
 or print tokens; identity values are supplied through the selected fixture.
 
+## CI lanes and evidence
+
+[`reference-usage.yml`](../../.github/workflows/reference-usage.yml) runs the
+**source** lane on every pull request and push to `main` (check
+`Reference usage (source)`; it is part of `all-checks-green` and
+`hack/release-required-checks.json`). The **published** lane runs after the
+`Release` workflow succeeds for a tag, weekly, and on demand. For tag and
+scheduled runs it resolves the released `ghcr.io/telekom/k8s-breakglass:<tag>`
+image and the immutable digest of the `debug-session-catalogue` chart whose
+`appVersion` matches the tag, and fails on any skipped or failed row.
+
+Set `REFERENCE_EVIDENCE_DIR` to export `junit.xml` and `reference-usage.json`
+(rows plus the image and chart digests used); the workflow uploads them as the
+`reference-usage-<mode>` artifact. Rows: `prepare-image`, `verify-supply-chain`
+(published), `install-stack`, `configure-reference`,
+`request-approve-use-deny-terminate`, `debug-session`, `zero-residue`.
+
+Making the check a required branch-protection check is a repository-owner
+decision.
+
+### Terminal recording is not part of this lane
+
+`bgctl debug terminal` / `bgctl debug recordings` need a template with
+`audit.enableTerminalRecording`, a configured diagnostic artifact backend and
+controller, and a ClusterConfig with a published credential generation
+([terminal recording](../../docs/terminal-recording.md)). The consumer-defined
+`workload-diagnostics` catalogue profile used here has none of these, and
+adding them would couple the reference lane to controller internals. The
+recorded-terminal path is exercised in kind by
+`e2e/api/debug_session_terminal_recording_test.go` instead.
+
 ## Catalogue release contract
 
 The catalogue branch publishes the `charts/debug-session-catalogue` Helm chart
