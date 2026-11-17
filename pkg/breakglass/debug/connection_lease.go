@@ -33,6 +33,11 @@ const (
 	connectionLeaseSecretVersionAnnotation     = "breakglass.telekom.com/connection-secret-resource-version"
 )
 
+// ErrConnectionLeaseSuperseded reports that the lease named by a capability is
+// held by a successor (different UID, holder or epoch). The stale capability
+// owns nothing to clean up, and the successor is never touched.
+var ErrConnectionLeaseSuperseded = errors.New("connection lease ownership changed before revoke")
+
 // ErrConnectionGenerationRaced reports that another writer staged or
 // published a generation concurrently. The caller may retry.
 var ErrConnectionGenerationRaced = errors.New("connection generation raced with another publisher")
@@ -242,7 +247,14 @@ func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakgla
 		return nil
 	}
 	l := ds.Status.ConnectionLease
-	return s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
+	err := s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
+	// A superseded recorded lease is not ours to delete; callers continue to
+	// RevokeUnrecordedSessionLeases, which only removes leases still held by
+	// this session. Failing here would wedge terminal cleanup forever.
+	if errors.Is(err, ErrConnectionLeaseSuperseded) {
+		return nil
+	}
+	return err
 }
 
 // RevokeUnrecordedSessionLeases deletes session-scoped leases still held by
@@ -268,7 +280,7 @@ func (s *ConnectionLeaseService) RevokeUnrecordedSessionLeases(ctx context.Conte
 		}
 		uid, rv := lease.UID, lease.ResourceVersion
 		err := s.client.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: lease.Name, Namespace: lease.Namespace}},
-			&ctrlclient.DeleteOptions{Raw: &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}})
+			ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("revoke unrecorded connection lease: %w", err)
 		}
@@ -430,11 +442,11 @@ func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLease
 		return err
 	}
 	if current.UID != ref.UID || epoch != ref.Epoch || current.Spec.HolderIdentity == nil || *current.Spec.HolderIdentity != string(ref.HolderUID) || current.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || current.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest {
-		return fmt.Errorf("connection lease ownership changed before revoke")
+		return ErrConnectionLeaseSuperseded
 	}
 	uid := ref.UID
 	rv := current.ResourceVersion
-	err = s.client.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, &ctrlclient.DeleteOptions{Raw: &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}})
+	err = s.client.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -19,11 +21,14 @@ import (
 
 // fake clients do not allocate Kubernetes UIDs. Real lease capabilities always
 // carry one, so make the test client model that API-server behavior.
-type leaseUIDClient struct{ ctrlclient.Client }
+type leaseUIDClient struct {
+	ctrlclient.Client
+	nonce int
+}
 
 func (c *leaseUIDClient) Create(ctx context.Context, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
 	if lease, ok := obj.(*coordinationv1.Lease); ok && lease.UID == "" {
-		lease.UID = types.UID("uid-" + lease.Name)
+		lease.UID = types.UID(fmt.Sprintf("uid-%s-%d", lease.Name, c.nonce))
 	}
 	return c.Client.Create(ctx, obj, opts...)
 }
@@ -339,4 +344,132 @@ func TestRenewSessionRechecksLiveSessionAfterLeaseRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// beforeDeleteClient runs hook right before the first Lease delete, modelling
+// a successor acquiring the lease between a cleanup's read and its delete.
+type beforeDeleteClient struct {
+	ctrlclient.Client
+	hook func()
+}
+
+func (c *beforeDeleteClient) Delete(ctx context.Context, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
+	if c.hook != nil {
+		h := c.hook
+		c.hook = nil
+		h()
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
+func successorFixture(t *testing.T) (context.Context, ctrlclient.Client, *beforeDeleteClient, *ConnectionLeaseService, ConnectionLeaseProof, ConnectionLeaseRef) {
+	t.Helper()
+	ctx := context.Background()
+	scheme := testScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	base := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	racing := &beforeDeleteClient{Client: base}
+	service := NewConnectionLeaseService(racing)
+	proof := ConnectionLeaseProof{Namespace: "controller", SessionUID: "session-a", TargetUID: "cluster-a", ProfileDigest: "sha256:a", ExpiresAt: time.Now().Add(time.Minute)}
+	ref, err := service.Acquire(ctx, proof)
+	require.NoError(t, err)
+	return ctx, base, racing, service, proof, ref
+}
+
+func getLease(t *testing.T, c ctrlclient.Client, ref ConnectionLeaseRef) *coordinationv1.Lease {
+	t.Helper()
+	l := &coordinationv1.Lease{}
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, l))
+	return l
+}
+
+// The successor takes the lease after Revoke's ownership read but before its
+// delete: the delete preconditions must refuse, leaving the successor intact.
+func TestConnectionLeaseRevokeCannotDeleteSuccessorRacingBeforeDelete(t *testing.T) {
+	ctx, base, racing, service, _, ref := successorFixture(t)
+	racing.hook = func() {
+		l := getLease(t, base, ref)
+		l.Spec.HolderIdentity = connPtr("session-b")
+		l.Annotations[connectionLeaseEpochAnnotation] = "2"
+		require.NoError(t, base.Update(ctx, l))
+	}
+	require.Error(t, service.Revoke(ctx, ref))
+	require.Equal(t, "session-b", *getLease(t, base, ref).Spec.HolderIdentity)
+}
+
+// Same name, new UID (stale lease deleted, successor created).
+func TestConnectionLeaseRevokeCannotDeleteRecreatedLease(t *testing.T) {
+	ctx, base, _, service, proof, ref := successorFixture(t)
+	require.NoError(t, base.Delete(ctx, getLease(t, base, ref)))
+	base.(*leaseUIDClient).nonce++
+	succ := proof
+	succ.SessionUID = "session-b"
+	ref2, err := service.Acquire(ctx, succ)
+	require.NoError(t, err)
+	require.NotEqual(t, ref.UID, ref2.UID)
+	require.ErrorIs(t, service.Revoke(ctx, ref), ErrConnectionLeaseSuperseded)
+	require.Equal(t, ref2.UID, getLease(t, base, ref2).UID)
+}
+
+func sessionWithLease(ref ConnectionLeaseRef) *breakglassv1alpha1.DebugSession {
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "ds", Namespace: "controller", UID: ref.HolderUID}}
+	ds.Status.ConnectionLease = &breakglassv1alpha1.DebugSessionConnectionLease{Namespace: ref.Namespace, Name: ref.Name, UID: ref.UID, HolderUID: ref.HolderUID, TargetUID: ref.TargetUID, ProfileDigest: ref.ProfileDigest, Epoch: ref.Epoch, ExpiresAt: metav1.NewTime(ref.ExpiresAt)}
+	return ds
+}
+
+// A different session's lease is never touched by session cleanup, whether
+// recorded (stale status) or swept as "unrecorded".
+func TestConnectionLeaseSessionCleanupPreservesSuccessorSession(t *testing.T) {
+	ctx, base, _, service, _, ref := successorFixture(t)
+	l := getLease(t, base, ref)
+	l.Spec.HolderIdentity = connPtr("session-b")
+	l.Annotations[connectionLeaseSessionAnnotation] = "session-b"
+	l.Annotations[connectionLeaseEpochAnnotation] = "2"
+	require.NoError(t, base.Update(ctx, l))
+	ds := sessionWithLease(ref)
+	require.NoError(t, service.RevokeSession(ctx, ds))
+	require.NoError(t, service.RevokeUnrecordedSessionLeases(ctx, ds))
+	require.Equal(t, "session-b", *getLease(t, base, ref).Spec.HolderIdentity)
+}
+
+// The sweeper's delete is also precondition-guarded against a successor
+// taking over between its list and delete.
+func TestConnectionLeaseUnrecordedSweepCannotDeleteSuccessorRacingBeforeDelete(t *testing.T) {
+	ctx, base, racing, service, proof, _ := successorFixture(t)
+	ref, err := service.acquire(ctx, proof, true) // session-scoped: the sweeper's domain
+	require.NoError(t, err)
+	racing.hook = func() {
+		l := getLease(t, base, ref)
+		l.Spec.HolderIdentity = connPtr("session-b")
+		l.Annotations[connectionLeaseEpochAnnotation] = "2"
+		require.NoError(t, base.Update(ctx, l))
+	}
+	require.Error(t, service.RevokeUnrecordedSessionLeases(ctx, sessionWithLease(ref)))
+	require.Equal(t, "session-b", *getLease(t, base, ref).Spec.HolderIdentity)
+}
+
+// Terminal cleanup must not wedge when the recorded lease reference is stale
+// because the same session re-acquired (epoch bump): the stale ref is skipped
+// and the sweeper still removes the session's own live lease.
+func TestConnectionLeaseRevokeSessionStaleRecordedRefDoesNotWedgeCleanup(t *testing.T) {
+	ctx, base, _, service, proof, ref := successorFixture(t)
+	l := getLease(t, base, ref)
+	old := metav1.NewMicroTime(time.Now().Add(-time.Hour))
+	l.Spec.RenewTime = &old
+	require.NoError(t, base.Update(ctx, l))
+	proof.SessionUID = "session-a"
+	// session-scoped acquire so the sweeper (session prefix) applies.
+	scoped, err := service.acquire(ctx, proof, true)
+	require.NoError(t, err)
+	l = getLease(t, base, scoped)
+	l.Spec.RenewTime = &old
+	require.NoError(t, base.Update(ctx, l))
+	again, err := service.acquire(ctx, proof, true)
+	require.NoError(t, err)
+	require.Equal(t, scoped.Epoch+1, again.Epoch)
+	ds := sessionWithLease(scoped) // status still records the old epoch
+	require.NoError(t, service.RevokeSession(ctx, ds))
+	require.NoError(t, service.RevokeUnrecordedSessionLeases(ctx, ds))
+	err = base.Get(ctx, types.NamespacedName{Namespace: again.Namespace, Name: again.Name}, &coordinationv1.Lease{})
+	require.True(t, apierrors.IsNotFound(err), "own live lease must be removed: %v", err)
 }

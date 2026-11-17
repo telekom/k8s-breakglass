@@ -108,7 +108,7 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		// Only the unchanged object created by this call may be retired. A
 		// concurrent publisher/acquirer changes resourceVersion and is preserved.
 		uid, rv := ref.UID, ref.ResourceVersion
-		err := p.service.client.Delete(cleanupCtx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, &ctrlclient.DeleteOptions{Raw: &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}})
+		err := p.service.client.Delete(cleanupCtx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv})
 		if apierrors.IsNotFound(err) {
 			err = nil
 		} else if err != nil {
