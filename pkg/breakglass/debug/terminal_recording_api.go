@@ -38,9 +38,10 @@ const terminalRecordingDefaultRetention = 90 * 24 * time.Hour
 
 const terminalRecordingFinalizeTimeout = 10 * time.Second
 
-// Each recorder is bounded to 512 MiB, including framing. Limit live streams
-// per serving process so authenticated clients cannot allocate unbounded buffers.
-const maximumConcurrentTerminalRecordings = 2
+// Each recorder is bounded (see WithTerminalRecordingMaxBytes), including
+// framing. Live streams per serving process are limited so authenticated
+// clients cannot allocate unbounded buffers; this is the default limit.
+const defaultConcurrentTerminalRecordings = 2
 
 // TerminalRecordingConnectionBinding is the immutable authorization tuple
 // supplied by the connection-lease service for one target stream.
@@ -100,7 +101,11 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording requires an enabled audit configuration")
 		return
 	}
-	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
+	maxStreams := c.recordingMaxStreams
+	if maxStreams < 1 {
+		maxStreams = defaultConcurrentTerminalRecordings
+	}
+	if c.recordingStreams.Add(1) > maxStreams {
 		c.recordingStreams.Add(-1)
 		apiresponses.RespondTooManyRequests(ctx, "too many concurrent terminal recordings")
 		return

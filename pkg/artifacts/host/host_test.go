@@ -289,3 +289,32 @@ func TestArtifactSessionFenceHonorsExactIdleBoundary(t *testing.T) {
 	session.Status.ResolvedTemplate.Constraints.IdleTimeout = ""
 	require.True(t, artifactSessionIsLive(session, binding, now))
 }
+
+func TestValidateTerminalRecordingLimits(t *testing.T) {
+	base := config.Artifacts{UploadMaxBytes: 1 << 20}
+	for _, tt := range []struct {
+		name   string
+		bytes  int64
+		conc   int
+		wantOK bool
+	}{
+		{"defaults", 0, 0, true},
+		{"explicit within bounds", 1 << 20, MaxTerminalRecordingConcurrent, true},
+		{"minimum", 1, 1, true},
+		{"negative bytes", -1, 0, false},
+		{"bytes above upload maximum", 1<<20 + 1, 0, false},
+		{"negative concurrency", 0, -1, false},
+		{"concurrency above maximum", 0, MaxTerminalRecordingConcurrent + 1, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base
+			c.TerminalRecordingMaxBytes, c.TerminalRecordingMaxConcurrent = tt.bytes, tt.conc
+			err := ValidateTerminalRecordingLimits(c)
+			if tt.wantOK {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

@@ -64,6 +64,8 @@ artifacts:
     - name: collector-registry
   controllerURL: https://breakglass.example.com
   uploadMaxBytes: 67108864
+  # terminalRecordingMaxBytes: 67108864    # optional, 1..uploadMaxBytes
+  # terminalRecordingMaxConcurrent: 2       # optional, 1..32
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
   s3:
@@ -96,6 +98,14 @@ and fragment components are rejected. Do not put credentials in this URL. `uploa
 bytes; recipes impose additional limits. Requests cannot override the image,
 provider, signing key, target identity or these limits.
 The configured controller origin is normalized before creating upload URLs.
+`terminalRecordingMaxBytes` (optional) caps one terminal recording, framing
+included; unset keeps the historic behaviour of allowing up to `uploadMaxBytes`.
+`terminalRecordingMaxConcurrent` (optional, default 2, maximum 32) caps live
+recording streams per controller replica; each stream buffers up to one
+recording in memory, so size memory requests as
+`terminalRecordingMaxConcurrent x terminalRecordingMaxBytes`. Zero is the
+"unset" value; negative values, a byte limit above `uploadMaxBytes` and a
+concurrency above 32 are rejected at startup.
 Requests exceeding the HTTP upload body limit return HTTP 413, not a retryable
 storage-provider error.
 

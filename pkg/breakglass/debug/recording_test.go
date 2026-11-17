@@ -281,3 +281,20 @@ func TestStreamTerminalStopsWhenResizeCannotBeRecorded(t *testing.T) {
 	require.ErrorContains(t, err, "record terminal resize", "an unrecordable resize fails the stream")
 	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly")
 }
+
+func TestTerminalRecorderEnforcesConfiguredLimit(t *testing.T) {
+	frame, err := terminalRecordingFrameSize(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewTerminalRecorder(int64(2 * frame))
+	payload := make([]byte, 10)
+	for i := 0; i < 2; i++ {
+		if err := r.Write(TerminalRecordingOutput, payload); err != nil {
+			t.Fatalf("write %d within limit: %v", i, err)
+		}
+	}
+	if err := r.Write(TerminalRecordingOutput, payload); err == nil {
+		t.Fatal("write beyond the configured limit succeeded")
+	}
+}
