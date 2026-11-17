@@ -53,6 +53,9 @@ jobs:
           IGNORE_RELEASE_WORKFLOW_RUNS: "true"
         run: REQUIRED_CHECKS_JSON="$(hack/utility-release-contract.sh required-checks)" hack/verify-commit-check-runs.sh
 
+      - name: Verify release artifact inventory
+        run: hack/verify-release-inventory.sh
+
       - name: Require version tag ref
         id: classify
         run: |
@@ -593,6 +596,22 @@ jobs:
         run: |
           cosign attest --yes --type spdxjson --predicate sbom.spdx.json \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
+      - name: Verify controller image signature and attestations
+        env:
+          REGISTRY_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.inspect.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          issuer="https://token.actions.githubusercontent.com"
+          cosign verify "${REGISTRY_IMAGE}@${DIGEST}" \
+            --certificate-identity "${identity}" --certificate-oidc-issuer "${issuer}" >/dev/null
+          cosign verify-attestation "${REGISTRY_IMAGE}@${DIGEST}" --type spdxjson \
+            --certificate-identity "${identity}" --certificate-oidc-issuer "${issuer}" >/dev/null
+          gh attestation verify "oci://${REGISTRY_IMAGE}@${DIGEST}" --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-digest "${GITHUB_SHA}" --source-ref "${GITHUB_REF}" >/dev/null
 
   # ---------------------------------------------------------------------------
   # Push multi-arch image to Artifactory OCI mirror

@@ -49,4 +49,20 @@ jq -e '
   .predicate.runDetails.builder.id == "https://github.com/example/run/123"
 ' "${test_dir}/statement.json" >/dev/null
 
+# Negative: provenance can only be bound to an immutable digest subject. A
+# tag-only/mutable or malformed digest, a digest embedded in the subject name,
+# and a bad source SHA must all be refused (nothing is attested).
+gen=(bash "${script_dir}/generate-slsa-provenance.sh" --build-type bt --builder-id bid)
+reject() {
+  rm -f "${test_dir}/bad.json"
+  if "${gen[@]}" --output "${test_dir}/bad.json" "$@" >/dev/null 2>&1; then echo "accepted: $*" >&2; exit 1; fi
+  [[ ! -e "${test_dir}/bad.json" ]] || { echo "predicate written for rejected input: $*" >&2; exit 1; }
+}
+reject --subject "${subject}" --digest latest --sha "${sha}"
+reject --subject "${subject}" --digest "${digest#sha256:}" --sha "${sha}"
+reject --subject "${subject}" --digest "sha256:${digest: -8}" --sha "${sha}"
+reject --subject "${subject}" --digest "${digest^^}" --sha "${sha}"
+reject --subject "${subject}@${digest}" --digest "${digest}" --sha "${sha}"
+reject --subject "${subject}" --digest "${digest}" --sha main
+
 echo "SLSA provenance structure passed"

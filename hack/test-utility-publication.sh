@@ -192,6 +192,15 @@ SMOKE_FAILURE=true DOCKER_RUN_LOG="${smoke_run_log}" expect_fail "${verify_env[@
   ghcr.io/telekom/k8s-breakglass/utils/test \
   sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
   '["--help"]' exact-smoke-ok
+# Mutable (tag-only) and malformed references are not subjects: the verifier
+# must refuse them before any signature or attestation lookup is trusted.
+for mutable_ref in latest rolling v1.2.3 sha256:short eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do
+  expect_fail "${verify_env[@]}" "${root}/hack/verify-utility-publication.sh" ghcr.io/telekom/k8s-breakglass/utils/test "${mutable_ref}"
+done
+# Digest mismatch: a moving tag that no longer resolves to the verified digest
+# must not pass the pre-tag check (DOCKER_MODE=exists resolves to eeee...).
+DOCKER_MODE=exists expect_fail "${helper}" require-tag ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3 sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+DOCKER_MODE=exists expect_fail "${helper}" require-tag ghcr.io/telekom/k8s-breakglass/utils/test rolling latest
 # A competing provenance claim for the same tag/digest fails closed.
 expect_fail env COMPETING_PROVENANCE=true "${verify_env[@]}" "${root}/hack/verify-utility-publication.sh" ghcr.io/telekom/k8s-breakglass/utils/test sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 
