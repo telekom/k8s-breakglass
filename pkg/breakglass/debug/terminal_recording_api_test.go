@@ -6,6 +6,7 @@ package debug
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -534,4 +535,28 @@ func TestTerminalRecordingAbortReason(t *testing.T) {
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
 		require.NotContains(t, want, "kubeconfig", "reason codes never carry Secret names")
 	}
+}
+
+type flakyValidateConnection struct {
+	TerminalRecordingConnection
+	failures int
+	calls    int
+}
+
+func (c *flakyValidateConnection) Validate(context.Context) error {
+	c.calls++
+	if c.calls <= c.failures {
+		return errors.New("read terminal stream claim: context deadline exceeded")
+	}
+	return nil
+}
+
+func TestValidateAfterCleanStreamToleratesTransientFailure(t *testing.T) {
+	transient := &flakyValidateConnection{failures: 1}
+	require.True(t, validateAfterCleanStream(context.Background(), transient), "one failed probe must not mark a clean stream incomplete")
+	require.Equal(t, 2, transient.calls)
+
+	revoked := &flakyValidateConnection{failures: 1000}
+	require.False(t, validateAfterCleanStream(context.Background(), revoked), "a lost authority stays incomplete")
+	require.Equal(t, terminalFinalValidateAttempts, revoked.calls)
 }
