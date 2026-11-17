@@ -74,6 +74,11 @@ This affects:
 
 ### NGINX Ingress Controller
 
+Recorded terminals (`POST /debugSessions/:name/terminal`) stream request and
+response bodies for the whole session; add the opt-in kustomize component
+`config/components/streaming-ingress` for them. See
+[Terminal recording: ingress and proxies](terminal-recording.md#ingress-and-proxies).
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress

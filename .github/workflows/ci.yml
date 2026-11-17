@@ -194,6 +194,8 @@ jobs:
         run: make controller-gen kustomize
       - name: Verify generated artifacts
         run: make verify-generated
+      - name: Streaming ingress component renders
+        run: bash hack/test-streaming-ingress.sh
       - name: Build all kustomize targets
         run: |
           mkdir -p manifests-current

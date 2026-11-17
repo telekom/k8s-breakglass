@@ -185,3 +185,34 @@ func TestTerminalFailedInputIsNotCleanEOF(t *testing.T) {
 	require.NoError(t, err, "a normal EOF still ends cleanly")
 	require.False(t, <-sawBodyError, "a normal EOF is a clean end of input")
 }
+
+// nginx drops response trailers: the outcome comes from the recording listing.
+func TestTerminalFallsBackToListingWhenTrailersAreDropped(t *testing.T) {
+	for name, tc := range map[string]struct {
+		listing string
+		want    TerminalResult
+	}{
+		"complete":   {`[{"artifactID":"rec-1","sha256":"abc","recording":{"complete":true}}]`, TerminalResult{RecordingID: "rec-1", SHA256: "abc", Status: "completed"}},
+		"incomplete": {`[{"artifactID":"rec-1","sha256":"abc","recording":{"complete":false}}]`, TerminalResult{RecordingID: "rec-1", SHA256: "abc", Status: "incomplete"}},
+		"unlisted":   {`[]`, TerminalResult{RecordingID: "rec-1", Status: "finalization-pending"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					require.Equal(t, "/api/debugSessions/s1/terminal", r.URL.Path)
+					_, _ = w.Write([]byte(tc.listing))
+					return
+				}
+				w.Header().Set(terminalPendingIDHeader, "rec-1")
+				_, _ = io.Copy(io.Discard, r.Body)
+				_, _ = w.Write([]byte("out"))
+			}))
+			defer server.Close()
+			c, err := New(WithServer(server.URL))
+			require.NoError(t, err)
+			result, err := c.Terminal(context.Background(), TerminalRequest{Session: "s1", PodNamespace: "n", PodName: "p", Command: []string{"sh"}, Stdin: strings.NewReader("x")})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, result)
+		})
+	}
+}

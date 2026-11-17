@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -166,6 +167,38 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, http.StatusForbidden, denied.StatusCode, denied.Body)
 		})
+	})
+
+	// Needs e2e/ingress-nginx.sh (E2E_INGRESS=true on kind-setup-single.sh).
+	// nginx drops response trailers: the client must still report the outcome.
+	t.Run("recorded terminal through the ingress", func(t *testing.T) {
+		ingressURL := os.Getenv("E2E_INGRESS_URL")
+		if ingressURL == "" {
+			t.Skip("E2E_INGRESS_URL not set: no ingress controller in this lane")
+		}
+		bg, err := bgclient.New(bgclient.WithServer(ingressURL), bgclient.WithToken(requester.AuthToken))
+		require.NoError(t, err)
+		stdin, stdinWriter := io.Pipe()
+		go func() {
+			time.Sleep(2 * time.Second) // output must flow back before input ends
+			_, _ = io.WriteString(stdinWriter, "via-ingress\n")
+			_ = stdinWriter.Close()
+		}()
+		var out bytes.Buffer
+		streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		result, err := bg.Terminal(streamCtx, bgclient.TerminalRequest{
+			Session: session.Name, Namespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
+			Command: []string{"sh", "-c", `echo start; read line; echo "got:$line"`}, Stdin: stdin, Stdout: &out,
+		})
+		require.NoError(t, err)
+		require.Contains(t, out.String(), "got:via-ingress")
+		require.Equal(t, "completed", result.Status, out.String())
+		require.NotEmpty(t, result.RecordingID)
+		var raw bytes.Buffer
+		published, err := bg.DebugSessions().DownloadRecording(ctx, session.Name, session.Namespace, result.RecordingID, &raw, recording.MaxRecordingBytes)
+		require.NoError(t, err)
+		require.Equal(t, result.SHA256, published)
 	})
 
 	t.Run("bgctl client records resize and timing", func(t *testing.T) {

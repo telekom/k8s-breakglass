@@ -25,9 +25,12 @@ import (
 const (
 	terminalProtocolHeader = "X-Breakglass-Terminal-Protocol"
 	terminalProtocolFramed = "framed.v1"
-	terminalFrameStdin     = byte(0)
-	terminalFrameResize    = byte(1)
-	maxTerminalInputFrame  = 64 << 10
+	// terminalPendingIDHeader names the recording before the stream starts, so
+	// the outcome can be looked up when a proxy drops the response trailers.
+	terminalPendingIDHeader = "X-Breakglass-Recording-Pending-ID"
+	terminalFrameStdin      = byte(0)
+	terminalFrameResize     = byte(1)
+	maxTerminalInputFrame   = 64 << 10
 )
 
 // TerminalSize is a client terminal size in cells.
@@ -210,11 +213,41 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 	if err := failedInput(nil); err != nil {
 		return TerminalResult{}, err
 	}
-	return TerminalResult{
+	result := TerminalResult{
 		RecordingID: resp.Trailer.Get("X-Breakglass-Recording-ID"),
 		SHA256:      resp.Trailer.Get("X-Breakglass-Recording-SHA256"),
 		Status:      resp.Trailer.Get("X-Breakglass-Recording-Status"),
-	}, nil
+	}
+	if result.Status == "" {
+		if id := resp.Header.Get(terminalPendingIDHeader); id != "" {
+			// A proxy (nginx) dropped the trailers: the server finalized the
+			// recording before it ended the stream, so the listing has the outcome.
+			result = c.recordingOutcome(ctx, request, id)
+		}
+	}
+	return result, nil
+}
+
+// recordingOutcome derives the trailer values from the recording listing.
+// An unreachable listing leaves Status empty, like a stream without trailers.
+func (c *Client) recordingOutcome(ctx context.Context, request TerminalRequest, id string) TerminalResult {
+	result := TerminalResult{RecordingID: id}
+	infos, err := c.DebugSessions().Recordings(ctx, request.Session, request.Namespace)
+	if err != nil {
+		return result
+	}
+	result.Status = "finalization-pending"
+	for _, info := range infos {
+		if info.ArtifactID != id {
+			continue
+		}
+		result.SHA256 = info.SHA256
+		result.Status = "incomplete"
+		if info.Recording != nil && info.Recording.Complete {
+			result.Status = "completed"
+		}
+	}
+	return result
 }
 
 func writeTerminalFrame(w io.Writer, frameType byte, payload []byte) error {

@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: streaming-ready ingress (opt-in)
+#
+# Makes the Ingress (or, with ../gateway-api listed BEFORE this component, the
+# HTTPRoute) usable for the recorded terminal: one long-lived POST whose request
+# and response bodies stream at the same time (docs/terminal-recording.md).
+#
+#   components:
+#     - ../../components/streaming-ingress
+#
+# Not a protocol upgrade: no Upgrade/Connection or WebSocket headers are needed.
+# Adjust the 3600 s timeouts to the longest session you allow, by a patch in
+# your overlay. Patches whose target is absent are ignored, so the component is
+# safe with either exposure style.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      kind: Ingress
+      name: breakglass-ingress
+    patch: |
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: breakglass-ingress
+        annotations:
+          nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+          nginx.ingress.kubernetes.io/proxy-buffering: "off"
+          nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+          nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+          nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+          nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+  # Gateway API: "0s" disables the request and backend timeouts (GEP-1742), so
+  # the route does not cut a running session. Implementations may still apply
+  # their own idle timeouts (Envoy Gateway BackendTrafficPolicy, Istio, ...).
+  - target:
+      kind: HTTPRoute
+      name: breakglass
+    patch: |
+      - op: add
+        path: /spec/rules/0/timeouts
+        value:
+          request: "0s"
+          backendRequest: "0s"
