@@ -208,3 +208,30 @@ S3 publication supplies the verified staged size as `Content-Length`; the
 digest-checking reader does not expose its length to the AWS SDK. Signed writes
 without that length are rejected by the real versioned MinIO fixture with 411,
 not treated as a successful or automatically retried upload.
+
+## Acceptance map
+
+Each acceptance bullet maps to named tests. `E2E` means
+`TestDebugSessionArtifactCollectorE2E/<recipe>/<terminate|expire|delete>`, run once
+per backend (`E2E_ARTIFACT_BACKEND=local|s3`) in the single-cluster and the
+multi-cluster Kind lanes. Everything else runs under `go test ./pkg/artifacts/...`.
+Tests assert both the rejection and that no state, provider byte or resource
+changed, so removing the enforcement fails them.
+
+| Acceptance | Test | Enforcement it fails without |
+| --- | --- | --- |
+| Crashdump Pod mounts exactly `/var/lib/systemd/coredump` read-only at `/host-coredumps`, collector only, no host namespaces | `job.TestBuildMountsExactHostCoredumpPathReadOnlyIntoCollectorOnly`, `job.TestBuildCrashdumpJobPinsNodeAndReadOnlyHostPath`; admitted Pod, exact node, immutable image, no extra runtime fields in E2E, both backends | `job.Build` host path, `ReadOnly`, mount path |
+| Rendered runtime surface limited to the recipe | `job.TestCollectorExecutionRejectsMutations`, `job.TestCollectorExecutionAcceptsRealAPIDefaults`, E2E admitted-Pod assertions | admission of runtime fields |
+| Injected recipe/input/argument rejected | E2E (`unknown` recipe, `command`/`args`/`image`/`path`/`mounts` fields), `archive` validator tests | strict request decoding, recipe allowlist |
+| Wrong/missing/extra/cross-recipe outputs and manifest identity rejected server-side | E2E `assertArtifactArchiveRejections`, `TestArtifactArchiveMutationContract`, `archive.TestValidate*` | `archive.Validate` |
+| Cross-session denial (session A cannot read, upload or download session B's artifacts) | `backend.TestUploadTokenOfSessionACannotWriteSessionB`, `TestUploadTokenWithForeignSessionUIDIsForbidden`, `TestUploadTokenCannotBeReplayedOnAnotherArtifactRoute`, `TestSessionACannotListOrDownloadSessionBArtifacts`; E2E second session gets 404 for the first session's artifact, outsider gets 404/403 | route/identity binding in `Upload`, `List`, `Download` |
+| Upload token replay rejection | `backend.TestUploadRejectsStaleJTIAndConsumedTokens` (consumed token returns replay, in-flight reuse conflicts, foreign JTI forbidden), `TestServiceRealLocalStoreRoundtripUIDIsolationAndExistingRecovery`, `host.TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload`; E2E consumed token gets 409 | one-time JTI/state check in `Upload` |
+| Expired token / expired reservation | `backend.TestUploadTokenExpiredIsRejectedWithoutSideEffects`, `TestUploadAfterReservationExpiryIsRejected`, `token.TestVerifyUsesInclusiveTimeBoundaries` | token expiry, reservation expiry |
+| Object cleanup after terminate, expire and delete | E2E (all three cleanups; provider inventory incl. S3 versions and delete markers, zero Jobs/Secrets/Pods), `host.TestAvailableCollectorEvidenceFollowsSessionLifecycle`, `backend.TestCleanupRequiresTwoEmptyInventoriesAfterExactDelete` | controller and `Service.Cleanup` |
+| RBAC negatives: requester cannot create/patch/delete Jobs, Pods, Secrets, NetworkPolicies, nor authorize PolicyExceptions; forged collector labels rejected | E2E `assertArtifactRequesterCannotForge` (impersonated requester, forged copies carrying real artifact labels, on the spoke in the multi-cluster lane) | Kubernetes RBAC for the requester identity |
+| Finalizer retained when the target is ambiguous (absent vs unreachable) | `controller.TestReconcileRetainsFinalizerWhenTargetStateIsAmbiguous` (ClusterConfig absent, unreachable, UID replaced, invalid, spoke read failure, session absent), control `TestReconcileReleasesFinalizerWhenTargetIsProvenClean`, `TestCleanupRetainsUIDLessIntentAndBlocksFinalization`; E2E missing-ClusterConfig, provider outage, foreign version | `cleanupSpokeResources` error returns plus the non-empty-inventory guard in `Reconcile` |
+| Credentials and provider location never leak | E2E metadata/Job env assertions, `backend.TestPublicRecordOmitsProviderMetadata`, `job.TestBuildRejectsUnpinnedImageAndProviderURL` | public record shape, Job env |
+| Local backend: private modes, restart, no S3 failover | E2E `E2E_ARTIFACT_BACKEND=local` (mode 0600, UID/GID 65532, controller restart), `host.TestProvisionLocalRequiresExplicitLocalBackend`, `host.TestOpenStoreRejectsMixedBackendsAndCrossNamespaceCredentials` | explicit backend selection |
+
+Not covered upstream: the three-Function production-like integration and the
+Kyverno policy execution; they belong to the downstream auth-operator Function CI.
