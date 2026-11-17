@@ -46,7 +46,7 @@ the ordinary controller CI suite.
 6. **Artifact signing**
    - Release images are signed using keyless Sigstore Cosign (OIDC-based, no static keys).
    - An SPDX-JSON SBOM attestation is attached to each signed image via `cosign attest`.
-   - When an optional Artifactory OCI mirror is configured, Cosign signatures and attestations are copied on a best-effort basis via `cosign copy`.
+   - When an optional Artifactory OCI mirror is configured, Cosign signatures and attestations are copied via `cosign copy`.
 
 7. **Helm chart publication**
    - `charts/escalation-config` and `charts/debug-session-catalogue` are packaged during release preparation.
@@ -67,7 +67,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
-4. **Artifactory** — optionally mirrors the multi-arch image and cosign artifacts (signatures + attestations) to an operator-configured Artifactory OCI registry (best-effort).
+4. **Artifactory** — optionally mirrors the multi-arch image and cosign artifacts (signatures + attestations) to an operator-configured Artifactory OCI registry (best-effort by default; see below).
 5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
 6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
 
@@ -77,12 +77,34 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 ### Optional OCI mirror configuration
 
-Artifactory publishing is temporarily disabled while the configured mirror
-credentials are repaired; CI has no mirror job. GHCR image
-publication, signing, attestations, and chart publication remain enabled.
-The release mirror job runs only when the repository variable
-`ARTIFACTORY_MIRROR_ENABLED` is `true`; set it only after validating the four
-secrets below against the target registry.
+Artifactory publishing is disabled by default while the configured mirror
+credentials are repaired. GHCR image publication, signing, attestations, and
+chart publication do not depend on the mirror.
+
+| Repository variable | Default | Effect |
+| --- | --- | --- |
+| `ARTIFACTORY_MIRROR_ENABLED` | unset (off) | The `artifactory` release job runs only when this is `true`. |
+| `ARTIFACTORY_MIRROR_REQUIRED` | unset (non-blocking) | When `true`, a mirror failure leaves the `artifactory` job (and the workflow run) failed. When unset, the job is `continue-on-error`. |
+
+The GitHub Release job never depends on the mirror job, so a mirror failure
+cannot block release creation in either mode. Every failed login, access
+check, copy, or verification emits a `::error title=Artifactory mirror::`
+annotation and fails the step; there are no silent `|| true` checks. Secrets
+are passed only through `env:` and `docker login --password-stdin`.
+
+**Re-enabling the mirror**
+
+1. Rotate or repair `AF_USER` and `AF_TOKEN` in Artifactory, and confirm
+   `AF_REGISTRY` and `AF_REPOSITORY`, then update the four Actions secrets.
+   This is a manual repository-owner step; the workflow cannot do it.
+2. Validate the credentials against the registry (for example, `docker login`
+   plus a push to a scratch tag) before enabling.
+3. Run a pre-release tag (for example, `vX.Y.Z-rc.1`) with
+   `ARTIFACTORY_MIRROR_ENABLED=true` and check the job annotations.
+4. Optionally set `ARTIFACTORY_MIRROR_REQUIRED=true` once the mirror is stable.
+
+To disable again, unset `ARTIFACTORY_MIRROR_ENABLED` or set it to anything
+other than `true`.
 
 CI and release workflows use repository or organization Actions secrets for the
 optional Artifactory mirror:
@@ -94,7 +116,7 @@ optional Artifactory mirror:
 | `AF_USER` | Registry username |
 | `AF_TOKEN` | Registry access token |
 
-When enabled, the mirror push is skipped unless all four secrets are set. GHCR
+When enabled, the job fails (see above) unless all four secrets are set. GHCR
 publication and release signing do not depend on the mirror. The derived
 repository key used by storage-API diagnostics is also explicitly masked in
 workflow logs.
