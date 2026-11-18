@@ -98,7 +98,9 @@ generation immediately, while already-running streams keep working until the gra
 (counted from when the controller observes the change, never beyond the session expiry), then are
 revoked and closed. Only one previous generation is kept. The grace covers only credential and
 trust inputs (the credential Secrets and IdentityProvider); a replaced ClusterConfig, a revoked
-session or a changed target still ends streams at once. With the default, running streams are
+session, a changed target or a deleted or unreadable Secret still ends streams at once, and a stream
+never starts on a credential that changed before its command ran. Use the same value on every replica: a
+replica without grace ends draining streams at once. With the default, running streams are
 aborted at rotation. The value is read at startup; changing it requires a controller restart.
 
 `stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,

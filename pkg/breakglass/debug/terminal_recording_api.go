@@ -96,14 +96,20 @@ func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider Te
 // credentialRotationFence ends a running stream on a privileged credential
 // input change, as before, unless a blue/green grace is configured: then the
 // change is tolerated for grace after it was first observed. Every other error
-// still ends the stream at once.
+// still ends the stream at once. Until armed (just before the command starts)
+// nothing is tolerated, so a stream never starts on a retired credential.
 type credentialRotationFence struct {
 	grace   time.Duration
+	armed   atomic.Bool
 	changed atomic.Int64 // unix nanos of the first observed change
 }
 
+func (c *DebugSessionAPIController) newCredentialRotationFence() *credentialRotationFence {
+	return &credentialRotationFence{grace: c.recordingRotationGrace}
+}
+
 func (f *credentialRotationFence) check(err error, now time.Time) error {
-	if err == nil || f.grace <= 0 || !errors.Is(err, cluster.ErrPrivilegedInputChanged) {
+	if err == nil || f.grace <= 0 || !f.armed.Load() || !errors.Is(err, cluster.ErrPrivilegedInputChanged) {
 		return err
 	}
 	f.changed.CompareAndSwap(0, now.UnixNano())
@@ -185,6 +191,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	var pod *corev1.Pod
 	var targetClusterUID string
 	var validateTarget func(context.Context) error
+	rotation := c.newCredentialRotationFence()
 	if c.terminalTargetResolver != nil {
 		restConfig, pod, targetClusterUID, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
 		validateTarget = func(checkCtx context.Context) error {
@@ -208,7 +215,6 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 				err = clientErr
 			} else {
 				pod, err = kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
-				rotation := &credentialRotationFence{grace: c.recordingRotationGrace}
 				validateTarget = func(checkCtx context.Context) error {
 					if checkErr := rotation.check(c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured), time.Now()); checkErr != nil {
 						return checkErr
@@ -370,6 +376,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		_ = responseControl.SetReadDeadline(time.Now())
 		_ = requestBody.Close()
 	}
+	rotation.armed.Store(true)
 	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, sizes, recorder, abortTransport)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
