@@ -113,6 +113,7 @@ jobs:
           REFERENCE_EVIDENCE_DIR: ${{ env.EVIDENCE_DIR }}
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
+          SKIP_PROXY: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
@@ -133,6 +134,7 @@ jobs:
           REFERENCE_EVIDENCE_DIR: ${{ env.EVIDENCE_DIR }}
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
+          SKIP_PROXY: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
