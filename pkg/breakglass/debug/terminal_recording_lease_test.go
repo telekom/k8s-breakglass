@@ -278,6 +278,7 @@ func TestTerminalLeaseCredentialFailuresFailClosed(t *testing.T) {
 			for _, lease := range leases.Items {
 				require.NotEqual(t, "1", lease.Annotations[connectionLeaseGenerationAnnotation], "no generation may be published without a stable proof")
 			}
+			require.Empty(t, leases.Items, "the failed acquisition retires the lease it created, despite its own staging write")
 		})
 	}
 }
@@ -301,4 +302,31 @@ func TestGenerationPublishErrorRetriesOnlyConcurrentChanges(t *testing.T) {
 			require.ErrorIs(t, err, tc.err)
 		})
 	}
+}
+
+// A failed acquisition retires only the unchanged Lease it created: a
+// concurrent writer between its read and its delete must survive.
+func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	base := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	racing := &beforeDeleteClient{Client: base}
+	racing.hook = func() {
+		leases := &coordinationv1.LeaseList{}
+		require.NoError(t, base.List(context.Background(), leases))
+		require.Len(t, leases.Items, 1)
+		l := leases.Items[0].DeepCopy()
+		l.Annotations[connectionLeasePendingGenerationAnnotation] = "1"
+		require.NoError(t, base.Update(context.Background(), l))
+	}
+	// No credential source and no published generation: acquisition fails
+	// after creating the Lease and tries to retire it.
+	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(racing).WithNamespace("execution"))
+	_, err := provider.AcquireTerminalRecordingConnection(context.Background(), TerminalRecordingConnectionBinding{
+		Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.Error(t, err)
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, base.List(context.Background(), leases))
+	require.Len(t, leases.Items, 1, "the concurrently changed Lease must not be deleted")
 }

@@ -140,6 +140,7 @@ jobs:
             node-maintenance.yml
             openssf-scorecard.yml
             ort.yml
+            reference-usage.yml -f mode=source
             reuse-compliance.yml
             security.yml
             storage-image-behavior.yml

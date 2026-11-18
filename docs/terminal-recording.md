@@ -132,11 +132,27 @@ HTTP/1.1. Every proxy between `bgctl` and the controller must:
 - accept request bodies up to the 512 MiB recording budget;
 - pass the response trailers `X-Breakglass-Recording-ID`,
   `X-Breakglass-Recording-SHA256` and `X-Breakglass-Recording-Status`. Without
-  them `bgctl` cannot report the result and exits non-zero; the recording is
-  still finalized and listed by `bgctl debug recordings list`.
+  them `bgctl` falls back to the recording listing (below); other clients must
+  do the same or exit non-zero. The recording is finalized either way.
 
-For ingress-nginx, on the Ingress that serves the API (timeouts in seconds,
-sized to the longest session):
+With kustomize, add the opt-in component instead of writing the annotations by
+hand. It sets the ingress-nginx annotations below on the `breakglass-ingress`
+Ingress and, when `../gateway-api` is listed before it, `timeouts.request` and
+`timeouts.backendRequest` of `0s` (disabled, GEP-1742) on the HTTPRoute. Order
+matters: listed after `streaming-ingress`, `gateway-api` renders the HTTPRoute
+without the timeouts, silently. HTTPRoute `timeouts` needs Gateway API v1.2 or
+later on the standard channel. The default renders are unchanged. This
+repository ships no Helm chart for the controller, so there is no chart value;
+the charts under `charts/` only render custom resources.
+
+```yaml
+components:
+  - ../../components/gateway-api          # only when using Gateway API
+  - ../../components/streaming-ingress
+```
+
+The annotations (timeouts in seconds, sized to the longest session; override
+them with a patch in your overlay):
 
 ```yaml
 metadata:
@@ -149,9 +165,29 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "512m"
 ```
 
-nginx does not forward upstream response trailers by default; check whether
-your proxy can, or rely on `bgctl debug recordings list` and the
-`terminal_recording_finalized` audit event for the digest.
+ingress-nginx also cuts a request whose body is idle for longer than
+`client-body-timeout` (default 60 seconds), for example a shell left without
+typing. There is no annotation for it: set `client-body-timeout` in the
+ingress-nginx controller ConfigMap, sized to the longest session (this applies
+to every Ingress of that controller).
+
+No `Upgrade`/`Connection` headers are needed. Gateway implementations may keep
+their own idle timeouts (Envoy Gateway `BackendTrafficPolicy`, Istio
+`DestinationRule`); raise those separately.
+
+nginx does not forward upstream response trailers. The server therefore also
+names the recording in a regular response header,
+`X-Breakglass-Recording-Pending-ID`, before the stream starts. When `bgctl`
+receives no trailers it looks that recording up in `GET
+/debugSessions/:name/terminal` (the server finalizes before it ends the stream)
+and reports `completed` or `incomplete` and the digest from the listing, or
+`finalization-pending` when the recording is not listed (publication failed;
+the artifact controller may still recover an upload that had started). The
+lookup is a regular, audited listing
+(`debug_session.terminal_recording_accessed`, `access: list`, naming the
+session's recording IDs) and needs the caller to be an authorized reader, which
+the stream's owner is; if it fails, `bgctl` exits non-zero with the reason.
+Clients that do not know the header are unaffected.
 
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a
@@ -195,7 +231,10 @@ must use the controller endpoint. Retention metadata is
 stored in an independent `DebugSessionArtifact` before target execution. Captured
 bytes and final metadata are published through that reservation even after
 stream expiry or revocation; incomplete streams are marked `complete: false`. A final live-authority check
-classifies completion without discarding evidence after revocation.
+classifies completion without discarding evidence after revocation. It is
+checked up to three times within 5 seconds, so one slow API read does not mark
+a cleanly ended stream incomplete; a periodic in-stream check that the
+stream's own clean end interrupts is not treated as a revocation.
 The shared artifact controller recovers ambiguous publication and performs
 exact-version cleanup without depending on the session status or its lifetime.
 Replay permits retained terminal sessions, but requires the original live session

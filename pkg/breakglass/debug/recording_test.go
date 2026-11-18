@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -202,6 +203,41 @@ func TestStreamTerminalWithLeaseDoesNotAbortTransportOnCompletion(t *testing.T) 
 	}
 	if got := aborts.Load(); got != 0 {
 		t.Fatalf("transport aborted %d times after normal completion, want 0", got)
+	}
+}
+
+// slowValidateConnection is a live authority check that takes 300ms and
+// honours cancellation, like an API read on a loaded cluster.
+type slowValidateConnection struct {
+	testTerminalRecordingConnection
+}
+
+func (slowValidateConnection) Validate(ctx context.Context) error {
+	select {
+	case <-time.After(300 * time.Millisecond):
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("read terminal stream claim: %w", ctx.Err())
+	}
+}
+
+// exitAfterExecutor ends the command cleanly after a delay.
+type exitAfterExecutor struct{ after time.Duration }
+
+func (exitAfterExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (e exitAfterExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
+	_, _ = options.Stdout.Write([]byte("done"))
+	time.Sleep(e.after)
+	return nil
+}
+
+// #1720: a periodic check still in flight when the command exits cleanly is
+// interrupted by the stream's own end; that is not a revocation.
+func TestStreamTerminalWithLeaseIgnoresCheckInterruptedByCleanEnd(t *testing.T) {
+	// 650ms: the second watcher tick (started at ~500ms) is still running.
+	_, err := streamTerminalWithLease(context.Background(), slowValidateConnection{}, time.Now().Add(time.Minute), exitAfterExecutor{after: 650 * time.Millisecond}, nil, io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() {})
+	if err != nil {
+		t.Fatalf("a cleanly ended stream was reported as aborted: %v (abortReason=%s)", err, terminalRecordingAbortReason(err))
 	}
 }
 
