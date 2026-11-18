@@ -41,6 +41,13 @@ EOF
 cat >"${TEST_DIR}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${TEST_DIR}/cosign-args"
+# COSIGN_FAIL=<signature|sbom|provenance> fails that evidence class;
+# COSIGN_FAIL_SUBJECT limits the failure to subjects containing the substring.
+if [[ -n "${COSIGN_FAIL:-}" && "$*" == *"${COSIGN_FAIL_SUBJECT:-}"* ]]; then
+  case "${COSIGN_FAIL}:$1:$*" in
+    signature:verify:*|sbom:verify-attestation:*--type\ spdxjson*|provenance:verify-attestation:*--type\ slsaprovenance1*) exit 1 ;;
+  esac
+fi
 exit 0
 EOF
 chmod +x "${TEST_DIR}/bin/docker" "${TEST_DIR}/bin/cosign"
@@ -95,5 +102,36 @@ for invalid_tag in v1.2 v1.2.3-. v1.2.3-a..b v1.2.3-01; do
     exit 1
   fi
 done
+
+# Missing signature, missing/tampered SBOM and missing/tampered provenance
+# (cosign refusing the evidence) must each fail, for a utility image and for
+# the catalogue chart subject independently.
+chart_ref='ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+for failing in signature sbom provenance; do
+  for only in utility catalogue; do
+    if COSIGN_FAIL="${failing}" COSIGN_FAIL_SUBJECT="example/${only}" SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" \
+      "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" --images-file "${TEST_DIR}/images" --chart "${chart_ref}" >/dev/null 2>&1; then
+      echo "failing ${failing} evidence for ${only} was accepted" >&2
+      exit 1
+    fi
+  done
+done
+
+# Mutable (tag-only) chart references are refused just like utility images.
+for mutable_chart in ghcr.io/example/catalogue:latest ghcr.io/example/catalogue:v1.2.3 oci://ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; do
+  if SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+    --images-file "${TEST_DIR}/images" --chart "${mutable_chart}" >/dev/null 2>&1; then
+    echo "mutable chart reference was accepted: ${mutable_chart}" >&2
+    exit 1
+  fi
+done
+
+# Empty or tag-only inventories cannot satisfy the gate.
+: >"${TEST_DIR}/empty-images"
+if SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+  --images-file "${TEST_DIR}/empty-images" --chart "${chart_ref}" >/dev/null 2>&1; then
+  echo "empty utility image list was accepted" >&2
+  exit 1
+fi
 
 echo "catalogue supply-chain verification behavior passed"

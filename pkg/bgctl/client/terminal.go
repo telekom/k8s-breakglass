@@ -25,9 +25,12 @@ import (
 const (
 	terminalProtocolHeader = "X-Breakglass-Terminal-Protocol"
 	terminalProtocolFramed = "framed.v1"
-	terminalFrameStdin     = byte(0)
-	terminalFrameResize    = byte(1)
-	maxTerminalInputFrame  = 64 << 10
+	// terminalPendingIDHeader names the recording before the stream starts, so
+	// the outcome can be looked up when a proxy drops the response trailers.
+	terminalPendingIDHeader = "X-Breakglass-Recording-Pending-ID"
+	terminalFrameStdin      = byte(0)
+	terminalFrameResize     = byte(1)
+	maxTerminalInputFrame   = 64 << 10
 )
 
 // TerminalSize is a client terminal size in cells.
@@ -60,6 +63,7 @@ type TerminalResult struct {
 	SHA256      string
 	// Status is completed, incomplete or finalization-pending; empty when the
 	// server ended the stream before publishing trailers (revocation, expiry).
+	// Behind a proxy that drops trailers it comes from the recording listing.
 	Status string
 }
 
@@ -210,11 +214,41 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 	if err := failedInput(nil); err != nil {
 		return TerminalResult{}, err
 	}
-	return TerminalResult{
+	result := TerminalResult{
 		RecordingID: resp.Trailer.Get("X-Breakglass-Recording-ID"),
 		SHA256:      resp.Trailer.Get("X-Breakglass-Recording-SHA256"),
 		Status:      resp.Trailer.Get("X-Breakglass-Recording-Status"),
-	}, nil
+	}
+	if result.Status == "" {
+		if id := resp.Header.Get(terminalPendingIDHeader); id != "" {
+			// A proxy (nginx) dropped the trailers: the server finalized the
+			// recording before it ended the stream, so the listing has the outcome.
+			return c.recordingOutcome(ctx, request, id)
+		}
+	}
+	return result, nil
+}
+
+// recordingOutcome derives the trailer values from the recording listing,
+// which lists only published recordings: an unlisted one is still pending.
+func (c *Client) recordingOutcome(ctx context.Context, request TerminalRequest, id string) (TerminalResult, error) {
+	result := TerminalResult{RecordingID: id}
+	infos, err := c.DebugSessions().Recordings(ctx, request.Session, request.Namespace)
+	if err != nil {
+		return result, fmt.Errorf("terminal stream ended without recording trailers; look up recording %s: %w", id, err)
+	}
+	result.Status = "finalization-pending"
+	for _, info := range infos {
+		if info.ArtifactID != id {
+			continue
+		}
+		result.SHA256 = info.SHA256
+		result.Status = "incomplete"
+		if info.Recording != nil && info.Recording.Complete {
+			result.Status = "completed"
+		}
+	}
+	return result, nil
 }
 
 func writeTerminalFrame(w io.Writer, frameType byte, payload []byte) error {
