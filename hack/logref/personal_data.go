@@ -4,7 +4,7 @@
 
 package main
 
-import "regexp"
+import "strings"
 
 // Personal-data classes and data subjects of the platform logging contract.
 // A field that can hold data of several subjects names the highest:
@@ -42,9 +42,7 @@ var (
 )
 
 // personalData classifies every logged field that can hold personal data. A
-// field marked † in the catalogue is in this map. The check fails when a
-// logged key matches candidateKeyRe and is neither here nor in notPersonal,
-// or when either list names a key that no log call uses.
+// field marked † in the catalogue is in this map.
 var personalData = map[string]personal{
 	"acknowledgedBy":     operatorID,
 	"acknowledgement":    {tenantPII, tenantUser, "name of a DebugSessionCleanupAcknowledgement; usually derived from the debug session name, which contains the requester's user name"},
@@ -67,6 +65,7 @@ var personalData = map[string]personal{
 	"deleteError":        errorText,
 	"details":            sessionText,
 	"email":              userID,
+	"endpoint":           {tenantPII, tenantUser, "Keycloak admin API URL; contains the ID of the group whose members are fetched"},
 	"error":              {content, endCustomer, "error text; can quote user names, groups, session names, object names, a value a user wrote (a `scheduledStartTime` that failed to parse) and the URL a client sent to the OIDC proxy"},
 	"errors":             errorText,
 	"escalatedGroup":     groupName,
@@ -97,6 +96,7 @@ var personalData = map[string]personal{
 	"name":               {tenantPII, tenantUser, "name of the object a line is about: configuration, a session, or an object in a tenant cluster"},
 	"namespace":          tenantObject,
 	"newSession":         sessionName,
+	"node":               {tenantPII, tenantUser, "node of a debug pod in a tenant cluster; a requester can choose it"},
 	"note":               {tenantPII, tenantUser, "note of a Kubernetes Event; can quote group names and error texts"},
 	"normalized":         clientURL,
 	"normalized_origin":  clientHeader,
@@ -166,25 +166,92 @@ var personalData = map[string]personal{
 	"warnings":           errorText,
 }
 
-// candidateKeyRe matches keys that look like they hold a person, group,
-// session, object name, address or text. A logged key that matches must be in
-// personalData or notPersonal, unless notCandidateRe excludes it.
-var (
-	candidateKeyRe = regexp.MustCompile(`(?i)(user|requester|requestor|requestedby|approver|rejector|member|email|recipient|subject|identit|identifier|group|session|namespace|pod|^name$|resource|^ip$|ip$|path|url|origin|authority|agent|^to$|^sub$|^id$|reason|message|error|warning|detail|panic|body|response|hint|ticket|acknowledg|object|target|command|^cmd$|^args$)`)
-	// notCandidateRe excludes counts, flags, limits, descriptors and the
-	// controller's own certificate, bind and configuration settings.
-	notCandidateRe = regexp.MustCompile(`(?i:count|counts|len|length|size|nil|limit|total|type|kind|index|scheme|added|_written|_failed|withmismatch)$|(^s|S)ource$|^(is|has|can|enable|disable|allow|deny|require|max|min|total|num|merged|consecutive)[A-Z_]|(?i:cert|bind|config|template|policy)`)
-)
-
-// notPersonal lists the logged keys that candidateKeyRe matches but that hold
-// no personal data: platform configuration and resource names, cluster and
-// IdP names, certificate subjects of cluster API servers, kinds and states.
-var notPersonal = []string{
-	"activeSessions", "apiGroup", "authority", "basePath", "baseURL", "batchURL",
-	"BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "breakglass_namespace", "clusterNamespace",
-	"defaultNamespace", "denialReason", "escalationNamespace", "frontendBaseURL",
-	"identityProvider", "identityProviderRef", "identityResource", "issuerURL", "lastTerminationReason",
-	"leader_elect_namespace", "namespaces", "namespaceScope", "original", "origins", "pod_namespace",
-	"recipients", "secretNamespace", "sessionIDPs", "sessions", "skipReason", "subject", "subjectCN", "subresource",
-	"target_host", "url", "userIdentifierClaim", "users", "waitingReason",
-}
+// notPersonal lists every logged key that holds no personal data: counts,
+// flags, durations, states, kinds, and the names, URLs and settings of
+// platform configuration (clusters, IdentityProviders, escalations,
+// templates, policies, sinks, the controller's own pod). A logged key must be
+// here or in personalData, so a new key fails the test until it is
+// classified.
+var notPersonal = strings.Fields(`
+	action activeCount activeSessions activeUserGroupCount actualStartTime addedSessionTemplate addr
+	address afterFilter allow_legacy_identity_cleanup_acknowledgement allowed allowedBySource
+	allowedDomains allowedIdentityProviderCount allowedIDPs allowIDPMismatch allowUserNamespace
+	apiGroup apiServer apiVersion applicableBindingNames applicableBindingsCount
+	applicableBindingsProvided approvalsRequired approvalTimeout approverCount approverGroupCount
+	approverGroupsCount approverSource approverUserCount attempt attempts authority authType
+	availableClusters basePath baseURL batch_enabled batch_size batches_sent batches_written batchURL
+	beforeFilter beforeNormalizationCount bindAddress binding bindingClusters bindingNamespace
+	bindingRef bindingsChecked bindingUsed bodyLength bodySize BREAKGLASS_ALLOW_DEFAULT_ORIGINS
+	breakglass_namespace brokers cachedType canApprove candidateCount candidateEscalationCount
+	canonicalKey cid circuit_breaker_threshold claims_keys claimType clientAuth clientID
+	clientSecretProvided cluster cluster_config_check_interval clusterConfig clusterCount
+	clusterHasIDPRestriction clusterLabels clusterMapSize clusterNamespace clusters codec components
+	condition conditionType config config_path configCount configNames configPath configs configured
+	consecutivePanics container context correlationID count created currentIssuer currentMemberCount
+	currentState customMaxValidFor debug dedupMemberCount default defaultMaxValidFor defaultNamespace
+	defaultPort deleted denialReason denyPolicyCount denySource denyUserNamespace dependencyKind
+	dependencyName deployed directExcludedUserCount directHiddenUserCount directMemberCount
+	disable_debug_session_cleanup_backoff disable_debug_session_pod_grace_enforcement
+	disable_debug_session_unserved_kind_handling disable_email disable_session_rate_limit
+	disable_traffic_mirror disabled disableTLS displayName dnsNames dropOnFull dropped dropped_total
+	duplicateCount duration duration_ms effectiveFrom elapsed enable_api enable_cleanup
+	enable_controllers enable_frontend enable_http2 enable_leader_election enable_validating_webhooks
+	enable_webhooks enableAPI enableCleanup enableFrontend enableWebhooks error_type
+	errorCount errorType escalation escalation_count escalation_status_update_interval escalationCount
+	escalationHasIDPRestriction escalationManagerNil escalationName escalationNamespace escalationNil
+	escalations escalationsCount escalationUID evaluated event event_id event_type events_failed
+	events_written eventType excludedApproverCount excludedCount excludedGroupCount excludedUserCount
+	exemptFactors expired expiredAt expiresAt expiresIn explicitClusters explicitUserCount exporter
+	extendBy extraKey factor factors failure_threshold failureCount fallbackPolicy field file
+	finalGroupCount finalResolvedCount fingerprint first from frontendBaseURL grantType groupCount
+	groupEscalationsCount groupsRequestedCount hasActorToken hasAllowedNamespaces hasDeniedNamespaces
+	hasNamespaceConstraints hasNonResourceAttributes hasNotificationExclusions hasReason
+	hasRefreshToken hasRefreshTokenSecretRef hasResourceAttributes hasScheduledStartTime hasSubgroups
+	hasTemplateClusterRestriction hasTokenExchange health_probe_bind_address hiddenApproverCount
+	hiddenCount hiddenFilteredOutCount hiddenFromUICount hiddenItemCount host identityProvider
+	identityProviderRef identityResource idleSince idleTimeout idp idp_count idpCount idpMismatches
+	idpName idps ignoredOption impact impersonationConstraint includeUnavailable index inFlight
+	initialBackoffMs insecure interval isApprover isRequester issuer issuerURL key kind
+	knownGroupMemberCount lastActivity lastTerminationReason lastUpdateAge latency latestGeneration
+	leader_elect_id leader_elect_namespace legacyKey limit limitBytes log_format log_level logFormat
+	logLevel lookingFor lost mailprovider matched matchedEscalation matchedExplicitClusters matches
+	max maxAllowed maxAllowedScore maxAttempts maxEntries maxPerUser maxQueueSize maxRecoveries
+	maxRetries maxTotal mechanism memberCount membersCount mergedAllowUserNamespace
+	mergedDefaultNamespace messages_failed messages_written meta method metrics-cert-key
+	metrics-cert-name metrics-cert-path metrics_bind_address metrics_cert_path metrics_secure missing
+	mode namespaces namespaceScope newCount newExpiry newGen newMembersAdded nextRetry normalizedCount
+	notAfter notBefore now nowLocal nowUTC num_sessions oidcPrefixCount oldCount oldGen open_timeout
+	operation original originalApproverCount originalCount originalGroupCount originalPolicy origins
+	otel_enabled otel_endpoint otel_exporter otel_insecure otel_required otel_sampling_rate
+	overflowCount ownerRef ownerRefs ownerUID parsedDuration parsedLocal parsedUTC pattern pending
+	phase pod_namespace podTemplate policy policySource port postExcludeApproverCount
+	postHiddenFilterApproverCount preFilterApproverCount prefix prefixCount preparedGeneration
+	previousState primary processed provided provider pruned queue_length queue_size queueSize
+	rawCount rawMemberCount rawTokenGroupCount ready realm receivers recipientCount recipients record
+	recordingId refreshedIdleSince refs remaining remediation renewalCount replacement
+	requestContextGroupCount requestedCluster requestedDuration requestedDurationSeconds requestedMode
+	requestedTime requestResolvedGroupMemberCount requeued require_synced_approver_groups
+	resolvedClusters resolvedGroupCount resolver resolverNil resolverType responseCount restartCount
+	resyncPeriod retained_for retainedUntil retries retryAfter retryBackoffMs retryCount retryIn
+	returnedGroupCount role rotatedKey ruleIndex sample_rate sampleRate samplingRate sarGroupCount
+	sasl_enabled scheduledStartTime scheduledStartTimeISO scheduledTimeLocal scheduledTimeUTC scope
+	score second secondsInFuture secret secretCreation secretKey secretName secretNamespace secure
+	selectedBindingRef selectedOption selectedSchedulingOption selectorString server serverVersion
+	serviceAccount serviceName sessionCount sessionGroupCount sessionIDPs sessions
+	sessionsWithMismatch sink sinks skipReason source stack state states stats_interval status
+	status_code strippedGroupCount subgroupCount subgroupIndex subject subjectCN subjectLength
+	subresource success_threshold successCount syncStatus target_host target_scheme template
+	templateAllowedClusters templateClusterSelector templateDefaultSet templateLabels templateRef
+	templates tenant terminalSharing timeDiffSeconds timedOut timeout timings_ms tls_enabled
+	tlsMinVersion tlsReload tokenLen tokenType topic total total_events totalApprovers
+	totalApproversCollected totalApproversLimit totalApproversNow totalClusterConfigs totalCount
+	totalDirectExcluded totalDirectHidden totalEscalations totalEvaluated totalGroupMemberCount
+	totalGroupMembersExcluded totalGroupMembersHidden totalSinks totalUniqueGroupCount trigger
+	truncatedTo trustedProxies ttl type types uniqueExcludedGroupMemberCount
+	uniqueHiddenGroupMemberCount unlimited url usedBy userGroupCount userIdentifierClaim users valid
+	validConfigs verb verbKind version visibleApproverCount waitingReason webhook-cert-generation
+	webhook-cert-key webhook-cert-name webhook-cert-path webhook-service-name
+	webhook-validating-config-name webhook_bind_address webhook_cert_key webhook_cert_name
+	webhook_cert_path webhooks-metrics-cert-key webhooks-metrics-cert-name webhooks-metrics-cert-path
+	webhooks_metrics_bind_address webhooks_metrics_secure worker workers workloadType write_timeout
+`)

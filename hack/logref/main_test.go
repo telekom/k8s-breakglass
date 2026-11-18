@@ -32,10 +32,20 @@ func TestPersonalDataClassified(t *testing.T) {
 	}
 }
 
-func TestCheckPersonalDataRejectsUnclassifiedKey(t *testing.T) {
-	entries := map[string]*entry{"x": {fields: map[string]bool{"approverName": true}}}
-	if err := checkPersonalData(entries); err == nil || !strings.Contains(err.Error(), `log key "approverName" is in neither`) {
-		t.Fatalf("unclassified key not detected: %v", err)
+func TestCheckPersonalDataRejectsUnclassifiedStaleAndInvalid(t *testing.T) {
+	entries := map[string]*entry{"x": {fields: map[string]bool{"approverName": true, "user": true}}}
+	personalData["user"] = personal{"pii", tenantUser, "x"}
+	defer func() { personalData["user"] = userID }()
+	err := checkPersonalData(entries)
+	for _, want := range []string{
+		`log key "approverName" is in neither`,
+		`personalData lists "group", which no log call uses`,
+		`notPersonal lists "cluster", which no log call uses`,
+		`personalData["user"] needs a class`,
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("checkPersonalData does not report %s: %v", want, err)
+		}
 	}
 }
 

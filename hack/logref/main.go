@@ -181,9 +181,8 @@ func checkProseLevels(doc string, entries map[string]*entry) error {
 	return nil
 }
 
-// checkPersonalData requires every logged key that looks personal to be
-// classified in personalData or listed in notPersonal, and both lists to name
-// only logged keys.
+// checkPersonalData requires every logged key to be in exactly one of
+// personalData and notPersonal, and both lists to name only logged keys.
 func checkPersonalData(entries map[string]*entry) error {
 	logged := map[string]bool{}
 	for _, e := range entries {
@@ -197,8 +196,7 @@ func checkPersonalData(entries map[string]*entry) error {
 	}
 	var bad []string
 	for _, k := range sortedKeys(logged) {
-		_, classified := personalData[k]
-		if !classified && !not[k] && candidateKeyRe.MatchString(k) && !notCandidateRe.MatchString(k) {
+		if _, classified := personalData[k]; !classified && !not[k] {
 			bad = append(bad, fmt.Sprintf("log key %q is in neither personalData nor notPersonal; classify it", k))
 		}
 	}
@@ -216,9 +214,6 @@ func checkPersonalData(entries map[string]*entry) error {
 	for k := range not {
 		if !logged[k] {
 			bad = append(bad, fmt.Sprintf("notPersonal lists %q, which no log call uses", k))
-		}
-		if !candidateKeyRe.MatchString(k) || notCandidateRe.MatchString(k) {
-			bad = append(bad, fmt.Sprintf("notPersonal lists %q, which candidateKeyRe does not select; remove it", k))
 		}
 	}
 	if len(bad) > 0 {

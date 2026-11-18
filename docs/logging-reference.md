@@ -15,8 +15,8 @@ log calls in the Go code by `go run ./hack/logref`. The unit test in
 `hack/logref` (part of `make test`) fails when the catalogue does not match the
 code, when a `main` package is missing from the programs table, when a line
 of this hand-written part names a catalogued message with a level that the
-code does not log it at, and when a logged key that looks personal has no
-class and data subject in `hack/logref/personal_data.go`. A pull request that adds, removes or changes a
+code does not log it at, and when a logged key is not classified in
+`hack/logref/personal_data.go`. A pull request that adds, removes or changes a
 log message, level or literal field key must regenerate the catalogue.
 
 ## Programs that log
@@ -142,8 +142,8 @@ values). The data subjects are:
 | Data subject | Who |
 |--------------|-----|
 | `operator` | staff of Deutsche Telekom or a supplier who operates the platform |
-| `tenant-user` | staff of a tenant with access to a cluster |
-| `end-customer` | a person behind traffic or data that a tenant workload handles |
+| tenant-user | staff of a tenant with access to a cluster |
+| end-customer | a person behind traffic or data that a tenant workload handles |
 
 A field that can hold data of several subjects names the highest:
 `end-customer` > `tenant-user` > `operator`. Breakglass serves tenant staff
@@ -165,19 +165,21 @@ client sent to the OIDC proxy, so `error` is `content` of an `end-customer`.
 
 [Personal-data fields](#personal-data-fields) lists the class, data subject,
 levels and content of every catalogued field. `hack/logref/personal_data.go`
-holds the classification; the unit test fails when a logged key that looks
-personal is not classified there. Cluster, node, IdentityProvider,
-escalation, template and policy names are set by the platform and are not
-personal data. The fields that the catalogue does not list are:
+classifies every logged key, the ones without personal data in
+`notPersonal`; the unit test fails when a logged key is in neither list.
+Cluster, IdentityProvider, escalation, template and policy names are set by
+the platform and are not personal data. Node names are classified like in the
+other T-CaaS components, as `tenant-user`, because a requester can choose the
+node of a debug session. The fields that the catalogue does not list are:
 
 | Field | Class | Data subject | Content |
 |-------|-------|--------------|---------|
-| `remote` | `customer-data` | `end-customer` | client IP address of the request ([request context](#request-context-fields)) |
-| `email`, `username` | `tenant-pii` | `tenant-user` | identity of the authenticated caller (request context) |
-| `actor_user`, `actor_groups` | `tenant-pii` | `tenant-user` | user and groups of the actor of an `audit_event` |
-| `actor_ip` | `customer-data` | `tenant-user` | client IP address of an authenticated actor of an `audit_event` |
-| `target_name`, `target_namespace`, `session_name` | `tenant-pii` | `tenant-user` | session or object an `audit_event` is about |
-| `details` (of `audit_event`) | `content` | `end-customer` | event details, including reasons users wrote |
+| `remote` | customer-data | end-customer | client IP address of the request ([request context](#request-context-fields)) |
+| `email`, `username` | tenant-pii | tenant-user | identity of the authenticated caller (request context) |
+| `actor_user`, `actor_groups` | tenant-pii | tenant-user | user and groups of the actor of an `audit_event` |
+| `actor_ip` | customer-data | tenant-user | client IP address of an authenticated actor of an `audit_event` |
+| `target_name`, `target_namespace`, `session_name` | tenant-pii | tenant-user | session or object an `audit_event` is about |
+| `details` (of `audit_event`) | content | end-customer | event details, including reasons users wrote |
 
 `server.redactLogs: true` in `config.yaml` replaces group names with
 `[REDACTED]` and group lists with `[N items]` where the code passes them
@@ -315,6 +317,7 @@ levels of the log calls that pass the field, least verbose first.
 | `deleteError` | tenant-pii | tenant-user | error | error or status text; can quote user names, groups, session names and object names |
 | `details` | tenant-pii | tenant-user | info | SubjectAccessReview reason or response; quotes session names and groups |
 | `email` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
+| `endpoint` | tenant-pii | tenant-user | error, warn, info, debug | Keycloak admin API URL; contains the ID of the group whose members are fetched |
 | `error` | content | end-customer | error, warn, info, debug | error text; can quote user names, groups, session names, object names, a value a user wrote (a `scheduledStartTime` that failed to parse) and the URL a client sent to the OIDC proxy |
 | `errors` | tenant-pii | tenant-user | warn, info | error or status text; can quote user names, groups, session names and object names |
 | `escalatedGroup` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
@@ -345,6 +348,7 @@ levels of the log calls that pass the field, least verbose first.
 | `name` | tenant-pii | tenant-user | error, warn, info, debug | name of the object a line is about: configuration, a session, or an object in a tenant cluster |
 | `namespace` | tenant-pii | tenant-user | error, warn, info, debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `newSession` | tenant-pii | tenant-user | warn | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
+| `node` | tenant-pii | tenant-user | warn, info | node of a debug pod in a tenant cluster; a requester can choose it |
 | `normalized` | customer-data | end-customer | warn | URL or URL path a client sent, including unauthenticated clients of the OIDC proxy |
 | `normalized_origin` | content | end-customer | warn | request header value of any client |
 | `note` | tenant-pii | tenant-user | warn, info | note of a Kubernetes Event; can quote group names and error texts |
@@ -1158,7 +1162,7 @@ concatenated message.
 | info | `Deploying auxiliary resources` | `count` | auxiliary_resource_manager.go |
 | info | `Deploying pod template resources` | `count`, `debugSession`† | debug_session_reconciler_workload.go |
 | info | `Ephemeral container injected` | `container`, `namespace`†, `pod`†, `session`†, `user`† | debug_session_api_email_ops.go |
-| info | `Node debug pod created` | `namespace`†, `node`, `podName`†, `session`†, `user`† | debug_session_api_email_ops.go |
+| info | `Node debug pod created` | `namespace`†, `node`†, `podName`†, `session`†, `user`† | debug_session_api_email_ops.go |
 | info | `Pod copy created` | `copyName`†, `copyNamespace`†, `originalNamespace`†, `originalPod`†, `session`†, `user`† | debug_session_api_email_ops.go |
 | info | `PodDisruptionBudget applied` | `name`† | debug_session_reconciler_workload.go |
 | info | `Recorded binding is not active; denying debug session approval authorization` | `binding`, `session`† | debug_session_api_resolution.go |
@@ -1197,7 +1201,7 @@ concatenated message.
 | warn | `Debug session approval reason is invalid` | `error`†, `session`† | debug_session_api_session_ops.go |
 | warn | `Debug session container has restarted` | `container`, `lastTerminationReason`, `pod`†, `podNamespace`†, `restartCount` | debug_session_reconciler_lifecycle.go |
 | warn | `Debug session container in problematic waiting state` | `container`, `pod`†, `podNamespace`†, `waitingMessage`†, `waitingReason` | debug_session_reconciler_lifecycle.go |
-| warn | `Debug session pod failed` | `message`†, `node`, `pod`†, `podNamespace`†, `reason`† | debug_session_reconciler_lifecycle.go |
+| warn | `Debug session pod failed` | `message`†, `node`†, `pod`†, `podNamespace`†, `reason`† | debug_session_reconciler_lifecycle.go |
 | warn | `Debug session rejection reason is invalid` | `error`†, `session`† | debug_session_api_session_ops.go |
 | warn | `Debug session request reason is invalid` | `bindingRef`, `error`†, `templateRef` | debug_session_api.go |
 | warn | `Debug session status update conflict` | `action`, `error`†, `session`† | debug_session_api_status_patch.go |
@@ -1330,7 +1334,7 @@ concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| debug | `Acquiring token via client credentials` | `baseURL`, `clientID`, `clientSecretProvided`, `endpoint`, `grantType`, `realm` | escalation_status_updater.go |
+| debug | `Acquiring token via client credentials` | `baseURL`, `clientID`, `clientSecretProvided`, `endpoint`†, `grantType`, `realm` | escalation_status_updater.go |
 | debug | `Auto-detected multiple IDPs, using multi-IDP mode` | `escalation`, `idpCount`, `idps` | escalation_status_updater.go |
 | debug | `BreakglassEscalationController initialization completed successfully` |  | escalation_controller.go |
 | debug | `Calling group member resolver` | `escalation`, `group`†, `resolverType` | escalation_status_updater.go |
@@ -1343,7 +1347,7 @@ concatenated message.
 | debug | `Email claim unavailable; using authenticated username for escalation lookup` | `error`†, `username`† | escalation_controller.go |
 | debug | `Escalation did not match filter` |  | escalation_manager.go |
 | debug | `Escalation does not match any user groups` |  | escalation_manager.go |
-| debug | `Escalation endpoint registered successfully (RESTful)` | `endpoint` | escalation_controller.go |
+| debug | `Escalation endpoint registered successfully (RESTful)` | `endpoint`† | escalation_controller.go |
 | debug | `Escalation has no approver groups; updating group sync status` | `escalation` | escalation_status_updater.go |
 | debug | `Escalation matched filter` |  | escalation_manager.go |
 | debug | `Escalation matches user group` |  | escalation_manager.go |
@@ -1366,10 +1370,10 @@ concatenated message.
 | debug | `Fetching group BreakglassEscalations` | `groupCount` | escalation_manager.go |
 | debug | `Fetching group members from IDP` | `escalation`, `groupCount`, `idp` | escalation_status_updater.go |
 | debug | `Found matching group by name` | `group`†, `groupID`†, `matchedNameHint`† | escalation_status_updater.go |
-| debug | `GetGroup API call details` | `baseURL`, `endpoint`, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
-| debug | `GetGroupMembers API call details` | `baseURL`, `endpoint`, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
-| debug | `GetGroupMembers API call for subgroup` | `baseURL`, `endpoint`, `realm`, `subgroupID`†, `tokenLen` | escalation_status_updater.go |
-| debug | `GetGroups API call details` | `baseURL`, `endpoint`, `realm`, `searchParamHint`†, `tokenLen` | escalation_status_updater.go |
+| debug | `GetGroup API call details` | `baseURL`, `endpoint`†, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
+| debug | `GetGroupMembers API call details` | `baseURL`, `endpoint`†, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
+| debug | `GetGroupMembers API call for subgroup` | `baseURL`, `endpoint`†, `realm`, `subgroupID`†, `tokenLen` | escalation_status_updater.go |
+| debug | `GetGroups API call details` | `baseURL`, `endpoint`†, `realm`, `searchParamHint`†, `tokenLen` | escalation_status_updater.go |
 | debug | `Group member resolution returning successfully` | `group`†, `memberCount` | escalation_status_updater.go |
 | debug | `Group member resolver returned members` | `escalation`, `group`†, `rawMemberCount` | escalation_status_updater.go |
 | debug | `Group members changed; marking for update` | `escalation`, `group`†, `newCount`, `oldCount` | escalation_status_updater.go |
@@ -1381,7 +1385,7 @@ concatenated message.
 | debug | `Keycloak client configured with custom CA certificate` | `baseURL`, `realm` | escalation_status_updater.go |
 | debug | `Keycloak group search returned a nil group entry` | `index` | escalation_status_updater.go |
 | debug | `Keycloak groups search completed` | `group`†, `returnedGroupCount` | escalation_status_updater.go |
-| debug | `Keycloak token acquisition canceled` | `clientID`, `endpoint`, `error`†, `grantType` | escalation_status_updater.go |
+| debug | `Keycloak token acquisition canceled` | `clientID`, `endpoint`†, `error`†, `grantType` | escalation_status_updater.go |
 | debug | `Keycloak token lookup canceled` | `error`†, `group`† | escalation_status_updater.go |
 | debug | `KeycloakIdentityProvider configured for user identity extraction` |  | escalation_controller.go |
 | debug | `Processing escalation with approver groups` | `escalation`, `groupCount` | escalation_status_updater.go |
@@ -1442,12 +1446,12 @@ concatenated message.
 | warn | `Failed to load system cert pool; only the custom CA will be trusted` | `error`† | escalation_status_updater.go |
 | warn | `Failed to parse CA certificate PEM; falling back to system certificates` | `baseURL`, `realm` | escalation_status_updater.go |
 | warn | `Failed to resolve group members from IDP` | `error`†, `escalation`, `group`†, `idp` | escalation_status_updater.go |
-| warn | `Keycloak group detail fetch failed` | `endpoint`, `error`†, `errorType`, `group`†, `tokenLen` | escalation_status_updater.go |
+| warn | `Keycloak group detail fetch failed` | `endpoint`†, `error`†, `errorType`, `group`†, `tokenLen` | escalation_status_updater.go |
 | warn | `No group member resolver configured; skipping group resolution` | `escalation`, `group`† | escalation_status_updater.go |
-| warn | `Subgroup members fetch failed` | `endpoint`, `error`†, `errorType`, `group`†, `subgroupID`†, `tokenLen` | escalation_status_updater.go |
+| warn | `Subgroup members fetch failed` | `endpoint`†, `error`†, `errorType`, `group`†, `subgroupID`†, `tokenLen` | escalation_status_updater.go |
 | error | `Failed listing BreakglassEscalations for status update` | `error`† | escalation_status_updater.go |
 | error | `Failed resolving group members from resolver` | `error`†, `escalation`, `group`†, `resolverType` | escalation_status_updater.go |
-| error | `Failed to acquire token` | `clientID`, `endpoint`, `error`†, `grantType` | escalation_status_updater.go |
+| error | `Failed to acquire token` | `clientID`, `endpoint`†, `error`†, `grantType` | escalation_status_updater.go |
 | error | `Failed to create new client` | `error`† | escalation_manager.go |
 | error | `Failed to extract an authenticated user identity` | `error`† | escalation_controller.go |
 | error | `Failed to get BreakglassEscalationList` | `error`† | escalation_manager.go |
@@ -1466,8 +1470,8 @@ concatenated message.
 | error | `Keycloak client rejected InsecureSkipVerify=true; configure CertificateAuthority instead` | `baseURL`, `realm` | escalation_status_updater.go |
 | error | `Keycloak group search returned an unusable match` | `error`†, `group`† | escalation_status_updater.go |
 | error | `Keycloak group sync disabled because InsecureSkipVerify=true is not supported` | `baseURL`, `realm` | escalation_status_updater.go |
-| error | `Keycloak groups search failed` | `endpoint`, `error`†, `errorType`, `group`†, `params`†, `tokenLen` | escalation_status_updater.go |
-| error | `Keycloak members fetch failed` | `endpoint`, `error`†, `errorType`, `group`†, `groupID`†, `tokenLen` | escalation_status_updater.go |
+| error | `Keycloak groups search failed` | `endpoint`†, `error`†, `errorType`, `group`†, `params`†, `tokenLen` | escalation_status_updater.go |
+| error | `Keycloak members fetch failed` | `endpoint`†, `error`†, `errorType`, `group`†, `groupID`†, `tokenLen` | escalation_status_updater.go |
 | error | `Keycloak resolver has incomplete configuration; cannot resolve groups` | `baseURL`, `clientID`, `group`†, `realm` | escalation_status_updater.go |
 | error | `Refusing to create Keycloak group sync resolver with InsecureSkipVerify=true` | `baseURL`, `idp`, `realm` | escalation_status_updater.go |
 
@@ -1858,7 +1862,7 @@ concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `OTel OTLP exporter initialized` | `endpoint`, `insecure` | telemetry.go |
+| info | `OTel OTLP exporter initialized` | `endpoint`†, `insecure` | telemetry.go |
 | info | `OTel stdout exporter initialized` |  | telemetry.go |
 | info | `OTel tracing enabled with no exporter` | `note`† | telemetry.go |
 | info | `OpenTelemetry tracing initialized` | `exporter`, `samplingRate`, `serviceName` | telemetry.go |
