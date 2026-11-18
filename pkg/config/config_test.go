@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
@@ -651,5 +652,17 @@ func TestServerTimeouts_WhitespaceTrimming(t *testing.T) {
 	}
 	if got := emptyTimeouts.GetReadTimeout(); got != config.DefaultReadTimeout {
 		t.Errorf("GetReadTimeout() with only whitespace = %v, want default %v", got, config.DefaultReadTimeout)
+	}
+}
+
+func TestArtifactsRotationGrace(t *testing.T) {
+	for in, want := range map[string]time.Duration{"": 0, "0s": 0, "30s": 30 * time.Second, "15m": 15 * time.Minute} {
+		got, err := config.Artifacts{CredentialRotationGrace: in}.RotationGrace()
+		require.NoError(t, err, in)
+		require.Equal(t, want, got, in)
+	}
+	for _, in := range []string{"-1s", "16m", "abc"} {
+		_, err := config.Artifacts{CredentialRotationGrace: in}.RotationGrace()
+		require.Error(t, err, in)
 	}
 }

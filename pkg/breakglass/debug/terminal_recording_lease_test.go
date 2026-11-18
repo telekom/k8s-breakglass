@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -304,6 +306,119 @@ func TestGenerationPublishErrorRetriesOnlyConcurrentChanges(t *testing.T) {
 	}
 }
 
+func graceFixture(t *testing.T, grace time.Duration) (ctrlclient.Client, TerminalRecordingConnectionProvider, *rotatingCredential, TerminalRecordingConnectionBinding) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(hub).WithNamespace("execution").WithRotationGrace(grace), credential.source)
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)}
+	return hub, provider, credential, binding
+}
+
+func rotate(c *rotatingCredential, rv string) {
+	c.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: rv})
+}
+
+func TestTerminalLeaseBlueGreenRotationGrace(t *testing.T) {
+	ctx := context.Background()
+	hub, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.Equal(t, "1", blue.Binding().Generation)
+
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err, "new sessions bind to the new generation immediately, without waiting for the old stream")
+	require.Equal(t, "2", green.Binding().Generation)
+	require.NoError(t, blue.Validate(ctx), "the old generation keeps working inside the grace period")
+	require.NoError(t, green.Validate(ctx))
+
+	// Grace deadline passes: only the old generation is revoked.
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(ctx, leases))
+	lease := leases.Items[0].DeepCopy()
+	require.NotEmpty(t, lease.Annotations[connectionLeasePreviousDeadlineAnnotation])
+	lease.Annotations[connectionLeasePreviousDeadlineAnnotation] = time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)
+	require.NoError(t, hub.Update(ctx, lease))
+	require.Error(t, blue.Validate(ctx), "the old generation is revoked at the deadline")
+	require.NoError(t, green.Validate(ctx))
+	require.NoError(t, blue.Close(ctx))
+	require.NoError(t, green.Validate(ctx), "closing the old stream must not release the new claim")
+	require.NoError(t, green.Close(ctx))
+	require.NoError(t, hub.List(ctx, leases))
+	for _, key := range []string{terminalStreamClaimAnnotation, terminalStreamExpiryAnnotation, terminalStreamClaimGenerationAnnotation, terminalStreamPrevClaimAnnotation, terminalStreamPrevExpiryAnnotation} {
+		require.NotContains(t, leases.Items[0].Annotations, key, "closing both streams releases every claim slot")
+	}
+}
+
+// A replica without grace ignores previous-generation state another replica
+// (or an earlier grace config) left behind: the old stream is fenced at once.
+func TestTerminalLeaseWithoutGraceIgnoresPreviousGeneration(t *testing.T) {
+	ctx := context.Background()
+	hub, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	_, err = provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx))
+	blue.(*terminalRecordingLeaseConnection).service = NewConnectionLeaseService(hub).WithNamespace("execution")
+	require.Error(t, blue.Validate(ctx))
+}
+
+func TestTerminalLeaseGraceKeepsOnlyOnePreviousGeneration(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	g1, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	g2, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "3")
+	g3, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.Error(t, g1.Validate(ctx), "generation two rotations old is revoked immediately")
+	require.NoError(t, g2.Validate(ctx))
+	require.NoError(t, g3.Validate(ctx))
+}
+
+func TestConnectionLeaseRotationGraceIsBoundedAndCappedAtExpiry(t *testing.T) {
+	require.Equal(t, MaxConnectionRotationGrace, NewConnectionLeaseService(nil).WithRotationGrace(24*time.Hour).rotationGrace)
+	require.Zero(t, NewConnectionLeaseService(nil).WithRotationGrace(-time.Second).rotationGrace)
+	hub, provider, credential, binding := graceFixture(t, time.Hour)
+	binding.ExpiresAt = time.Now().Add(time.Minute)
+	_, err := provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	_, err = provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(context.Background(), leases))
+	deadline, err := time.Parse(time.RFC3339Nano, leases.Items[0].Annotations[connectionLeasePreviousDeadlineAnnotation])
+	require.NoError(t, err)
+	require.False(t, deadline.After(binding.ExpiresAt), "grace never outlives the session")
+}
+
+// A stream draining on the previous generation keeps its claim when a later
+// acquisition does not replace it (the new-generation stream already closed).
+func TestTerminalLeaseGraceKeepsDrainingClaimAcrossLaterAcquire(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, green.Close(ctx))
+	again, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx), "the draining stream keeps working until its deadline")
+	require.NoError(t, again.Validate(ctx))
+}
+
 // A failed acquisition retires only the unchanged Lease it created: a
 // concurrent writer between its read and its delete must survive.
 func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T) {
@@ -329,4 +444,57 @@ func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T
 	leases := &coordinationv1.LeaseList{}
 	require.NoError(t, base.List(context.Background(), leases))
 	require.Len(t, leases.Items, 1, "the concurrently changed Lease must not be deleted")
+}
+
+// Controller rollover (pod restart / leader change): all fencing state lives in
+// Leases, so a fresh service instance keeps the active session's lease valid
+// and renewable without re-fencing it, a stream claim of the dead process
+// blocks a second stream instead of being double-claimed, and session end on
+// the new instance removes the session lease.
+func TestTerminalLeaseControllerRolloverWithActiveSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	now := time.Now().UTC().Truncate(time.Second)
+	starts, expiry := metav1.NewTime(now), metav1.NewTime(now.Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &starts, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{}}}
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	newController := func() (*ConnectionLeaseService, TerminalRecordingConnectionProvider) {
+		svc := NewConnectionLeaseService(hub).WithNamespace("execution")
+		return svc, NewTerminalRecordingConnectionProvider(svc, credential.source)
+	}
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: expiry.Time}
+
+	// Old controller: activation records the session lease, a stream runs.
+	oldSvc, oldProvider := newController()
+	lease, err := oldSvc.AcquireForSession(ctx, ds, "cluster-uid")
+	require.NoError(t, err)
+	ds.Status.ConnectionLease = &lease
+	require.NoError(t, hub.Update(ctx, ds))
+	_, err = oldProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+
+	// New controller process; the old one is gone (its Close is never called).
+	newSvc, newProvider := newController()
+	require.NoError(t, newSvc.ValidateSession(ctx, ds), "an active session keeps a valid lease across controller rollover")
+	require.NoError(t, newSvc.RenewSession(ctx, ds, expiry.Time), "the new controller renews the session lease")
+	require.Equal(t, lease.Epoch, ds.Status.ConnectionLease.Epoch, "a rollover never re-fences the session")
+	require.NoError(t, newSvc.ValidateSession(ctx, ds))
+	_, err = newProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.ErrorContains(t, err, "active stream claim", "the dead process's claim blocks a second stream instead of being double-claimed")
+
+	// Session end on the new controller removes the session lease. The
+	// per-target terminal lease is separate; the live-session authority check
+	// ends its streams.
+	require.NoError(t, newSvc.RevokeSession(ctx, ds))
+	require.NoError(t, newSvc.RevokeUnrecordedSessionLeases(ctx, ds))
+	require.Error(t, newSvc.ValidateSession(ctx, ds))
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(ctx, leases))
+	for _, l := range leases.Items {
+		require.False(t, strings.HasPrefix(l.Name, connectionSessionLeasePrefix), "session lease %s must be revoked", l.Name)
+	}
 }
