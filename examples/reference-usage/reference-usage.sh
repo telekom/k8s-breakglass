@@ -754,10 +754,11 @@ assert_debug_audit() {
   local audit_url="${AUDIT_URL}/events"
   for _ in $(seq 1 45); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
+    # resource_deployed/resource_cleanup are emitted only for auxiliary resources, which the
+    # catalogue's workload profile has none of; workload removal is asserted by zero-residue.
     if grep -Fq "${name}" <<<"${audit}" && grep -Fq 'debug_session.created' <<<"${audit}" && \
-      grep -Fq 'debug_session.started' <<<"${audit}" && grep -Fq 'debug_session.resource_deployed' <<<"${audit}" && \
-      grep -Fq 'debug_session.terminated' <<<"${audit}" && \
-      grep -Fq 'debug_session.resource_cleanup' <<<"${audit}"; then
+      grep -Fq 'debug_session.approved' <<<"${audit}" && grep -Fq 'debug_session.started' <<<"${audit}" && \
+      grep -Fq 'debug_session.terminated' <<<"${audit}"; then
       return 0
     fi
     sleep 1

@@ -18,7 +18,7 @@ restricted lifecycle and real catalogue DebugSessions:
 - a second request is denied by an approver;
 - a catalogue DebugSession is requested and approved by the distinct approver;
 - a restricted catalogue Job runs the packaged workload-debug command;
-- audit recording contains request, start, deployment, termination, and cleanup events;
+- audit recording contains the request, approval, start, and termination events (workload removal is asserted by the zero-residue check; resource deployed/cleanup events exist only for auxiliary resources);
 - the session is terminated and its workload/policy resources are removed.
 
 The elevated node-repair profile is intentionally unavailable in this example.
