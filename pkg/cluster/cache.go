@@ -457,6 +457,16 @@ func (p *ClientProvider) liveReaderOrClient() ctrlclient.Reader {
 // example a credential rotation.
 var ErrPrivilegedInputChanged = errors.New("privileged input changed")
 
+// privilegedInputChangedError names the changed input and matches
+// ErrPrivilegedInputChanged.
+type privilegedInputChangedError string
+
+func (e privilegedInputChangedError) Error() string {
+	return "privileged input " + string(e) + " changed"
+}
+
+func (privilegedInputChangedError) Is(target error) bool { return target == ErrPrivilegedInputChanged }
+
 func (p *ClientProvider) validatePrivilegedInputVersions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, expected map[string]string) error {
 	if len(expected) == 0 {
 		return nil
@@ -467,7 +477,7 @@ func (p *ClientProvider) validatePrivilegedInputVersions(ctx context.Context, cc
 	}
 	for identity, version := range expected {
 		if actual[identity] != version {
-			return fmt.Errorf("%w: %s", ErrPrivilegedInputChanged, identity)
+			return privilegedInputChangedError(identity)
 		}
 	}
 	return nil
