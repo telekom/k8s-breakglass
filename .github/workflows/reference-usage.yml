@@ -128,6 +128,7 @@ jobs:
           REFERENCE_REQUESTER_GROUP: complete-flow-requester-base
           REFERENCE_APPROVER_GROUP: complete-flow-approver
           REFERENCE_AUDIT_WEBHOOK_URL: http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit
+          AUDIT_WEBHOOK_RECEIVER_PORT: "8090" # port-forward started by e2e/kind-setup-single.sh
           CATALOGUE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.catalogue_version || '0.2.0' }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
         run: ./examples/reference-usage/reference-usage.sh
@@ -153,6 +154,7 @@ jobs:
           REFERENCE_REQUESTER_GROUP: complete-flow-requester-base
           REFERENCE_APPROVER_GROUP: complete-flow-approver
           REFERENCE_AUDIT_WEBHOOK_URL: http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit
+          AUDIT_WEBHOOK_RECEIVER_PORT: "8090" # port-forward started by e2e/kind-setup-single.sh
           CATALOGUE_VERSION: ${{ steps.resolve.outputs.catalogue_version || inputs.catalogue_version }}
           CATALOGUE_CHART_DIGEST: ${{ steps.resolve.outputs.catalogue_digest || inputs.catalogue_digest }}
           BREAKGLASS_VERSION: ${{ steps.resolve.outputs.tag }}
