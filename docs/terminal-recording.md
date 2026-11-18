@@ -201,8 +201,17 @@ identity, runtime binding digest, and version ID. The private transport binding
 keeps ClusterConfig UID, target Pod UID, and Lease UID distinct; none is inferred
 from a numeric generation. Finalized framing records its actual frame count.
 
-The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
-with at most two concurrent streams per serving process. The HTTP transport
+A recording is bounded by `artifacts.uploadMaxBytes` by default; set
+`artifacts.terminalRecordingMaxBytes` (1..`uploadMaxBytes`) to lower it. At most
+two concurrent streams run per serving process by default; set
+`artifacts.terminalRecordingMaxConcurrent` (1..32) to change that. Each stream
+buffers its recording in memory (about one segment with incremental flush,
+below), so budget memory as concurrency x byte limit, with headroom for buffer
+growth. A stream whose next input or output would
+exceed the byte limit ends at once; the bytes recorded so far are published as
+incomplete evidence and the rest is neither delivered nor recorded.
+Invalid values are rejected at startup; see the
+[configuration reference](configuration-reference.md). The HTTP transport
 requires full duplex: output is flushed before further input is supplied.
 Detection of expiry or revocation also aborts blocked HTTP input/output;
 see the in-flight output limits below.
@@ -268,7 +277,8 @@ the default behavior) to persist the recording while it runs:
   hash chain commits to every earlier byte, so manifests stay small. The latest
   manifest is the commit point; bytes after it are unproven and ignored.
 - At most 4096 segments are written per recording, so 4096 x segment size must
-  be at least `uploadMaxBytes`; a smaller segment size is rejected at startup.
+  be at least the recording byte limit (`terminalRecordingMaxBytes`, else
+  `uploadMaxBytes`); a smaller segment size is rejected at startup.
 - If a flush fails, the stream is stopped: the frame that needed the flush and
   everything after it are neither recorded nor delivered.
   `debug_session.terminal_recording_failed` is emitted with `stage: flush` (and

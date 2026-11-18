@@ -287,14 +287,15 @@ func StreamTerminalWithResize(
 		sizeQueue = recordedSizeQueue{sizes: sizes, recorder: recorder, fail: cancel}
 	}
 	streamErr := executor.StreamWithContext(streamCtx, remotecommand.StreamOptions{
-		Stdin:             &recordingReader{reader: stdin, recorder: recorder, direction: TerminalRecordingInput},
-		Stdout:            io.MultiWriter(&recordingWriter{writer: stdout, recorder: recorder, direction: TerminalRecordingOutput}),
-		Stderr:            io.MultiWriter(&recordingWriter{writer: stderr, recorder: recorder, direction: TerminalRecordingOutput}),
+		Stdin:             &recordingReader{reader: stdin, recorder: recorder, direction: TerminalRecordingInput, fail: cancel},
+		Stdout:            io.MultiWriter(&recordingWriter{writer: stdout, recorder: recorder, direction: TerminalRecordingOutput, fail: cancel}),
+		Stderr:            io.MultiWriter(&recordingWriter{writer: stderr, recorder: recorder, direction: TerminalRecordingOutput, fail: cancel}),
 		Tty:               true,
 		TerminalSizeQueue: sizeQueue,
 	})
-	if cause := context.Cause(streamCtx); cause != nil && ctx.Err() == nil && streamErr == nil {
-		// The executor may return cleanly after cancellation; the stream still failed.
+	if cause := context.Cause(streamCtx); cause != nil && ctx.Err() == nil && (streamErr == nil || errors.Is(streamErr, context.Canceled)) {
+		// The executor returns cleanly or with ctx.Err() after our own
+		// cancellation; report why the stream was stopped.
 		streamErr = cause
 	}
 	result, finalizeErr := recorder.Finalize()
@@ -307,17 +308,23 @@ func StreamTerminalWithResize(
 	return result, nil
 }
 
+// recordingReader and recordingWriter end the whole stream (fail) when bytes
+// cannot be recorded: the executor only logs a copy error, so without it the
+// target would keep running, blocked or unrecorded, until expiry.
 type recordingReader struct {
 	reader    io.Reader
 	recorder  *TerminalRecorder
 	direction TerminalRecordingDirection
+	fail      func(error)
 }
 
 func (r *recordingReader) Read(payload []byte) (int, error) {
 	n, err := r.reader.Read(payload)
 	if n > 0 {
 		if recordErr := r.recorder.Write(r.direction, payload[:n]); recordErr != nil {
-			return 0, fmt.Errorf("record terminal input: %w", recordErr)
+			recordErr = fmt.Errorf("record terminal input: %w", recordErr)
+			r.fail(recordErr)
+			return 0, recordErr
 		}
 	}
 	return n, err
@@ -327,11 +334,14 @@ type recordingWriter struct {
 	writer    io.Writer
 	recorder  *TerminalRecorder
 	direction TerminalRecordingDirection
+	fail      func(error)
 }
 
 func (w *recordingWriter) Write(payload []byte) (int, error) {
 	if err := w.recorder.Write(w.direction, payload); err != nil {
-		return 0, fmt.Errorf("record terminal output: %w", err)
+		err = fmt.Errorf("record terminal output: %w", err)
+		w.fail(err)
+		return 0, err
 	}
 	return w.writer.Write(payload)
 }

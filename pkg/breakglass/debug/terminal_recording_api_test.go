@@ -330,7 +330,7 @@ func (e interactiveTerminalExecutor) StreamWithContext(_ context.Context, option
 
 func TestRecordingInputLimitDoesNotForwardUnrecordedBytes(t *testing.T) {
 	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 2)
-	input := &recordingReader{reader: strings.NewReader("unrecorded command"), recorder: recorder, direction: TerminalRecordingInput}
+	input := &recordingReader{reader: strings.NewReader("unrecorded command"), recorder: recorder, direction: TerminalRecordingInput, fail: func(error) {}}
 	var target bytes.Buffer
 	_, err := io.Copy(&target, input)
 	require.Error(t, err)
@@ -567,10 +567,52 @@ func TestTerminalRecordingAbortReason(t *testing.T) {
 		"lease_changed":             fmt.Errorf("terminal stream claim expired or changed"),
 		"expired":                   fmt.Errorf("stream: %w", context.DeadlineExceeded),
 		"client_disconnected":       fmt.Errorf("stream: %w", context.Canceled),
+		"recording_limit":           fmt.Errorf("stream terminal session: record terminal output: %w", errTerminalRecordingLimit),
 		"stream_failed":             io.ErrUnexpectedEOF,
 	} {
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
 		require.NotContains(t, want, "kubeconfig", "reason codes never carry Secret names")
+	}
+}
+
+func TestTerminalRecordingStreamLimitUsesConfiguredValue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name     string
+		maxSet   int
+		inFlight int32
+		want429  bool
+	}{
+		{"default of 2 admits the second stream", 0, 1, false},
+		{"default of 2 rejects the third stream", 0, 2, true},
+		{"configured 1 rejects the second stream", 1, 1, true},
+		{"configured 3 admits the third stream", 3, 2, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}}
+			service, cli := terminalArtifactFixture(t, session)
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).
+				WithAPIReader(cli).
+				WithTerminalRecordingArtifacts(service).
+				WithTerminalRecordingMaxStreams(tt.maxSet).
+				WithTerminalRecordingConnections(terminalRecordingRouteProvider{}).
+				WithAuditService(NewMockAuditEmitter(true))
+			controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
+				return nil, nil, "", fmt.Errorf("stop after limiter")
+			}
+			controller.recordingStreams.Store(tt.inFlight)
+			router := debugSessionAPITestRouter(t, controller, "alice", "", nil)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec", strings.NewReader(""))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if tt.want429 {
+				require.Equal(t, http.StatusTooManyRequests, w.Code)
+				require.Equal(t, tt.inFlight, controller.recordingStreams.Load(), "rejected stream must not leak a slot")
+			} else {
+				require.NotEqual(t, http.StatusTooManyRequests, w.Code)
+				require.Equal(t, tt.inFlight, controller.recordingStreams.Load(), "slot released after handler")
+			}
+		})
 	}
 }
 
