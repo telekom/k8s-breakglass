@@ -56,10 +56,36 @@ func (terminalRecordingRouteProvider) AcquireTerminalRecordingConnection(_ conte
 	return terminalRecordingRouteConnection{binding: binding}, nil
 }
 
+// flakyRouteProvider hands out connections whose next Validate fails once
+// after failNext is armed, like one slow live read on a loaded cluster.
+type flakyRouteProvider struct{ failNext *atomic.Bool }
+
+func (p flakyRouteProvider) AcquireTerminalRecordingConnection(ctx context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
+	connection, err := terminalRecordingRouteProvider{}.AcquireTerminalRecordingConnection(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	return flakyRouteConnection{terminalRecordingRouteConnection: connection.(terminalRecordingRouteConnection), failNext: p.failNext}, nil
+}
+
+type flakyRouteConnection struct {
+	terminalRecordingRouteConnection
+	failNext *atomic.Bool
+}
+
+func (c flakyRouteConnection) Validate(context.Context) error {
+	if c.failNext.CompareAndSwap(true, false) {
+		return errors.New("read terminal stream claim: context deadline exceeded")
+	}
+	return nil
+}
+
 func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
-	for _, outcome := range []string{"complete", "failed", "revoked", "disconnect"} {
+	// "transient": one failed live check after a clean end still completes.
+	for _, outcome := range []string{"complete", "transient", "failed", "revoked", "disconnect"} {
 		t.Run(outcome, func(t *testing.T) {
-			incomplete := outcome != "complete"
+			incomplete := outcome != "complete" && outcome != "transient"
+			failNext := &atomic.Bool{}
 			gin.SetMode(gin.TestMode)
 			now := metav1.Now()
 			expiresAt := metav1.NewTime(now.Add(time.Hour))
@@ -81,7 +107,7 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 				WithAPIReader(cli).
 				WithTerminalRecordingArtifacts(service).
 				WithTerminalRecordingMaxBytes(1024).
-				WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+				WithTerminalRecordingConnections(flakyRouteProvider{failNext: failNext})
 			auditEvents := NewMockAuditEmitter(true)
 			controller.WithAuditService(auditEvents)
 			controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
@@ -98,6 +124,11 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 					}
 					return nil
 				}, after: func() error {
+					if outcome == "transient" {
+						// The executor returns next: the post-stream probe meets the failure.
+						failNext.Store(true)
+						return nil
+					}
 					if incomplete {
 						var live breakglassv1alpha1.DebugSession
 						if err := cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &live); err != nil {
@@ -559,4 +590,10 @@ func TestValidateAfterCleanStreamToleratesTransientFailure(t *testing.T) {
 	revoked := &flakyValidateConnection{failures: 1000}
 	require.False(t, validateAfterCleanStream(context.Background(), revoked), "a lost authority stays incomplete")
 	require.Equal(t, terminalFinalValidateAttempts, revoked.calls)
+
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	unchecked := &flakyValidateConnection{}
+	require.False(t, validateAfterCleanStream(expired, unchecked), "no budget left: incomplete, fail closed")
+	require.Zero(t, unchecked.calls)
 }
