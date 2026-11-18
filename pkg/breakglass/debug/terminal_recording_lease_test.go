@@ -345,6 +345,25 @@ func TestTerminalLeaseBlueGreenRotationGrace(t *testing.T) {
 	require.NoError(t, blue.Close(ctx))
 	require.NoError(t, green.Validate(ctx), "closing the old stream must not release the new claim")
 	require.NoError(t, green.Close(ctx))
+	require.NoError(t, hub.List(ctx, leases))
+	for _, key := range []string{terminalStreamClaimAnnotation, terminalStreamExpiryAnnotation, terminalStreamClaimGenerationAnnotation, terminalStreamPrevClaimAnnotation, terminalStreamPrevExpiryAnnotation} {
+		require.NotContains(t, leases.Items[0].Annotations, key, "closing both streams releases every claim slot")
+	}
+}
+
+// A replica without grace ignores previous-generation state another replica
+// (or an earlier grace config) left behind: the old stream is fenced at once.
+func TestTerminalLeaseWithoutGraceIgnoresPreviousGeneration(t *testing.T) {
+	ctx := context.Background()
+	hub, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	_, err = provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx))
+	blue.(*terminalRecordingLeaseConnection).service = NewConnectionLeaseService(hub).WithNamespace("execution")
+	require.Error(t, blue.Validate(ctx))
 }
 
 func TestTerminalLeaseGraceKeepsOnlyOnePreviousGeneration(t *testing.T) {
@@ -378,4 +397,21 @@ func TestConnectionLeaseRotationGraceIsBoundedAndCappedAtExpiry(t *testing.T) {
 	deadline, err := time.Parse(time.RFC3339Nano, leases.Items[0].Annotations[connectionLeasePreviousDeadlineAnnotation])
 	require.NoError(t, err)
 	require.False(t, deadline.After(binding.ExpiresAt), "grace never outlives the session")
+}
+
+// A stream draining on the previous generation keeps its claim when a later
+// acquisition does not replace it (the new-generation stream already closed).
+func TestTerminalLeaseGraceKeepsDrainingClaimAcrossLaterAcquire(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, green.Close(ctx))
+	again, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx), "the draining stream keeps working until its deadline")
+	require.NoError(t, again.Validate(ctx))
 }

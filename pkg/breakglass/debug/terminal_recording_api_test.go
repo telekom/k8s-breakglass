@@ -6,6 +6,7 @@ package debug
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -534,4 +536,24 @@ func TestTerminalRecordingAbortReason(t *testing.T) {
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
 		require.NotContains(t, want, "kubeconfig", "reason codes never carry Secret names")
 	}
+}
+
+func TestCredentialRotationFence(t *testing.T) {
+	changed := fmt.Errorf("validate: %w: secret/hub/kubeconfig", cluster.ErrPrivilegedInputChanged)
+	other := errors.New("cluster config replaced")
+	now := time.Now()
+
+	off := &credentialRotationFence{}
+	require.ErrorIs(t, off.check(changed, now), cluster.ErrPrivilegedInputChanged, "default: a rotation ends the stream at once")
+
+	grace := &credentialRotationFence{grace: 30 * time.Second}
+	require.NoError(t, grace.check(nil, now))
+	require.Equal(t, other, grace.check(other, now), "only credential input changes get a grace")
+	require.NoError(t, grace.check(changed, now), "first observed rotation is tolerated")
+	require.NoError(t, grace.check(changed, now.Add(29*time.Second)))
+	require.Error(t, grace.check(changed, now.Add(30*time.Second)), "the stream ends at the deadline")
+	require.Error(t, grace.check(changed, now.Add(time.Hour)))
+
+	api := (&DebugSessionAPIController{}).WithTerminalRecordingConnections(NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(nil).WithRotationGrace(time.Minute)))
+	require.Equal(t, time.Minute, api.recordingRotationGrace, "the stream fence uses the lease service's grace")
 }

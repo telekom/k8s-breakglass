@@ -428,7 +428,7 @@ func (s *ConnectionLeaseService) Validate(ctx context.Context, ref ConnectionLea
 	if err != nil {
 		return err
 	}
-	if generation >= 0 && !leaseGenerationValid(lease, generation, time.Now().UTC()) {
+	if generation >= 0 && lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(generation, 10) {
 		return fmt.Errorf("connection lease is stale or expired")
 	}
 	return nil
