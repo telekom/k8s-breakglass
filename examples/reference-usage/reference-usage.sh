@@ -253,9 +253,24 @@ cleanup() {
   [[ "${cleanup_failed}" == true && "${exit_code}" -eq 0 ]] && exit_code=1
   return "${exit_code}"
 }
+# Before cleanup deletes the run's objects, keep what the authorizer evaluated.
+dump_diagnostics() {
+  [[ -n "${REFERENCE_EVIDENCE_DIR}" && -n "${KUBECONFIG_FILE}" ]] || return 0
+  mkdir -p "${REFERENCE_EVIDENCE_DIR}"
+  {
+    kubectl get roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" -o yaml
+    kubectl get clusterrole "${REFERENCE_CLUSTER_ROLE_NAME}" -o yaml
+    kubectl get clusterrolebinding -o yaml | grep -B8 -A12 "${REFERENCE_CLUSTER_ROLE_NAME}"
+    kubectl get clusterconfig -A -o yaml
+    kubectl get breakglasssession -A -o yaml
+    kubectl auth can-i get configmaps -n "${NAMESPACE}" --as "${REQUESTER_EMAIL}" --as-group "${REFERENCE_ESCALATED_GROUP}"
+  } >"${REFERENCE_EVIDENCE_DIR}/reference-objects.yaml" 2>&1 || true
+}
+
 on_exit() {
   local exit_code=$?
   trap - EXIT
+  [[ "${exit_code}" -eq 0 ]] || dump_diagnostics
   cleanup "${exit_code}"
   exit_code=$?
   write_evidence "${exit_code}"
