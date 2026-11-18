@@ -778,6 +778,7 @@ run_debug_session() {
     local name="${DEBUG_SESSION_NAME}"
   fi
 
+  wait_for_debug_state "${REQUESTER_TOKEN}" "${name}" PendingApproval
   api_request "${REQUESTER_TOKEN}" POST "/api/debugSessions/${name}/approve" '{"reason":"requester self-approval must be denied"}'
   expect_status 403
   api_request "${APPROVER_TOKEN}" POST "/api/debugSessions/${name}/approve" '{"reason":"reference debug approval"}'
