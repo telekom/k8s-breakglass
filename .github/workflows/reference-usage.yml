@@ -114,6 +114,7 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
@@ -135,6 +136,7 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
@@ -150,6 +152,16 @@ jobs:
           BREAKGLASS_VERSION: ${{ steps.resolve.outputs.tag }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
         run: ./examples/reference-usage/reference-usage.sh
+      - name: Collect cluster diagnostics
+        if: ${{ failure() }}
+        run: |
+          mkdir -p "${EVIDENCE_DIR}"
+          {
+            kubectl --context kind-breakglass-reference get pods -A -o wide
+            kubectl --context kind-breakglass-reference -n breakglass-system describe pods
+            kubectl --context kind-breakglass-reference -n breakglass-system logs --all-containers --tail=200 -l app.kubernetes.io/name=breakglass --prefix
+            kubectl --context kind-breakglass-reference -n breakglass-system get events --sort-by=.lastTimestamp
+          } > "${EVIDENCE_DIR}/cluster-diagnostics.txt" 2>&1 || true
       - name: Require no skipped or failed rows
         if: ${{ always() && env.MODE == 'published' }}
         run: |
