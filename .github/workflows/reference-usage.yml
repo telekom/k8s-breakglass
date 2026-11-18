@@ -35,6 +35,11 @@ on:
         required: true
         default: '0.2.0'
         type: string
+      breakglass_version:
+        description: "Required in published mode: released k8s-breakglass image tag matching the chart (for example v0.3.0-rc.23)"
+        required: false
+        default: ''
+        type: string
       catalogue_digest:
         description: "Required in published mode: immutable OCI digest for the signed debug-session-catalogue chart"
         required: false
@@ -93,19 +98,31 @@ jobs:
           set -euo pipefail
           tag="${RUN_TAG:-$(gh release list -R "${GITHUB_REPOSITORY}" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')}"
           [[ "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::not a release tag: ${tag}"; exit 1; }
-          # Chart versions are independent of the app version: read it at the tag,
-          # then require the published chart's appVersion to match the tag.
-          version="$(gh api -H 'Accept: application/vnd.github.raw' "repos/${GITHUB_REPOSITORY}/contents/charts/debug-session-catalogue/Chart.yaml?ref=${tag}" | yq '.version')"
+          # Chart versions are independent of the app version (release.yml bumps to the next
+          # unused one): newest chart tag whose appVersion is the release tag wins.
           chart="ghcr.io/${GITHUB_REPOSITORY}/charts/debug-session-catalogue"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:${chart#ghcr.io/}:pull" | jq -er .token)"
+          version=""
+          for candidate in $(curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${chart#ghcr.io/}/tags/list?n=1000" |
+            jq -r '.tags[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV | head -n 30); do
+            app="$(helm show chart "oci://${chart}" --version "${candidate}" | awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}')"
+            if [[ "${app}" == "${tag}" || "${app}" == "${tag#v}" ]]; then version="${candidate}"; break; fi
+          done
+          [[ -n "${version}" ]] || { echo "::error::no published debug-session-catalogue chart has appVersion ${tag}"; exit 1; }
           digest="$(docker buildx imagetools inspect "${chart}:${version}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
           [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::no digest for ${chart}:${version}"; exit 1; }
-          app="$(helm show chart "oci://${chart}@${digest}" | awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}')"
-          [[ "${app}" == "${tag}" || "${app}" == "${tag#v}" ]] || { echo "::error::chart ${version} appVersion ${app} does not match ${tag}"; exit 1; }
           {
             echo "tag=${tag}"
             echo "catalogue_version=${version}"
             echo "catalogue_digest=${digest}"
           } >> "${GITHUB_OUTPUT}"
+      - name: Require explicit versions for manual published runs
+        if: ${{ env.MODE == 'published' && github.event_name == 'workflow_dispatch' }}
+        env:
+          BREAKGLASS_VERSION: ${{ inputs.breakglass_version }}
+          CATALOGUE_DIGEST: ${{ inputs.catalogue_digest }}
+        run: |
+          [[ -n "${BREAKGLASS_VERSION}" && -n "${CATALOGUE_DIGEST}" ]] || { echo "::error::published dispatch needs breakglass_version and catalogue_digest"; exit 1; }
       - name: Run source reference flow
         if: ${{ env.MODE == 'source' }}
         env:
@@ -155,7 +172,7 @@ jobs:
           REFERENCE_AUDIT_WEBHOOK_URL: http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit
           CATALOGUE_VERSION: ${{ steps.resolve.outputs.catalogue_version || inputs.catalogue_version }}
           CATALOGUE_CHART_DIGEST: ${{ steps.resolve.outputs.catalogue_digest || inputs.catalogue_digest }}
-          BREAKGLASS_VERSION: ${{ steps.resolve.outputs.tag }}
+          BREAKGLASS_VERSION: ${{ steps.resolve.outputs.tag || inputs.breakglass_version }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
         run: ./examples/reference-usage/reference-usage.sh
       - name: Collect cluster diagnostics

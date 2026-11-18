@@ -92,6 +92,8 @@ begin() { PHASE="$1"; }
 pass() { ROWS+=("${PHASE}"$'\t'pass$'\t'); PHASE=""; }
 skip() { ROWS+=("$1"$'\t'skipped$'\t'"$2"); }
 
+xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' <<<"$1"; }
+
 write_evidence() {
   local code="$1" row name status detail
   [[ -n "${REFERENCE_EVIDENCE_DIR}" ]] || return 0
@@ -105,9 +107,9 @@ write_evidence() {
     rows_json="$(jq -c --arg n "${name}" --arg s "${status}" --arg d "${detail}" '. + [{name:$n,status:$s,detail:$d}]' <<<"${rows_json}")"
     tests=$((tests + 1))
     case "${status}" in
-      failed) failures=$((failures + 1)); cases+="<testcase name=\"${name}\"><failure message=\"${detail}\"/></testcase>" ;;
-      skipped) skipped=$((skipped + 1)); cases+="<testcase name=\"${name}\"><skipped message=\"${detail}\"/></testcase>" ;;
-      *) cases+="<testcase name=\"${name}\"/>" ;;
+      failed) failures=$((failures + 1)); cases+="<testcase name=\"$(xml_escape "${name}")\"><failure message=\"$(xml_escape "${detail}")\"/></testcase>" ;;
+      skipped) skipped=$((skipped + 1)); cases+="<testcase name=\"$(xml_escape "${name}")\"><skipped message=\"$(xml_escape "${detail}")\"/></testcase>" ;;
+      *) cases+="<testcase name=\"$(xml_escape "${name}")\"/>" ;;
     esac
   done
   jq -n --arg mode "${MODE}" --arg image "${PUBLISHED_IMAGE_DIGEST_REF}" --arg chart "${CATALOGUE_CHART}" \
@@ -193,7 +195,7 @@ validate_inputs() {
       die "${name} must be a DNS-safe Kubernetes name (max 63 characters)"
     fi
   done
-  for name in REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP; do
+  for name in REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP REFERENCE_APPROVER_GROUP; do
     value="${!name}"
     if [[ -z "${value}" ]] || (( ${#value} > 253 )); then
       die "${name} must be a valid Breakglass identifier (1-253 chars; allowed: letters, digits, . _ - @ : / * ? [ ] ( ) + | ^ $ \\)"
@@ -647,6 +649,7 @@ audit_receiver_url() {
     curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 && break
     sleep 1
   done
+  curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 || die "audit receiver ${svc}.${ns} is not reachable"
   AUDIT_URL="http://localhost:${AUDIT_FORWARD_PORT}"
 }
 
@@ -723,14 +726,15 @@ wait_for_debug_state() {
 
 # Pods owned by the session's workload Job (the Job carries the session's name).
 debug_pod_names() {
-  kubectl get pods -n "${DEBUG_NAMESPACE}" -o json 2>/dev/null |
-    jq -r --arg n "$1" '.items[] | select(any(.metadata.ownerReferences[]?; .name == $n)) | .metadata.name' || true
+  local pods
+  pods="$(kubectl get pods -n "${DEBUG_NAMESPACE}" -o json 2>/dev/null)" || return 1
+  jq -r --arg n "$1" '.items[] | select(any(.metadata.ownerReferences[]?; .name == $n)) | .metadata.name' <<<"${pods}"
 }
 
 wait_for_debug_pod() {
   local name="$1" pod='' phase=''
   for _ in $(seq 1 120); do
-    pod="$(debug_pod_names "${name}" | head -n1)"
+    pod="$(debug_pod_names "${name}" 2>/dev/null | head -n1 || true)"
     if [[ -n "${pod}" ]]; then
       phase="$(kubectl get pod "${pod}" -n "${DEBUG_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
       case "${phase}" in
@@ -811,10 +815,12 @@ run_debug_session() {
   expect_status 200
   wait_for_debug_state "${REQUESTER_TOKEN}" "${name}" Terminated
   for _ in $(seq 1 60); do
-    [[ -z "$(debug_pod_names "${name}")" ]] && break
+    remaining="$(debug_pod_names "${name}")" || die "cannot list pods in ${DEBUG_NAMESPACE}"
+    [[ -z "${remaining}" ]] && break
     sleep 1
   done
-  [[ -z "$(debug_pod_names "${name}")" ]] || die "debug workload remains after ${name} termination"
+  remaining="$(debug_pod_names "${name}")" || die "cannot list pods in ${DEBUG_NAMESPACE}"
+  [[ -z "${remaining}" ]] || die "debug workload remains after ${name} termination"
   assert_debug_audit "${name}"
 }
 

@@ -284,7 +284,7 @@ if REFERENCE_EVIDENCE_DIR="${evidence_dir}" bash -c '
     MODE=published
     CATALOGUE_CHART_DIGEST=sha256:abc
     begin first; pass
-    skip second "not wired"
+    skip second "not \"wired\" <yet> &"
     begin third
     exit 9
   ' bash "${script_without_main}"; then
@@ -293,5 +293,6 @@ if REFERENCE_EVIDENCE_DIR="${evidence_dir}" bash -c '
 fi
 jq -e '.catalogue_digest == "sha256:abc" and ([.rows[].status] == ["pass","skipped","failed"])' "${evidence_dir}/reference-usage.json" >/dev/null
 grep -Fq 'tests="3" failures="1" skipped="1"' "${evidence_dir}/junit.xml"
+grep -Fq 'message="not &quot;wired&quot; &lt;yet&gt; &amp;"' "${evidence_dir}/junit.xml"
 
 echo "reference usage script checks passed"
