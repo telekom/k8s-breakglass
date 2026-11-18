@@ -31,8 +31,10 @@ func (testTokenIssuer) IssueUploadToken(context.Context, backend.Record, string)
 }
 
 type testTargetProvider struct {
-	client client.Client
-	config *breakglassv1alpha1.ClusterConfig
+	client      client.Client
+	config      *breakglassv1alpha1.ClusterConfig
+	getErr      error
+	validateErr error
 }
 
 type uidAssigningClient struct {
@@ -56,10 +58,13 @@ func (c *uidAssigningClient) Create(ctx context.Context, object client.Object, o
 }
 
 func (p *testTargetProvider) GetClientForPrivilegedOperation(context.Context, string) (client.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	if p.getErr != nil {
+		return nil, nil, p.getErr
+	}
 	return p.client, p.config, nil
 }
 func (p *testTargetProvider) ValidatePrivilegedOperationClusterConfig(context.Context, *breakglassv1alpha1.ClusterConfig) error {
-	return nil
+	return p.validateErr
 }
 func (*testTargetProvider) ReleasePrivilegedOperationClusterConfig(*breakglassv1alpha1.ClusterConfig) {
 }

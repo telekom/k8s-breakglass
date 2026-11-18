@@ -46,7 +46,7 @@ the ordinary controller CI suite.
 6. **Artifact signing**
    - Release images are signed using keyless Sigstore Cosign (OIDC-based, no static keys).
    - An SPDX-JSON SBOM attestation is attached to each signed image via `cosign attest`.
-   - When an optional Artifactory OCI mirror is configured, Cosign signatures and attestations are copied on a best-effort basis via `cosign copy`.
+   - When an optional Artifactory OCI mirror is configured, the signed image digest and its OCI referrers (Cosign signature and attestation bundles, SLSA provenance) are copied with `oras copy -r`, and the mirrored signature and SBOM attestation are checked with `cosign verify` / `cosign verify-attestation`.
 
 7. **Helm chart publication**
    - `charts/escalation-config` and `charts/debug-session-catalogue` are packaged during release preparation.
@@ -67,7 +67,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
-4. **Artifactory** — optionally mirrors the multi-arch image and cosign artifacts (signatures + attestations) to an operator-configured Artifactory OCI registry (best-effort).
+4. **Artifactory** — optionally mirrors the signed multi-arch image digest with its referrers (signatures, attestations) to an operator-configured Artifactory OCI registry and verifies them there (best-effort by default; see below).
 5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
 6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
 
@@ -77,14 +77,37 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 ### Optional OCI mirror configuration
 
-Artifactory publishing is temporarily disabled while the configured mirror
-credentials are repaired; CI has no mirror job. GHCR image
-publication, signing, attestations, and chart publication remain enabled.
-The release mirror job runs only when the repository variable
-`ARTIFACTORY_MIRROR_ENABLED` is `true`; set it only after validating the four
-secrets below against the target registry.
+Artifactory publishing is disabled by default while the configured mirror
+credentials are repaired. GHCR image publication, signing, attestations, and
+chart publication do not depend on the mirror.
 
-CI and release workflows use repository or organization Actions secrets for the
+| Repository variable | Default | Effect |
+| --- | --- | --- |
+| `ARTIFACTORY_MIRROR_ENABLED` | unset (off) | The `artifactory` release job runs only when this is `true`. |
+| `ARTIFACTORY_MIRROR_REQUIRED` | unset (non-blocking) | When `true`, a mirror failure leaves the `artifactory` job (and the workflow run) failed. When unset, the job is `continue-on-error`. |
+
+The GitHub Release job never depends on the mirror job, so a mirror failure
+cannot block release creation in either mode. Every failed login, copy,
+or signature/attestation verification emits a `::error title=Artifactory mirror::`
+annotation and fails the step; there are no silent `|| true` checks. Secrets
+are passed only through `env:` and `docker login --password-stdin`; `oras`
+and `cosign` reuse that login.
+
+**Re-enabling the mirror**
+
+1. Rotate or repair `AF_USER` and `AF_TOKEN` in Artifactory, and confirm
+   `AF_REGISTRY` and `AF_REPOSITORY`, then update the four Actions secrets.
+   This is a manual repository-owner step; the workflow cannot do it.
+2. Validate the credentials against the registry (for example, `docker login`
+   plus a push to a scratch tag) before enabling.
+3. Run a pre-release tag (for example, `vX.Y.Z-rc.1`) with
+   `ARTIFACTORY_MIRROR_ENABLED=true` and check the job annotations.
+4. Optionally set `ARTIFACTORY_MIRROR_REQUIRED=true` once the mirror is stable.
+
+To disable again, unset `ARTIFACTORY_MIRROR_ENABLED` or set it to anything
+other than `true`.
+
+The release workflow uses repository or organization Actions secrets for the
 optional Artifactory mirror:
 
 | Secret | Value |
@@ -94,10 +117,8 @@ optional Artifactory mirror:
 | `AF_USER` | Registry username |
 | `AF_TOKEN` | Registry access token |
 
-When enabled, the mirror push is skipped unless all four secrets are set. GHCR
-publication and release signing do not depend on the mirror. The derived
-repository key used by storage-API diagnostics is also explicitly masked in
-workflow logs.
+When enabled, the job fails (see above) unless all four secrets are set. GHCR
+publication and release signing do not depend on the mirror.
 Deployments previously using the built-in mirror must configure `AF_REGISTRY`
 and `AF_REPOSITORY` to retain it.
 
@@ -186,6 +207,60 @@ observation and cleanup is preserved. Locally built images are removed only when
 the harness can prove ownership from the captured immutable image ID; otherwise
 they are left for the runner's managed cleanup. The harness does not race a
 mutable image tag during teardown.
+
+## Release artifact inventory and gates
+
+`hack/release-artifact-inventory.json` lists every OCI image and Helm chart the
+release publishes and binds each to a digest subject that is signed (Cosign keyless),
+carries an SPDX SBOM attestation and a SLSA provenance attestation, and is
+verified after publication:
+
+| Artifact | Source | Publisher | Verified by |
+|---|---|---|---|
+| Controller image `ghcr.io/<repo>` | `Dockerfile` | `release.yml` `assemble` | `release.yml` "Verify controller image signature and attestations" step |
+| Utility images `.../utils/<name>` (derived from `hack/utility-image-matrix.json`) | each matrix `file` | `release.yml` `build-utility-images`, `utility-release.yml` | `hack/resolve-release-refs.sh`, `hack/verify-utility-publication.sh` |
+| Charts `.../charts/escalation-config`, `.../charts/debug-session-catalogue` | `charts/*/Chart.yaml` | `release.yml` `publish-chart` | same job, plus `hack/verify-catalogue-supply-chain.sh` for the catalogue |
+
+GitHub Release assets (manifests, `bgctl` binaries, checksums) are covered by
+the release checksums, not by this inventory. Test fixtures (`e2e/images/**`,
+`e2e/fixtures/**` charts) and the `Dockerfile.validator` compatibility symlink
+are listed under `excluded` with a reason; only `e2e/` fixtures and symlinks to
+an inventoried source may be excluded. The optional Artifactory mirror copies
+the controller image digest with its signatures and attestations and is not a
+separate subject.
+
+`hack/verify-release-inventory.sh` fails when
+
+- a `Dockerfile`, `Containerfile` or `Chart.yaml` (including symlinks, outside
+  `node_modules/` and `vendor/`) exists that is neither inventoried nor excluded, or an exclusion breaks the rule above,
+- an inventoried source is missing, or the utility build matrix in
+  `release.yml` differs from `hack/utility-image-matrix.json` (name and context),
+- a publisher no longer binds a digest (`...@sha256`) subject,
+- any signature, SBOM or provenance publish or verify gate named in the
+  inventory's `gateSets` is gone from the workflow or verifier script, or
+- a gate script listed under `invocations` is no longer called from
+  `release.yml` or `utility-release.yml`.
+
+Comment lines do not satisfy a gate. The check is textual: it catches a removed
+or commented-out gate, not one disabled with `if:` or `continue-on-error`, which
+review has to catch.
+
+It is a static check. It runs on every PR through `make verify-release-provenance`
+(the CI lint job, the dry run) and as the `Verify release artifact inventory`
+step of `validate-tag` before anything is published. To add an image or chart,
+add its inventory entry (utilities: a matrix entry) in the same change.
+
+Negative tests prove the gates fail closed: `hack/test-release-inventory.sh`
+(unlisted Dockerfile/Containerfile/symlink/chart, matrix drift, bad exclusions,
+tag-only or unbound subject, a commented-out gate, and every gate and invocation
+in the inventory removed in turn), `hack/verify-catalogue-supply-chain-test.sh`
+(signature, SBOM or provenance rejected by Cosign, standing in for a missing or
+tampered one, for an image or the chart; tag-only chart or image reference),
+`hack/test-slsa-provenance.sh` (tag-only, malformed or embedded digests and a
+non-SHA commit are refused) and `hack/test-utility-publication.sh` (tag-only
+subjects refused by the digest guard, digest mismatch, and the earlier
+signature, SBOM, provenance, platform and smoke failures). They run through
+`make test-release-security` and the utility release contract.
 
 ## Release Checklist
 

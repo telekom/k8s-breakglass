@@ -163,3 +163,42 @@ func pullSecretNames(secrets []corev1.LocalObjectReference) []string {
 	}
 	return names
 }
+
+// TCAAS-1627: the only host access is the read-only coredump directory, mounted
+// at /host-coredumps into the collector alone; the uploader and the
+// system-summary recipe never see it. The Kind lanes assert the same on the
+// admitted Pod for both storage backends.
+func TestBuildMountsExactHostCoredumpPathReadOnlyIntoCollectorOnly(t *testing.T) {
+	config := testConfig(archive.CrashdumpCollectionRecipe)
+	config.Node, config.MaxAgeMinutes = "worker-one", 60
+	job, err := Build(config)
+	require.NoError(t, err)
+	spec := job.Spec.Template.Spec
+	var hostVolumes []string
+	for _, volume := range spec.Volumes {
+		if volume.HostPath != nil {
+			hostVolumes = append(hostVolumes, volume.Name)
+			require.Equal(t, "/var/lib/systemd/coredump", volume.HostPath.Path)
+		}
+	}
+	require.Equal(t, []string{"host-coredumps"}, hostVolumes)
+	var mountedBy []string
+	for _, container := range append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...) {
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == "host-coredumps" {
+				mountedBy = append(mountedBy, container.Name)
+				require.Equal(t, corev1.VolumeMount{Name: "host-coredumps", MountPath: "/host-coredumps", ReadOnly: true}, mount)
+			}
+		}
+	}
+	require.Equal(t, []string{collectorContainer}, mountedBy, "only the collector mounts host coredumps")
+	require.False(t, spec.HostNetwork || spec.HostPID || spec.HostIPC)
+
+	summaryConfig := testConfig(archive.SystemSummaryRecipe)
+	summaryConfig.MaxBytes = archive.MaxSystemSummaryArchiveBytes
+	summary, err := Build(summaryConfig)
+	require.NoError(t, err)
+	for _, volume := range summary.Spec.Template.Spec.Volumes {
+		require.Nil(t, volume.HostPath, "system-summary must not get host access")
+	}
+}

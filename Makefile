@@ -71,6 +71,7 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 
 .PHONY: verify-release-provenance
 verify-release-provenance: ## Verify release image provenance signs the registry digest.
+	bash hack/verify-release-inventory.sh
 	bash hack/verify-release-provenance.sh
 	bash hack/verify-release-values.sh
 	bash hack/verify-release-refs.sh
@@ -79,6 +80,7 @@ verify-release-provenance: ## Verify release image provenance signs the registry
 test-release-security: ## Run release and OCI security behavioral tests.
 	bash hack/test-chart-sbom.sh
 	bash hack/test-slsa-provenance.sh
+	bash hack/test-release-inventory.sh
 	bash hack/verify-catalogue-supply-chain-test.sh
 	bash utils/images/tests/verify-oci-attestations-test.sh
 
@@ -94,6 +96,10 @@ verify-generated: generate manifests ## Verify generated API and manifest artifa
 .PHONY: verify-docs-snippets
 verify-docs-snippets: ## Verify docs and workflow snippets use current dev workload names.
 	bash hack/verify-docs-snippets.sh
+
+.PHONY: verify-acceptance-matrix
+verify-acceptance-matrix: ## Verify every DebugSession acceptance matrix row cites an existing test.
+	bash hack/check-acceptance-matrix.sh
 
 .PHONY: vulncheck
 vulncheck: govulncheck ## Run govulncheck to check for known vulnerabilities.
