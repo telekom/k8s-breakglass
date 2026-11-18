@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -442,4 +444,57 @@ func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T
 	leases := &coordinationv1.LeaseList{}
 	require.NoError(t, base.List(context.Background(), leases))
 	require.Len(t, leases.Items, 1, "the concurrently changed Lease must not be deleted")
+}
+
+// Controller rollover (pod restart / leader change): all fencing state lives in
+// Leases, so a fresh service instance keeps the active session's lease valid
+// and renewable without re-fencing it, a stream claim of the dead process
+// blocks a second stream instead of being double-claimed, and session end on
+// the new instance removes the session lease.
+func TestTerminalLeaseControllerRolloverWithActiveSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	now := time.Now().UTC().Truncate(time.Second)
+	starts, expiry := metav1.NewTime(now), metav1.NewTime(now.Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &starts, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{}}}
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	newController := func() (*ConnectionLeaseService, TerminalRecordingConnectionProvider) {
+		svc := NewConnectionLeaseService(hub).WithNamespace("execution")
+		return svc, NewTerminalRecordingConnectionProvider(svc, credential.source)
+	}
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: expiry.Time}
+
+	// Old controller: activation records the session lease, a stream runs.
+	oldSvc, oldProvider := newController()
+	lease, err := oldSvc.AcquireForSession(ctx, ds, "cluster-uid")
+	require.NoError(t, err)
+	ds.Status.ConnectionLease = &lease
+	require.NoError(t, hub.Update(ctx, ds))
+	_, err = oldProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+
+	// New controller process; the old one is gone (its Close is never called).
+	newSvc, newProvider := newController()
+	require.NoError(t, newSvc.ValidateSession(ctx, ds), "an active session keeps a valid lease across controller rollover")
+	require.NoError(t, newSvc.RenewSession(ctx, ds, expiry.Time), "the new controller renews the session lease")
+	require.Equal(t, lease.Epoch, ds.Status.ConnectionLease.Epoch, "a rollover never re-fences the session")
+	require.NoError(t, newSvc.ValidateSession(ctx, ds))
+	_, err = newProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.ErrorContains(t, err, "active stream claim", "the dead process's claim blocks a second stream instead of being double-claimed")
+
+	// Session end on the new controller removes the session lease. The
+	// per-target terminal lease is separate; the live-session authority check
+	// ends its streams.
+	require.NoError(t, newSvc.RevokeSession(ctx, ds))
+	require.NoError(t, newSvc.RevokeUnrecordedSessionLeases(ctx, ds))
+	require.Error(t, newSvc.ValidateSession(ctx, ds))
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(ctx, leases))
+	for _, l := range leases.Items {
+		require.False(t, strings.HasPrefix(l.Name, connectionSessionLeasePrefix), "session lease %s must be revoked", l.Name)
+	}
 }
