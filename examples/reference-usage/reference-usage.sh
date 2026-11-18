@@ -42,6 +42,7 @@ REFERENCE_SETUP_SCRIPT="${REFERENCE_SETUP_SCRIPT:-}"
 REFERENCE_TOKEN_HELPER="${REFERENCE_TOKEN_HELPER:-}"
 REFERENCE_ENV_FILE="${REFERENCE_ENV_FILE:-}"
 REFERENCE_REQUESTER_GROUP="${REFERENCE_REQUESTER_GROUP:-reference-requesters}"
+REFERENCE_APPROVER_GROUP="${REFERENCE_APPROVER_GROUP:-reference-approvers}" # blockSelfApproval needs an approver group
 REFERENCE_ESCALATED_GROUP="${REFERENCE_ESCALATED_GROUP:-reference-restricted}"
 REFERENCE_AUDIT_WEBHOOK_URL="${REFERENCE_AUDIT_WEBHOOK_URL:-}"
 REFERENCE_CLEANUP_TIMEOUT="${REFERENCE_CLEANUP_TIMEOUT:-60s}"
@@ -64,6 +65,13 @@ RUN_ELEVATED="${REFERENCE_RUN_ELEVATED:-false}"
 VERIFY_SUPPLY_CHAIN="${REFERENCE_VERIFY_SUPPLY_CHAIN:-true}"
 VERIFY_GH_ATTESTATION="${REFERENCE_VERIFY_GH_ATTESTATION:-false}"
 PUBLISHED_IMAGE_DIGEST_REF=""
+# Optional evidence export: JUnit + JSON rows and the artifact digests used.
+REFERENCE_EVIDENCE_DIR="${REFERENCE_EVIDENCE_DIR:-}"
+AUDIT_FORWARD_PID=""
+AUDIT_URL=""
+AUDIT_FORWARD_PORT="${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}"
+PHASE=""
+ROWS=() # "name<TAB>status<TAB>detail"
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-usage.XXXXXX")"
 
 KUBECONFIG_FILE="${REFERENCE_KUBECONFIG:-${KUBECONFIG:-}}"
@@ -78,6 +86,40 @@ ESCALATION_NAME="reference-restricted-${REFERENCE_RUN_ID}"
 
 die() { printf 'reference-usage: %s\n' "$*" >&2; exit 1; }
 log() { printf 'reference-usage: %s\n' "$*"; }
+
+# begin names the running phase; a die while it runs is recorded as its failure.
+begin() { PHASE="$1"; }
+pass() { ROWS+=("${PHASE}"$'\t'pass$'\t'); PHASE=""; }
+skip() { ROWS+=("$1"$'\t'skipped$'\t'"$2"); }
+
+xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' <<<"$1"; }
+
+write_evidence() {
+  local code="$1" row name status detail
+  [[ -n "${REFERENCE_EVIDENCE_DIR}" ]] || return 0
+  [[ -z "${PHASE}" ]] || ROWS+=("${PHASE}"$'\t'failed$'\t'"exit ${code}")
+  [[ "${code}" -eq 0 || " ${ROWS[*]-} " == *failed* ]] || ROWS+=("exit"$'\t'failed$'\t'"exit ${code}")
+  mkdir -p "${REFERENCE_EVIDENCE_DIR}"
+  local rows_json='[]' tests=0 failures=0 skipped=0 cases=''
+  for row in "${ROWS[@]-}"; do
+    [[ -n "${row}" ]] || continue
+    IFS=$'\t' read -r name status detail <<<"${row}"
+    rows_json="$(jq -c --arg n "${name}" --arg s "${status}" --arg d "${detail}" '. + [{name:$n,status:$s,detail:$d}]' <<<"${rows_json}")"
+    tests=$((tests + 1))
+    case "${status}" in
+      failed) failures=$((failures + 1)); cases+="<testcase name=\"$(xml_escape "${name}")\"><failure message=\"$(xml_escape "${detail}")\"/></testcase>" ;;
+      skipped) skipped=$((skipped + 1)); cases+="<testcase name=\"$(xml_escape "${name}")\"><skipped message=\"$(xml_escape "${detail}")\"/></testcase>" ;;
+      *) cases+="<testcase name=\"$(xml_escape "${name}")\"/>" ;;
+    esac
+  done
+  jq -n --arg mode "${MODE}" --arg image "${PUBLISHED_IMAGE_DIGEST_REF}" --arg chart "${CATALOGUE_CHART}" \
+    --arg chart_version "${CATALOGUE_VERSION}" --arg chart_digest "${CATALOGUE_CHART_DIGEST}" \
+    --argjson rows "${rows_json}" \
+    '{mode:$mode,image_digest_ref:$image,catalogue_chart:$chart,catalogue_version:$chart_version,catalogue_digest:$chart_digest,rows:$rows}' \
+    >"${REFERENCE_EVIDENCE_DIR}/reference-usage.json"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="reference-usage-%s" tests="%d" failures="%d" skipped="%d">%s</testsuite>\n' \
+    "${MODE}" "${tests}" "${failures}" "${skipped}" "${cases}" >"${REFERENCE_EVIDENCE_DIR}/junit.xml"
+}
 
 delete_created_debug_namespace() {
   [[ "${DEBUG_NAMESPACE_CREATED}" == true ]] || return 0
@@ -124,6 +166,17 @@ delete_created_debug_namespace() {
   fi
 }
 
+# auth-operator's webhook CA can lag the chart's --wait; retry the apply for up to a minute.
+apply_when_webhook_ready() {
+  local manifest="${STATE_DIR}/webhook-apply.yaml" _
+  cat >"${manifest}"
+  for _ in $(seq 1 30); do
+    kubectl apply -f "${manifest}" && return 0
+    sleep 2
+  done
+  return 1
+}
+
 require_commands() {
   local command
   for command in curl jq docker kubectl helm; do
@@ -142,7 +195,7 @@ validate_inputs() {
       die "${name} must be a DNS-safe Kubernetes name (max 63 characters)"
     fi
   done
-  for name in REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP; do
+  for name in REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP REFERENCE_APPROVER_GROUP; do
     value="${!name}"
     if [[ -z "${value}" ]] || (( ${#value} > 253 )); then
       die "${name} must be a valid Breakglass identifier (1-253 chars; allowed: letters, digits, . _ - @ : / * ? [ ] ( ) + | ^ $ \\)"
@@ -177,6 +230,7 @@ cleanup() {
   local cleanup_failed=false
   set +e
   [[ -n "${CATALOGUE_VALUES_FILE}" ]] && rm -f "${CATALOGUE_VALUES_FILE}"
+  [[ -n "${AUDIT_FORWARD_PID}" ]] && kill "${AUDIT_FORWARD_PID}" 2>/dev/null
   if [[ -n "${KUBECONFIG_FILE}" ]]; then
     if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
       KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
@@ -197,17 +251,39 @@ cleanup() {
     if ! delete_created_debug_namespace; then cleanup_failed=true; fi
   fi
   [[ -d "${STATE_DIR}" ]] && rm -rf "${STATE_DIR}"
-  if [[ "${CLUSTER_OWNED}" == true ]] && command -v kind >/dev/null 2>&1; then
+  # Opt-in: keep the kind cluster after a failure so CI can collect diagnostics.
+  if [[ "${CLUSTER_OWNED}" == true && ! ( "${exit_code}" -ne 0 && "${REFERENCE_RETAIN_CLUSTER_ON_FAILURE:-false}" == true ) ]] &&
+    command -v kind >/dev/null 2>&1; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
   fi
   [[ "${cleanup_failed}" == true && "${exit_code}" -eq 0 ]] && exit_code=1
   return "${exit_code}"
 }
+# Before cleanup deletes the run's objects, keep what the authorizer evaluated.
+dump_diagnostics() {
+  [[ -n "${REFERENCE_EVIDENCE_DIR}" && -n "${KUBECONFIG_FILE}" ]] || return 0
+  mkdir -p "${REFERENCE_EVIDENCE_DIR}"
+  {
+    kubectl get roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" -o yaml
+    kubectl get clusterrole "${REFERENCE_CLUSTER_ROLE_NAME}" -o yaml
+    kubectl get clusterrolebinding -o yaml | grep -B8 -A12 "${REFERENCE_CLUSTER_ROLE_NAME}"
+    kubectl get clusterconfig -A -o yaml
+    kubectl get breakglasssession -A -o yaml
+    kubectl get debugsession,debugsessiontemplate,debugpodtemplate -A -o yaml
+    kubectl get all,events -n "${DEBUG_NAMESPACE}" -o wide
+    kubectl get pods -n "${DEBUG_NAMESPACE}" --show-labels
+    kubectl auth can-i get configmaps -n "${NAMESPACE}" --as "${REQUESTER_EMAIL}" --as-group "${REFERENCE_ESCALATED_GROUP}"
+  } >"${REFERENCE_EVIDENCE_DIR}/reference-objects.yaml" 2>&1 || true
+}
+
 on_exit() {
   local exit_code=$?
   trap - EXIT
+  [[ "${exit_code}" -eq 0 ]] || dump_diagnostics
   cleanup "${exit_code}"
-  exit "$?"
+  exit_code=$?
+  write_evidence "${exit_code}"
+  exit "${exit_code}"
 }
 trap on_exit EXIT
 
@@ -290,7 +366,7 @@ install_stack() {
 
   log "Installing public auth-operator chart ${AUTH_OPERATOR_VERSION}"
   helm upgrade --install auth-operator "${AUTH_OPERATOR_CHART}" \
-    --version "${AUTH_OPERATOR_VERSION}" --namespace auth-operator-system \
+    --version "${AUTH_OPERATOR_VERSION#v}" --namespace auth-operator-system \
     --create-namespace --wait --timeout 5m
 
   if kubectl get namespace "${DEBUG_NAMESPACE}" >/dev/null 2>&1; then
@@ -419,7 +495,7 @@ configure_reference() {
   # without deleting catalogue-owned resources.
   local audit_url_json
   audit_url_json="$(printf '%s' "${REFERENCE_AUDIT_WEBHOOK_URL}" | jq -Rr @json)"
-  kubectl apply -f - <<YAML
+  apply_when_webhook_ready <<YAML
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: RoleDefinition
 metadata:
@@ -429,7 +505,7 @@ metadata:
 spec:
   targetRole: ClusterRole
   targetName: '${REFERENCE_CLUSTER_ROLE_NAME}'
-  scopeNamespaced: false
+  scopeNamespaced: true # include namespaced resources (configmaps); secrets stay restricted
   restrictedResources:
     - name: secrets
       singularName: secret
@@ -449,7 +525,7 @@ spec:
   subjects:
     - apiGroup: rbac.authorization.k8s.io
       kind: Group
-      name: '${REFERENCE_REQUESTER_GROUP}'
+      name: '${REFERENCE_ESCALATED_GROUP}' # the group the approved session grants
   clusterRoleBindings:
     clusterRoleRefs: ['${REFERENCE_CLUSTER_ROLE_NAME}']
 YAML
@@ -498,6 +574,7 @@ spec:
   blockSelfApproval: true
   approvers:
     users: ['${APPROVER_EMAIL}']
+    groups: ['${REFERENCE_APPROVER_GROUP}']
   requestReason:
     mandatory: true
     description: "Reference test reason"
@@ -542,9 +619,38 @@ wait_for_state() {
 webhook_check() {
   local expected="$1" resource="$2" payload response allowed
   payload="$(jq -n --arg user "${REQUESTER_EMAIL}" --arg base_group "${REFERENCE_REQUESTER_GROUP}" --arg escalated_group "${REFERENCE_ESCALATED_GROUP}" --arg resource "${resource}" --arg namespace "${NAMESPACE}" '{apiVersion:"authorization.k8s.io/v1",kind:"SubjectAccessReview",spec:{user:$user,groups:[$base_group,$escalated_group],resourceAttributes:{verb:"get",resource:$resource,namespace:$namespace}}}')"
-  response="$(curl -sS -X POST -H 'Content-Type: application/json' --data "${payload}" "${API_BASE}/api/breakglass/webhook/authorize/${TENANT}")"
-  allowed="$(jq -r '.status.allowed' <<<"${response}")"
-  [[ "${allowed}" == "${expected}" ]] || die "webhook ${resource}: expected allowed=${expected}, got ${response}"
+  # A fresh approval can take a moment to reach the authorizer; poll for up to 30s.
+  for _ in $(seq 1 30); do
+    response="$(curl -sS -X POST -H 'Content-Type: application/json' --data "${payload}" "${API_BASE}/api/breakglass/webhook/authorize/${TENANT}")"
+    allowed="$(jq -r '.status.allowed' <<<"${response}")"
+    [[ "${allowed}" == "${expected}" ]] && return 0
+    sleep 1
+  done
+  die "webhook ${resource}: expected allowed=${expected}, got ${response}"
+}
+
+# Prefer the fixture's receiver URL; if it is not reachable (the e2e setup forwards
+# a service name the kustomize prefix renamed), forward the service named by
+# REFERENCE_AUDIT_WEBHOOK_URL (http://<svc>.<ns>.svc[...]) ourselves.
+audit_receiver_url() {
+  local url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-}" host svc ns _
+  if [[ -n "${url}" ]] && curl -fsS "${url}/health" >/dev/null 2>&1; then
+    AUDIT_URL="${url}"
+    return 0
+  fi
+  host="${REFERENCE_AUDIT_WEBHOOK_URL#*://}"
+  host="${host%%[:/]*}"
+  svc="${host%%.*}"
+  ns="${host#*.}"
+  ns="${ns%%.*}"
+  kubectl -n "${ns}" port-forward "svc/${svc}" "${AUDIT_FORWARD_PORT}:80" >/dev/null 2>&1 &
+  AUDIT_FORWARD_PID=$!
+  for _ in $(seq 1 15); do
+    curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 || die "audit receiver ${svc}.${ns} is not reachable"
+  AUDIT_URL="http://localhost:${AUDIT_FORWARD_PORT}"
 }
 
 reference_flow() {
@@ -589,7 +695,8 @@ reference_flow() {
   wait_for_state "${REQUESTER_TOKEN}" "${REJECTED_SESSION_NAME}" Rejected
 
   log "Checking audit recording contains the reference session"
-  local audit_url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}}/events"
+  audit_receiver_url
+  local audit_url="${AUDIT_URL}/events"
   local audit=''
   for _ in $(seq 1 30); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
@@ -617,11 +724,17 @@ wait_for_debug_state() {
   die "timed out waiting for debug session ${name} to reach ${expected} (last state: ${state})"
 }
 
+# Pods owned by the session's workload Job (the Job carries the session's name).
+debug_pod_names() {
+  local pods
+  pods="$(kubectl get pods -n "${DEBUG_NAMESPACE}" -o json 2>/dev/null)" || return 1
+  jq -r --arg n "$1" '.items[] | select(any(.metadata.ownerReferences[]?; .name == $n)) | .metadata.name' <<<"${pods}"
+}
+
 wait_for_debug_pod() {
   local name="$1" pod='' phase=''
   for _ in $(seq 1 120); do
-    pod="$(kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    pod="$(debug_pod_names "${name}" 2>/dev/null | head -n1 || true)"
     if [[ -n "${pod}" ]]; then
       phase="$(kubectl get pod "${pod}" -n "${DEBUG_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
       case "${phase}" in
@@ -640,13 +753,16 @@ wait_for_debug_pod() {
 }
 
 assert_debug_audit() {
-  local name="$1" audit_url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}}/events" audit=''
+  local name="$1" audit=''
+  [[ -n "${AUDIT_URL}" ]] || audit_receiver_url
+  local audit_url="${AUDIT_URL}/events"
   for _ in $(seq 1 45); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
+    # resource_deployed/resource_cleanup are emitted only for auxiliary resources, which the
+    # catalogue's workload profile has none of; workload removal is asserted by zero-residue.
     if grep -Fq "${name}" <<<"${audit}" && grep -Fq 'debug_session.created' <<<"${audit}" && \
-      grep -Fq 'debug_session.started' <<<"${audit}" && grep -Fq 'debug_session.resource_deployed' <<<"${audit}" && \
-      grep -Fq 'debug_session.terminated' <<<"${audit}" && \
-      grep -Fq 'debug_session.resource_cleanup' <<<"${audit}"; then
+      grep -Fq 'debug_session.approved' <<<"${audit}" && grep -Fq 'debug_session.started' <<<"${audit}" && \
+      grep -Fq 'debug_session.terminated' <<<"${audit}"; then
       return 0
     fi
     sleep 1
@@ -675,6 +791,7 @@ run_debug_session() {
     local name="${DEBUG_SESSION_NAME}"
   fi
 
+  wait_for_debug_state "${REQUESTER_TOKEN}" "${name}" PendingApproval
   api_request "${REQUESTER_TOKEN}" POST "/api/debugSessions/${name}/approve" '{"reason":"requester self-approval must be denied"}'
   expect_status 403
   api_request "${APPROVER_TOKEN}" POST "/api/debugSessions/${name}/approve" '{"reason":"reference debug approval"}'
@@ -698,14 +815,12 @@ run_debug_session() {
   expect_status 200
   wait_for_debug_state "${REQUESTER_TOKEN}" "${name}" Terminated
   for _ in $(seq 1 60); do
-    if ! kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
-      -o name 2>/dev/null | grep -q .; then
-      break
-    fi
+    remaining="$(debug_pod_names "${name}")" || die "cannot list pods in ${DEBUG_NAMESPACE}"
+    [[ -z "${remaining}" ]] && break
     sleep 1
   done
-  kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
-    -o name 2>/dev/null | grep -q . && die "debug workload remains after ${name} termination"
+  remaining="$(debug_pod_names "${name}")" || die "cannot list pods in ${DEBUG_NAMESPACE}"
+  [[ -z "${remaining}" ]] || die "debug workload remains after ${name} termination"
   assert_debug_audit "${name}"
 }
 
@@ -756,13 +871,20 @@ main() {
   [[ "${MODE}" == source || "${MODE}" == published ]] || die "REFERENCE_MODE must be source or published"
   validate_inputs
   require_commands
-  prepare_image
-  verify_public_artifacts
-  install_stack
-  configure_reference
-  reference_flow
-  debug_session_flow
-  assert_zero_residual
+  begin prepare-image; prepare_image; pass
+  if [[ "${MODE}" == published ]]; then
+    if [[ "${VERIFY_SUPPLY_CHAIN}" == true ]]; then
+      begin verify-supply-chain; verify_public_artifacts; pass
+    else
+      skip verify-supply-chain "REFERENCE_VERIFY_SUPPLY_CHAIN is not true"
+    fi
+  fi
+  begin install-stack; install_stack; pass
+  begin configure-reference; configure_reference; pass
+  begin request-approve-use-deny-terminate; reference_flow; pass
+  begin debug-session; debug_session_flow; pass
+  [[ "${RUN_ELEVATED}" != true ]] || skip elevated-debug-session "disabled: catalogue lacks the controller-issued approval tuple"
+  begin zero-residue; assert_zero_residual; pass
   log "Reference usage passed (${MODE} mode)"
 }
 
