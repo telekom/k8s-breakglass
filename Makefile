@@ -95,6 +95,10 @@ verify-generated: generate manifests ## Verify generated API and manifest artifa
 verify-docs-snippets: ## Verify docs and workflow snippets use current dev workload names.
 	bash hack/verify-docs-snippets.sh
 
+.PHONY: verify-acceptance-matrix
+verify-acceptance-matrix: ## Verify every DebugSession acceptance matrix row cites an existing test.
+	bash hack/check-acceptance-matrix.sh
+
 .PHONY: vulncheck
 vulncheck: govulncheck ## Run govulncheck to check for known vulnerabilities.
 	$(GOVULNCHECK) ./...
