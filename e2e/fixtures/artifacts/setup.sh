@@ -171,7 +171,6 @@ artifacts:
   collectorImage: '''+collector_image+'''
   controllerURL: https://artifact-e2e.breakglass-system.svc:8444
   uploadMaxBytes: 16777216
-  terminalRecordingSegmentBytes: 65536
   tokenSecretName: artifact-e2e-signing
   tokenSignerKeyID: kind
   local:
@@ -188,6 +187,11 @@ artifacts:
     snapshotPolicy: prohibited
     maximumObjectBytes: 16777216
 '''
+if os.environ.get('E2E_MULTI_CLUSTER')=='true':
+    # Opt-in incremental recording flush runs in the multi-cluster lanes; the
+    # single-cluster lanes keep the default in-memory recording path.
+    c['data']['config.yaml']=c['data']['config.yaml'].replace('  uploadMaxBytes: 16777216\n','  uploadMaxBytes: 16777216\n  terminalRecordingSegmentBytes: 65536\n',1)
+    assert 'terminalRecordingSegmentBytes: 65536' in c['data']['config.yaml']
 (p/'config.json').write_text(json.dumps(c))
 d=json.loads((p/'deployment.json').read_text()); d['spec']['replicas']=1; d['spec']['strategy']={'type':'Recreate'}
 s=d['spec']['template']['spec']; s['volumes'] += [{'name':'artifact-data','persistentVolumeClaim':{'claimName':'artifact-e2e'}},{'name':'artifact-tls','secret':{'secretName':'artifact-e2e-tls'}},{'name':'artifact-s3-credentials','secret':{'secretName':'artifact-e2e-s3'}},{'name':'artifact-s3-tls','secret':{'secretName':'artifact-e2e-tls','items':[{'key':'tls.crt','path':'public.crt'},{'key':'tls.key','path':'private.key'},{'key':'ca.crt','path':'CAs/fixture-ca.crt'}]}}]
@@ -284,4 +288,7 @@ done
 kubectl -n "$ns" exec deployment/breakglass-manager -c artifact-tls -- /fixture s3-provision
 wait_for_http "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" 60 "artifact fixture API port-forward"
 printf 'E2E_ARTIFACT_BACKEND=local\n' >> "$GITHUB_ENV"
+if [[ "${E2E_MULTI_CLUSTER:-false}" == "true" ]]; then
+ printf 'E2E_RECORDING_SEGMENT_BYTES=65536\n' >> "$GITHUB_ENV"
+fi
 printf 'E2E_ARTIFACT_IMAGE_DIGEST=%s\n' "$ARTIFACT_COLLECTOR_IMAGE" >> "$GITHUB_ENV"

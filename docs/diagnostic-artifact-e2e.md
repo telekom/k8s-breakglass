@@ -86,17 +86,29 @@ preserving the separate Active-only allowed-Pod update.
 
 ## Incremental recording flush
 
-The fixture config sets `artifacts.terminalRecordingSegmentBytes: 65536`, so
-`TestDebugSessionTerminalRecordingIncrementalE2E` runs in the same local and S3
-lanes. It uses the existing fault hooks (`/artifacts/provider-outage` for S3,
-`chmod 000 /artifacts/objects` for local) to fail the backend mid-stream and
-requires a fail-closed stream, a `terminal_recording_failed` event with
-`stage: flush`, and no complete recording. It then force-deletes the controller
-Pod mid-stream, waits for the replacement and the API port-forward, and requires
-the committed prefix to appear as an incomplete, hash-chain-verified recording
-once the session (stream binding) expired. The template's 1 minute
-`recordingRetention` then requires the recording, segments and manifests to be
-gone from the backend. Sessions last 3 to 10 minutes; all waits are bounded polls.
+In the multi-cluster artifact lanes the fixture config sets
+`artifacts.terminalRecordingSegmentBytes: 65536` and exports
+`E2E_RECORDING_SEGMENT_BYTES`, so every recording test there uses the opt-in
+segmented path; the single-cluster lanes keep the default in-memory path, and
+`TestDebugSessionTerminalRecordingIncrementalE2E` skips there (the multi-cluster
+steps require it to pass). It runs against both backends:
+
+- Backend failure: 200 KB are committed as segments first, then the existing
+  fault hook (`/artifacts/provider-outage` for S3, `chmod 000 /artifacts/objects`
+  for local) breaks the backend before more output. The stream must end within
+  a minute without the later marker, `terminal_recording_failed` with
+  `stage: flush` must be audited, and nothing may be listed.
+- Controller kill: the controller Pod is force-deleted mid-stream once segments
+  exist. The stream must end; nothing is listed until the artifact controller
+  publishes the committed prefix after the session (stream binding) expired
+  plus its one-minute grace. The prefix must be incomplete, digest- and
+  hash-chain-verified, contain committed output but not the uncommitted tail,
+  and its recovery must be audited (`recovered: true`, actor `system`). Only the
+  recording object may remain in the backend (segments and manifests are
+  removed), and the template's 3 minute `recordingRetention` must then remove it.
+
+Sessions last 3 to 30 minutes; all waits are bounded polls. These lanes run
+with a 45 minute `go test` timeout.
 
 ## Explicit backend and lifecycle matrix
 

@@ -33,13 +33,23 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/recording"
 )
 
+// recoveryGrace mirrors the artifact controller's wait after a stream's expiry
+// before it publishes the committed prefix (terminalRecordingRecoveryGrace),
+// plus one 30s reconcile interval.
+const recoveryGrace = 90 * time.Second
+
 // TestDebugSessionTerminalRecordingIncrementalE2E covers the opt-in incremental
 // flush (artifacts.terminalRecordingSegmentBytes, set to its 64 KiB minimum by
-// e2e/fixtures/artifacts/setup.sh) against the real local and S3 backends:
-// a backend failure mid-stream fails the stream closed, and a controller
-// killed mid-stream leaves a committed prefix that is published as an
-// incomplete, verifiable recording and removed again at retention expiry.
+// e2e/fixtures/artifacts/setup.sh in the multi-cluster lanes; the
+// single-cluster lanes keep the default in-memory path) against the real local
+// and S3 backends: a backend failure mid-stream fails the stream closed, and a
+// controller killed mid-stream leaves a committed prefix that the artifact
+// controller publishes as an incomplete, verifiable, audited recording, which
+// retention removes again.
 func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
+	if os.Getenv("E2E_RECORDING_SEGMENT_BYTES") == "" {
+		t.Skip("incremental flush is enabled only in the multi-cluster artifact lanes")
+	}
 	backend := os.Getenv("E2E_ARTIFACT_BACKEND")
 	require.Contains(t, []string{"local", "s3"}, backend, "run e2e/fixtures/artifacts/setup.sh (and select-s3.sh) first")
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
@@ -48,120 +58,170 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 	requesterUser := helpers.TestUsers.SecurityRequester
 	requester := s.TC.ClientForUser(requesterUser)
 
+	// Tokens live 5 minutes and these subtests run longer; streams and GetRaw
+	// bypass the client's 401 refresh, so refresh explicitly.
+	fresh := func() {
+		if token := requester.RefreshToken(ctx); token != "" {
+			requester.AuthToken = token
+		}
+	}
+	get := func(path string) (int, []byte, error) {
+		status, body, err := requester.GetRaw(ctx, path)
+		if err == nil && status == http.StatusUnauthorized {
+			fresh()
+			status, body, err = requester.GetRaw(ctx, path)
+		}
+		return status, body, err
+	}
+
 	// Runs in the fixture sidecar, which shares the artifact volume and can
 	// reach the provider; the same hooks the artifact lifecycle test uses.
-	fixture := func(args ...string) string {
+	fixture := func(args ...string) (string, error) {
 		base := []string{"-n", ns, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--"}
 		out, err := exec.CommandContext(ctx, "kubectl", append(base, args...)...).CombinedOutput()
-		require.NoError(t, err, string(out))
-		return string(out)
+		if err != nil {
+			return "", fmt.Errorf("%v: %w: %s", args, err, out)
+		}
+		return string(out), nil
 	}
-	files := func() []string {
+	files := func() ([]string, error) {
 		args := []string{"find", "/artifacts/objects", "-type", "f"}
 		if backend == "s3" {
 			args = []string{"/fixture", "s3-inventory"}
 		}
+		out, err := fixture(args...)
+		if err != nil {
+			return nil, err
+		}
 		var found []string
-		for _, name := range strings.Fields(fixture(args...)) {
-			if !strings.HasSuffix(name, "/.breakglass-artifact-instance-v1") {
+		for _, name := range strings.Fields(out) {
+			if !strings.HasSuffix(name, "/.breakglass-artifact-instance-v1") && !strings.HasPrefix(name, "delete:") {
 				found = append(found, name)
 			}
 		}
 		slices.Sort(found)
-		return found
+		return found, nil
 	}
-	// Segments and manifests are backend objects: new files appear while a
-	// recording is committed and must all be gone once it expired.
-	baseline := files()
-	newFiles := func() []string {
-		return slices.DeleteFunc(files(), func(name string) bool { return slices.Contains(baseline, name) })
-	}
-	inject := func() (restore func()) {
-		if backend == "s3" {
-			fixture("touch", "/artifacts/provider-outage")
-			return func() { fixture("rm", "-f", "/artifacts/provider-outage") }
+	// Segments, manifests and recordings are backend objects; count the ones
+	// that appeared after baseline.
+	newFiles := func(baseline []string) (int, error) {
+		current, err := files()
+		if err != nil {
+			return 0, err
 		}
-		fixture("chmod", "000", "/artifacts/objects")
-		return func() { fixture("chmod", "700", "/artifacts/objects") }
+		return len(slices.DeleteFunc(current, func(name string) bool { return slices.Contains(baseline, name) })), nil
 	}
-	base := func(session *breakglassv1alpha1.DebugSession) (string, string) {
+	inject := func() (restore func() error, err error) {
+		if backend == "s3" {
+			_, err = fixture("touch", "/artifacts/provider-outage")
+			return func() error { _, err := fixture("rm", "-f", "/artifacts/provider-outage"); return err }, err
+		}
+		_, err = fixture("chmod", "000", "/artifacts/objects")
+		return func() error { _, err := fixture("chmod", "700", "/artifacts/objects"); return err }, err
+	}
+	paths := func(session *breakglassv1alpha1.DebugSession) (string, string) {
 		return "/api/debugSessions/" + url.PathEscape(session.Name) + "/terminal", "?namespace=" + url.QueryEscape(session.Namespace)
 	}
-	list := func(session *breakglassv1alpha1.DebugSession) (int, []helpers.TerminalRecordingListing) {
-		path, query := base(session)
-		status, body, err := requester.GetRaw(ctx, path+query)
+	list := func(session *breakglassv1alpha1.DebugSession) (int, []helpers.TerminalRecordingListing, error) {
+		path, query := paths(session)
+		status, body, err := get(path + query)
 		if err != nil || status != http.StatusOK {
-			return status, nil
+			return status, nil, err
 		}
 		var listing []helpers.TerminalRecordingListing
-		require.NoError(t, json.Unmarshal(body, &listing))
-		return status, listing
+		return status, listing, json.Unmarshal(body, &listing)
 	}
-	// bigOutput writes well over one 64 KiB segment before the marker.
-	bigOutput := func(tail string) []string {
-		return []string{"sh", "-c", `echo ready; read line; head -c 400000 /dev/zero | tr '\0' a; echo ` + tail + `; sleep 300`}
-	}
-	// stream runs bigOutput once the first output arrived; inject, when set,
-	// runs between "ready" and the bulk output.
-	stream := func(session *breakglassv1alpha1.DebugSession, pod breakglassv1alpha1.AllowedPodRef, cid, tail string, between func()) helpers.TerminalStreamResult {
-		var result helpers.TerminalStreamResult
-		// The first stream of a session can conflict with a concurrent lease update.
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			streamCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-			defer cancel()
-			var err error
-			result, err = requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
+	// stream runs command until it printed marker, calls between, then types
+	// "go" and keeps stdin open until the stream ends. Only a lease conflict on
+	// a session's first stream is retried; nothing runs on a refused attempt.
+	stream := func(streamCtx context.Context, session *breakglassv1alpha1.DebugSession, pod breakglassv1alpha1.AllowedPodRef, cid, command, marker string, between func() error) (helpers.TerminalStreamResult, error) {
+		for attempt := 0; ; attempt++ {
+			fresh()
+			result, err := requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
 				Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
-				Command: bigOutput(tail), CorrelationID: cid,
+				Command: []string{"sh", "-c", command}, CorrelationID: cid,
 				Interact: func(output <-chan string, stdin io.Writer) error {
 					var seen strings.Builder
-					deadline := time.After(time.Minute)
-					for !strings.Contains(seen.String(), "ready") {
+					deadline := time.After(2 * time.Minute)
+					for !strings.Contains(seen.String(), marker) {
 						select {
 						case chunk, ok := <-output:
 							if !ok {
-								return fmt.Errorf("stream ended before it was ready: %q", seen.String())
+								return fmt.Errorf("stream ended before %q: %q", marker, seen.String())
 							}
 							seen.WriteString(chunk)
 						case <-deadline:
-							return fmt.Errorf("no ready marker in %q", seen.String())
+							return fmt.Errorf("no %q in %q", marker, seen.String())
 						}
 					}
 					if between != nil {
-						between()
+						if err := between(); err != nil {
+							return err
+						}
 					}
 					if _, err := io.WriteString(stdin, "go\n"); err != nil {
 						return err
 					}
-					// Keep stdin open until the stream ends or is cut.
 					for range output {
 					}
 					return nil
 				},
 			})
-			require.NoError(c, err)
-			require.Equal(c, http.StatusOK, result.StatusCode, result.Body)
-		}, 5*time.Minute, 2*time.Second)
-		return result
+			retry := err == nil && (result.StatusCode == http.StatusConflict || result.StatusCode == http.StatusServiceUnavailable) && attempt < 10
+			if !retry {
+				if err == nil && result.StatusCode != http.StatusOK {
+					err = fmt.Errorf("stream refused with %d: %s", result.StatusCode, result.Body)
+				}
+				return result, err
+			}
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	t.Run("backend failure mid-stream fails closed", func(t *testing.T) {
-		session, pod := recordedSessionFor(t, ctx, s, requester, requesterUser.Groups, s.Cluster, "10m", "1h")
-		var restore func()
-		t.Cleanup(func() {
-			if restore != nil {
-				restore()
-			}
-		})
+		// 30m: its committed prefix is recovered long after this test, so the
+		// next subtest's object counts are not disturbed.
+		session, pod := recordedSessionFor(t, ctx, s, requester, requesterUser.Groups, s.Cluster, "30m", "1h")
+		baseline, err := files()
+		require.NoError(t, err)
+		restore := func() error { return nil }
+		t.Cleanup(func() { assert.NoError(t, restore()) })
 		cid := uuid.NewString()
-		result := stream(session, pod, cid, "after-backend-failure", func() { restore = inject() })
+		var injectedAt time.Time
+		streamCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+		defer cancel()
+		// 200 KB before the gate: segments are committed while the backend works.
+		result, err := stream(streamCtx, session, pod, cid,
+			`head -c 200000 /dev/zero | tr '\0' b; echo; echo flushed; read line; head -c 400000 /dev/zero | tr '\0' a; echo after-backend-failure; sleep 300`,
+			"flushed", func() error {
+				deadline := time.Now().Add(time.Minute)
+				for {
+					n, err := newFiles(baseline)
+					if err != nil {
+						return err
+					}
+					if n >= 2 {
+						break
+					}
+					if time.Now().After(deadline) {
+						return fmt.Errorf("no segment was committed while the backend worked")
+					}
+					time.Sleep(time.Second)
+				}
+				r, err := inject()
+				restore, injectedAt = r, time.Now()
+				return err
+			})
+		require.NoError(t, err)
+		require.False(t, injectedAt.IsZero())
+		require.Less(t, time.Since(injectedAt), time.Minute, "the stream ends at the failed flush, not at the target's exit")
 		require.NotEqual(t, "completed", result.Status, "a stream whose evidence cannot be stored never completes: %+v", result)
 		require.NotContains(t, result.Output, "after-backend-failure", "no bytes pass once they cannot be recorded")
 
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			events, err := helpers.AuditEventsByCorrelation(ctx, cid)
 			require.NoError(c, err)
-			stages := []any{}
+			var stages []any
 			for _, event := range events {
 				if event.Type == "debug_session.terminal_recording_failed" {
 					stages = append(stages, event.Details["stage"])
@@ -170,106 +230,148 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 			require.Contains(c, stages, "flush", "the flush failure is audited: %+v", events)
 		}, time.Minute, 2*time.Second)
 
-		restore()
-		restore = nil
-		// Whatever evidence exists afterwards is incomplete, never a complete recording.
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			status, listing := list(session)
-			require.Equal(c, http.StatusOK, status)
-			for _, entry := range listing {
-				require.NotNil(c, entry.Recording)
-				require.False(c, entry.Recording.Complete, "no complete recording after a mid-stream backend failure")
-			}
-		}, helpers.WaitForStateTimeout, 2*time.Second)
+		require.NoError(t, restore())
+		restore = func() error { return nil }
+		// Publication failed with the backend; the committed prefix waits for
+		// recovery after the stream binding expired, so nothing is listed.
+		status, listing, err := list(session)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status)
+		require.Empty(t, listing, "no recording is published from a stream whose backend failed")
 	})
 
 	t.Run("controller killed mid-stream publishes the committed prefix, retention removes it", func(t *testing.T) {
-		// The first subtest's incomplete evidence stays until its own retention.
-		baseline = files()
-		session, pod := recordedSessionFor(t, ctx, s, requester, requesterUser.Groups, s.Cluster, "3m", "1m")
+		session, pod := recordedSessionFor(t, ctx, s, requester, requesterUser.Groups, s.Cluster, "3m", "3m")
 		require.NotNil(t, session.Status.ExpiresAt)
+		baseline, err := files()
+		require.NoError(t, err)
 
 		cid := uuid.NewString()
-		done := make(chan helpers.TerminalStreamResult, 1)
-		go func() { done <- stream(session, pod, cid, "unreached", nil) }()
-		// The prefix is committed once its segments exist in the backend, so the
-		// kill below cannot race the first flush.
-		require.Eventually(t, func() bool { return len(newFiles()) > 0 }, 2*time.Minute, 2*time.Second, "segments are flushed while the stream runs")
+		type outcome struct {
+			result helpers.TerminalStreamResult
+			err    error
+		}
+		done := make(chan outcome, 1)
+		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		t.Cleanup(cancel)
+		go func() {
+			result, err := stream(streamCtx, session, pod, cid, `echo ready; read line; head -c 400000 /dev/zero | tr '\0' a; echo unreached; sleep 300`, "ready", nil)
+			done <- outcome{result, err}
+		}()
+		// Segment and manifest objects: the prefix is committed before the kill.
+		require.Eventually(t, func() bool { n, err := newFiles(baseline); return err == nil && n >= 2 }, 2*time.Minute, time.Second, "segments are flushed while the stream runs")
 		killControllerPod(t, ctx, ns, requester)
 		select {
-		case result := <-done:
-			require.NotEqual(t, "completed", result.Status, "the killed stream never completes: %+v", result)
-			require.NotContains(t, result.Output, "unreached")
+		case o := <-done:
+			require.NoError(t, o.err)
+			require.NotEqual(t, "completed", o.result.Status, "the killed stream never completes: %+v", o.result)
 		case <-time.After(time.Minute):
+			t.Fatal("the stream did not end when its controller died")
 		}
 
-		// Recovery only publishes after the stream's binding (session) expired.
+		// The stream's handler died: nothing is published before the recovery.
+		status, listing, err := list(session)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status)
+		require.Empty(t, listing, "nothing is published before the stream expired")
+
 		var entry helpers.TerminalRecordingListing
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			status, listing := list(session)
+			status, listing, err := list(session)
+			require.NoError(c, err)
 			require.Equal(c, http.StatusOK, status)
 			require.Len(c, listing, 1)
 			entry = listing[0]
 			require.NotNil(c, entry.Recording)
 			require.NotEmpty(c, entry.SHA256, "the prefix is published")
-		}, time.Until(session.Status.ExpiresAt.Time)+helpers.WaitForStateTimeout, 5*time.Second)
+		}, time.Until(session.Status.ExpiresAt.Time)+recoveryGrace+helpers.WaitForStateTimeout, 5*time.Second)
 		require.False(t, entry.Recording.Complete, "a prefix recovered after a crash is incomplete")
 
-		path, query := base(session)
-		status, replay, err := requester.GetRaw(ctx, path+"/"+url.PathEscape(entry.ArtifactID)+query)
+		path, query := paths(session)
+		status, replay, err := get(path + "/" + url.PathEscape(entry.ArtifactID) + query)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, status, string(replay))
 		digest := sha256.Sum256(replay)
 		require.Equal(t, entry.SHA256, hex.EncodeToString(digest[:]))
 		parsed, err := recording.Parse(bytes.NewReader(replay))
 		require.NoError(t, err, "the recovered prefix has an intact hash chain")
+		require.EqualValues(t, len(parsed.Frames), entry.Recording.Frames)
 		var output strings.Builder
 		for _, frame := range parsed.Frames {
 			if frame.Direction == recording.Output {
 				output.Write(frame.Payload)
 			}
 		}
-		require.Contains(t, output.String(), "aaaa", "committed output is readable")
+		require.Contains(t, output.String(), "ready")
+		require.Contains(t, output.String(), strings.Repeat("a", 64<<10), "committed segments are readable")
+		require.Less(t, strings.Count(output.String(), "a"), 400000, "the uncommitted tail is not in the prefix")
 		require.NotContains(t, output.String(), "unreached")
 
-		// Retention: the recording and every segment/manifest disappear.
+		// The artifact controller audited the recovery; the dead handler did not.
+		events, err := helpers.AuditEvents(ctx)
+		require.NoError(t, err)
+		var recovered int
+		for _, event := range events {
+			if event.Type != "debug_session.terminal_recording_finalized" {
+				continue
+			}
+			require.False(t, event.RequestContext != nil && event.RequestContext.CorrelationID == cid, "the killed handler published nothing")
+			if event.Details["recordingId"] == entry.ArtifactID {
+				require.Equal(t, true, event.Details["recovered"])
+				require.Equal(t, false, event.Details["complete"])
+				require.Equal(t, entry.SHA256, event.Details["sha256"])
+				require.Equal(t, "system", event.Actor.User)
+				recovered++
+			}
+		}
+		require.Equal(t, 1, recovered, "the recovery is audited once")
+		n, err := newFiles(baseline)
+		require.NoError(t, err)
+		require.Equal(t, 1, n, "after publication only the recording object remains; segments and manifests are removed")
+
+		// Retention: the recording object disappears.
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			var artifact breakglassv1alpha1.DebugSessionArtifact
-			list := &breakglassv1alpha1.DebugSessionArtifactList{}
-			require.NoError(c, s.Client.List(ctx, list, client.InNamespace(ns)))
-			for _, item := range list.Items {
+			artifacts := &breakglassv1alpha1.DebugSessionArtifactList{}
+			require.NoError(c, s.Client.List(ctx, artifacts, client.InNamespace(ns)))
+			for _, item := range artifacts.Items {
 				if item.Spec.ArtifactID == entry.ArtifactID {
-					artifact = item
+					require.Contains(c, []breakglassv1alpha1.ArtifactLifecycleState{breakglassv1alpha1.ArtifactStateExpired, breakglassv1alpha1.ArtifactStateDeleted}, item.Status.State, "retention expiry ends the recording")
 				}
 			}
-			require.Contains(c, []breakglassv1alpha1.ArtifactLifecycleState{"", breakglassv1alpha1.ArtifactStateExpired, breakglassv1alpha1.ArtifactStateDeleted}, artifact.Status.State, "retention expiry ends the recording")
-			require.Empty(c, newFiles(), "recording object, segments and manifests are removed")
-		}, 3*time.Minute+helpers.WaitForStateTimeout, 5*time.Second)
+			n, err := newFiles(baseline)
+			require.NoError(c, err)
+			require.Zero(c, n, "the recording object is removed")
+		}, time.Until(session.Status.ExpiresAt.Time.Add(3*time.Minute))+2*helpers.WaitForStateTimeout, 5*time.Second)
 	})
 }
 
-// killControllerPod force-deletes the controller Pod (no graceful shutdown,
-// like a crash or OOM kill) and waits, with bounded polls, until a different
-// Pod is Ready and the API answers through the runner's port-forward again.
+// killControllerPod force-deletes the controller Pod and waits, with bounded
+// polls, until a different Pod is Ready and the API answers through the
+// runner's port-forward again. The kubelet may still send SIGTERM, but the
+// handler's stream ends with the Pod, and the test checks the handler
+// published nothing.
 func killControllerPod(t *testing.T, ctx context.Context, ns string, api *helpers.APIClient) {
 	t.Helper()
-	pods := func() []corev1.Pod {
+	pods := func() ([]corev1.Pod, error) {
 		out, err := exec.CommandContext(ctx, "kubectl", "-n", ns, "get", "pods", "-l", "app=breakglass", "-o", "json").Output()
-		require.NoError(t, err)
+		if err != nil {
+			return nil, err
+		}
 		var podList corev1.PodList
-		require.NoError(t, json.Unmarshal(out, &podList))
-		return podList.Items
+		return podList.Items, json.Unmarshal(out, &podList)
 	}
+	current, err := pods()
+	require.NoError(t, err)
 	old := map[string]bool{}
-	for _, pod := range pods() {
+	for _, pod := range current {
 		old[string(pod.UID)] = true
 	}
 	require.NotEmpty(t, old)
 	out, err := exec.CommandContext(ctx, "kubectl", "-n", ns, "delete", "pod", "-l", "app=breakglass", "--grace-period=0", "--force", "--wait=false").CombinedOutput()
 	require.NoError(t, err, string(out))
 	require.Eventually(t, func() bool {
-		current := pods()
-		if len(current) != 1 || old[string(current[0].UID)] || !current[0].DeletionTimestamp.IsZero() {
+		current, err := pods()
+		if err != nil || len(current) != 1 || old[string(current[0].UID)] || !current[0].DeletionTimestamp.IsZero() {
 			return false
 		}
 		for _, condition := range current[0].Status.Conditions {
