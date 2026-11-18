@@ -151,17 +151,24 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		}
 	})
 
-	// The recording counts framing; half the limit fits, the limit plus one
-	// segment does not.
+	// keepOpen holds stdin open until the stream ends, like a user watching
+	// output: an exec whose TTY input ends at once may end before it ran.
+	keepOpen := func(output <-chan string, _ io.Writer) error {
+		for range output {
+		}
+		return nil
+	}
+	// The recording counts framing; half the limit fits, the limit plus 64 KiB
+	// does not.
 	output := func(n int64, marker string) string {
-		return fmt.Sprintf(`head -c %d /dev/zero | tr '\0' a; echo; echo %s`, n, marker)
+		return fmt.Sprintf(`echo start; head -c %d /dev/zero | tr '\0' a; echo; echo %s`, n, marker)
 	}
 
 	t.Run("recording within the byte limit completes", func(t *testing.T) {
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		result, err := stream(streamCtx, request(targets[0], output(maxBytes/2, "within-limit"), nil))
+		result, err := stream(streamCtx, request(targets[0], output(maxBytes/2, "within-limit"), keepOpen))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
 		require.Contains(t, result.Output, "within-limit")
@@ -173,7 +180,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		started := time.Now()
-		req := request(targets[1], output(maxBytes+64<<10, "over-limit")+"; sleep 600", nil)
+		req := request(targets[1], output(maxBytes+64<<10, "over-limit")+"; sleep 600", keepOpen)
 		req.CorrelationID = uuid.NewString()
 		result, err := stream(streamCtx, req)
 		require.NoError(t, err)
