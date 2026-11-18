@@ -28,7 +28,11 @@ PORT=${E2E_INGRESS_PORT:-8088}
 # The kind provider manifest schedules the controller on nodes labelled
 # ingress-ready=true.
 $KUBECTL label nodes --all ingress-ready=true --overwrite
-$KUBECTL apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/${NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml"
+for attempt in 1 2 3; do
+  $KUBECTL apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/${NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml" && break
+  [[ $attempt -lt 3 ]] || exit 1
+  sleep 10
+done
 # nginx re-arms client_body_timeout (default 60s) while it waits for request
 # body: an idle terminal would be cut. This is controller-wide (no annotation);
 # docs/terminal-recording.md documents it with the component.

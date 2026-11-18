@@ -200,19 +200,26 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 		bg, err := bgclient.New(bgclient.WithServer(ingressURL), bgclient.WithToken(requester.AuthToken))
 		require.NoError(t, err)
 		stdin, stdinWriter := io.Pipe()
+		out := &markerWriter{marker: "start", seen: make(chan struct{})}
 		go func() {
+			// Full duplex: output must flow back while the request body is open.
+			select {
+			case <-out.seen:
+			case <-time.After(time.Minute):
+				_ = stdinWriter.CloseWithError(fmt.Errorf("no output before input ended"))
+				return
+			}
 			// Idle longer than nginx's 60s body/read timeouts: the component and
 			// the documented client-body-timeout keep the session open.
 			time.Sleep(70 * time.Second)
 			_, _ = io.WriteString(stdinWriter, "via-ingress\n")
 			_ = stdinWriter.Close()
 		}()
-		var out bytes.Buffer
 		streamCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
 		result, err := bg.Terminal(streamCtx, bgclient.TerminalRequest{
 			Session: session.Name, Namespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
-			Command: []string{"sh", "-c", `echo start; read line; echo "got:$line"`}, Stdin: stdin, Stdout: &out,
+			Command: []string{"sh", "-c", `echo start; read line; echo "got:$line"`}, Stdin: stdin, Stdout: out,
 		})
 		require.NoError(t, err)
 		require.Contains(t, out.String(), "got:via-ingress")
