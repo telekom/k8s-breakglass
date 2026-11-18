@@ -158,17 +158,37 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		}
 		return nil
 	}
-	// The recording counts framing; half the limit fits, the limit plus 64 KiB
-	// does not.
+	// The recording counts framing. Every recorded write re-checks authority
+	// with live API reads, so a recorded terminal moves a few hundred KiB per
+	// minute in Kind: the volumes stay well below 2 MiB.
 	output := func(n int64, marker string) string {
 		return fmt.Sprintf(`echo start; head -c %d /dev/zero | tr '\0' a; echo; echo %s`, n, marker)
+	}
+	// The command ends only once the client saw its marker, so no buffered
+	// output is lost when the process exits.
+	untilMarker := func(marker string) func(<-chan string, io.Writer) error {
+		return func(output <-chan string, stdin io.Writer) error {
+			var seen strings.Builder
+			for chunk := range output {
+				seen.WriteString(chunk)
+				if strings.Contains(seen.String(), marker) {
+					_, err := io.WriteString(stdin, "done\n")
+					for range output {
+					}
+					return err
+				}
+			}
+			return fmt.Errorf("stream ended before %q", marker)
+		}
 	}
 
 	t.Run("recording within the byte limit completes", func(t *testing.T) {
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		result, err := stream(streamCtx, request(targets[0], output(maxBytes/2, "within-limit"), keepOpen))
+		// More than the opt-in lane's limit when run with the default limit.
+		within := min(maxBytes/2, 512<<10)
+		result, err := stream(streamCtx, request(targets[0], output(within, "within-limit")+"; read x", untilMarker("within-limit")))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
 		require.Contains(t, result.Output, "within-limit")
@@ -176,6 +196,9 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 	})
 
 	t.Run("recording over the byte limit stops the stream", func(t *testing.T) {
+		if maxBytes > 2<<20 {
+			t.Skipf("the default limit (uploadMaxBytes, %d bytes) is too large to fill through a recorded terminal here; the opt-in lane covers the cut", maxBytes)
+		}
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
