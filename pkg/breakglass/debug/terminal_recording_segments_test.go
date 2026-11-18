@@ -235,10 +235,15 @@ func TestSegmentedRecordingFlushFailurePublishesCommittedPrefixAsIncomplete(t *t
 func TestAuditRecoveredTerminalRecording(t *testing.T) {
 	events := NewMockAuditEmitter(true)
 	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), nil, nil, nil).WithAuditService(events)
-	record := backend.Record{Namespace: "hub", SessionName: "session", SessionUID: "session-uid", ArtifactID: "dsa-1"}
-	controller.AuditRecoveredTerminalRecording(context.Background(), record, backend.PublicRecord{SHA256: strings.Repeat("a", 64), Size: 51, Recording: &backend.RecordingMetadata{FormatVersion: 2, Frames: 1, PodName: "pod", Operation: "exec"}})
+	record := backend.Record{Namespace: "hub", SessionName: "session", SessionUID: "session-uid", ArtifactID: "dsa-1", Recording: &backend.RecordingMetadata{FormatVersion: 2, PodName: "pod", Operation: "exec"}}
+	controller.AuditRecoveredTerminalRecording(context.Background(), record, backend.PublicRecord{SHA256: strings.Repeat("a", 64), Size: 51, Recording: &backend.RecordingMetadata{FormatVersion: 2, Frames: 1, PodName: "pod", Operation: "exec"}}, nil)
+	controller.AuditRecoveredTerminalRecording(context.Background(), record, backend.PublicRecord{}, errors.New("backend unavailable: secret detail"))
 	got := events.GetEvents()
-	require.Len(t, got, 1)
+	require.Len(t, got, 2)
+	require.Equal(t, audit.EventDebugSessionTerminalRecordingFailed, got[1].Type)
+	require.Equal(t, "recover", got[1].Details["stage"])
+	require.Equal(t, "pod", got[1].Details["podName"])
+	require.NotContains(t, fmt.Sprint(got[1].Details), "secret detail", "no backend error text in audit")
 	require.Equal(t, audit.EventDebugSessionTerminalRecordingFinalized, got[0].Type)
 	require.Equal(t, "system", got[0].Actor.User)
 	require.Equal(t, "session-uid", got[0].Target.UID)

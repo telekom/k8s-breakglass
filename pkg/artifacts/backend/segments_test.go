@@ -253,3 +253,59 @@ func TestCleanupRemovesUnpublishedSegments(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationRemovesASegmentWhoseManifestFailed(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 6)
+	f.flush(t, 2, 4)
+	// Segment 2 was written, its manifest was not.
+	key, err := f.service.segmentObjectKey(f.record, "segment", 2)
+	require.NoError(t, err)
+	require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, f.frames[4*testFrameSize:]))
+	_, recovered, err := f.service.RecoverAbandonedRecording(ctx, f.repo.record, 0)
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Zero(t, f.objects(t, "segment"), "the uncommitted segment is removed with the committed ones")
+	versions, err := f.store.InventoryKey(ctx, key)
+	require.NoError(t, err)
+	require.Empty(t, versions)
+}
+
+func TestRecoverAbandonedRecordingIgnoresAStaleCopy(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 4)
+	w := f.flush(t, 2, 4)
+	stale := f.repo.record
+	meta := *f.record.Recording
+	meta.FinishedAt, meta.Complete = time.Unix(60, 0), true
+	_, err := w.Finalize(ctx, meta) // the stream's handler published
+	require.NoError(t, err)
+	_, recovered, err := f.service.RecoverAbandonedRecording(ctx, stale, 0)
+	require.NoError(t, err)
+	require.False(t, recovered, "a handler's publication is never reported as a recovery")
+	require.True(t, f.repo.record.Recording.Complete)
+}
+
+func TestRecoverAbandonedRecordingReportsAMissingSegment(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 4)
+	f.flush(t, 2, 4)
+	require.NoError(t, f.service.deleteSegmentObject(ctx, f.record, "segment", 0))
+	_, recovered, err := f.service.RecoverAbandonedRecording(ctx, f.repo.record, 0)
+	require.Error(t, err, "a damaged set is a failure, not 'nothing committed'")
+	require.False(t, recovered)
+	require.Equal(t, StatePending, f.repo.record.State)
+}
+
+func TestSegmentManifestWithoutChainHeadIsRejected(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 2)
+	f.flush(t, 2, 2)
+	key, err := f.service.segmentObjectKey(f.record, "manifest", 1)
+	require.NoError(t, err)
+	require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, []byte(`{"version":1,"seq":1,"segments":1,"size":102,"chainHead":""}`)))
+	_, err = f.service.VerifyRecordingSegments(ctx, f.record)
+	require.ErrorIs(t, err, ErrConflict)
+	_, _, err = f.service.RecoverAbandonedRecording(ctx, f.repo.record, 0)
+	require.ErrorIs(t, err, ErrConflict)
+}

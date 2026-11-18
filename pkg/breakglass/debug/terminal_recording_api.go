@@ -500,21 +500,40 @@ func (c *DebugSessionAPIController) emitTerminalRecordingAudit(ctx *gin.Context,
 
 // AuditRecoveredTerminalRecording emits the finalized event for a recording
 // that the artifact controller published from incremental-flush segments after
-// the stream's controller died. No request exists, so the actor is the system.
-func (c *DebugSessionAPIController) AuditRecoveredTerminalRecording(ctx context.Context, record backend.Record, published backend.PublicRecord) {
+// the stream's controller died, or, when recoverErr is set, a failed event
+// with stage "recover" (no error text). No request exists, so the actor is the
+// system.
+func (c *DebugSessionAPIController) AuditRecoveredTerminalRecording(ctx context.Context, record backend.Record, published backend.PublicRecord, recoverErr error) {
 	emitter, ok := c.auditService.(syncAuditEmitter)
 	if c.auditService == nil || !ok || !c.auditService.IsEnabled() {
-		c.log.Warnw("Recovered terminal recording was not audited: audit is not available", "session", record.SessionName, "recordingId", record.ArtifactID)
+		c.log.Warnw("Terminal recording recovery was not audited: audit is not available", "session", record.SessionName, "recordingId", record.ArtifactID)
 		return
 	}
-	details := map[string]interface{}{"recordingId": record.ArtifactID, "recovered": true, "complete": false, "sha256": published.SHA256, "bytes": published.Size}
-	if published.Recording != nil {
-		details["frames"] = published.Recording.Frames
-		details["podNamespace"], details["podName"], details["podUID"] = published.Recording.PodNamespace, published.Recording.PodName, published.Recording.PodUID
-		details["operation"], details["formatVersion"] = published.Recording.Operation, published.Recording.FormatVersion
+	details := map[string]interface{}{"recordingId": record.ArtifactID, "recovered": true, "complete": false, "leaseUID": record.ConnectionLeaseUID}
+	if !record.ExpiresAt.IsZero() {
+		details["retentionExpiresAt"] = record.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	metadata := record.Recording
+	eventType := audit.EventDebugSessionTerminalRecordingFailed
+	if recoverErr == nil {
+		eventType = audit.EventDebugSessionTerminalRecordingFinalized
+		details["sha256"], details["bytes"] = published.SHA256, published.Size
+		if published.Recording != nil {
+			metadata = published.Recording
+			details["frames"] = published.Recording.Frames
+		}
+	} else {
+		details["stage"] = "recover"
+	}
+	if metadata != nil {
+		details["podNamespace"], details["podName"], details["podUID"] = metadata.PodNamespace, metadata.PodName, metadata.PodUID
+		details["container"], details["operation"], details["generation"] = metadata.ContainerName, metadata.Operation, metadata.Generation
+		if metadata.FormatVersion > 0 {
+			details["formatVersion"] = metadata.FormatVersion
+		}
 	}
 	event := &audit.Event{
-		Type:           audit.EventDebugSessionTerminalRecordingFinalized,
+		Type:           eventType,
 		Timestamp:      time.Now(),
 		Actor:          audit.Actor{User: "system"},
 		Target:         audit.Target{UID: record.SessionUID, Kind: "DebugSession", Name: record.SessionName, Namespace: record.Namespace},

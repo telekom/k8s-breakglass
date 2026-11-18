@@ -247,7 +247,10 @@ the default behavior) to persist the recording while it runs:
   committed prefix as an incomplete recording (`complete: false`) one minute
   after the stream's binding expired, so a handler that is still finishing is
   never overtaken. It audits `debug_session.terminal_recording_finalized` with
-  `recovered: true` and actor `system`. Up to one segment of output delivered
+  `recovered: true` and actor `system`; if the committed segments cannot be
+  published (damaged or missing), it audits `terminal_recording_failed` with
+  `stage: recover` once and keeps retrying until retention expiry. As with the
+  stream's own events, an undelivered audit event is logged, not retried. Up to one segment of output delivered
   before the crash is not in that prefix. Until then the segments and manifests
   stay in the backend; segments of recordings that are never published are
   removed with the reservation at retention expiry (a retention shorter than
