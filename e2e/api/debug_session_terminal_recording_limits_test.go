@@ -13,11 +13,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -37,8 +39,18 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 	ensureAuditPipeline(t, ctx, s)
 	requesterUser := helpers.TestUsers.SecurityRequester
 	requester := s.TC.ClientForUser(requesterUser)
-	session, pod := recordedSession(t, ctx, s, requester, requesterUser.Groups, s.Cluster)
-	request := func(command string, interact func(<-chan string, io.Writer) error) helpers.TerminalStreamRequest {
+	// A recorded stream holds its session's connection lease exclusively, so
+	// concurrent streams need one session (and target Pod) each.
+	type target struct {
+		session *breakglassv1alpha1.DebugSession
+		pod     breakglassv1alpha1.AllowedPodRef
+	}
+	targets := make([]target, maxStreams)
+	for i := range targets {
+		targets[i].session, targets[i].pod = recordedSession(t, ctx, s, requester, requesterUser.Groups, s.Cluster)
+	}
+	request := func(on target, command string, interact func(<-chan string, io.Writer) error) helpers.TerminalStreamRequest {
+		session, pod := on.session, on.pod
 		return helpers.TerminalStreamRequest{
 			Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 			Command: []string{"sh", "-c", command}, Interact: interact,
@@ -51,9 +63,25 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		}
 	}
 
+	// stream retries only the refusal of a session's first stream while its
+	// credential generation is published (503); nothing ran then.
+	stream := func(streamCtx context.Context, req helpers.TerminalStreamRequest) (helpers.TerminalStreamResult, error) {
+		for attempt := 0; ; attempt++ {
+			result, err := requester.StreamRecordedTerminal(streamCtx, req)
+			if err != nil || result.StatusCode != http.StatusServiceUnavailable || attempt >= 10 {
+				return result, err
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+
 	t.Run("concurrent stream limit", func(t *testing.T) {
 		refresh()
 		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+		// A failing assertion must not leave streams holding their leases.
+		t.Cleanup(releaseAll)
 		type held struct {
 			result helpers.TerminalStreamResult
 			err    error
@@ -61,10 +89,11 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		results := make(chan held, maxStreams)
 		for i := 0; i < maxStreams; i++ {
 			ready := make(chan struct{})
+			on := targets[i]
 			go func() {
 				streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				defer cancel()
-				result, err := requester.StreamRecordedTerminal(streamCtx, request(`echo held; read line; echo released`, func(output <-chan string, stdin io.Writer) error {
+				result, err := stream(streamCtx, request(on, `echo held; read line; echo released`, func(output <-chan string, stdin io.Writer) error {
 					var seen strings.Builder
 					for !strings.Contains(seen.String(), "held") {
 						chunk, ok := <-output
@@ -96,12 +125,12 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 
 		extraCtx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
-		extra, err := requester.StreamRecordedTerminal(extraCtx, request(`echo over-limit`, nil))
+		extra, err := requester.StreamRecordedTerminal(extraCtx, request(targets[0], `echo over-limit`, nil))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusTooManyRequests, extra.StatusCode, "stream %d exceeds the limit of %d: %s", maxStreams+1, maxStreams, extra.Body)
 		require.NotContains(t, extra.Output, "over-limit")
 
-		close(release)
+		releaseAll()
 		for i := 0; i < maxStreams; i++ {
 			select {
 			case r := <-results:
@@ -125,7 +154,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		result, err := requester.StreamRecordedTerminal(streamCtx, request(output(maxBytes/2, "within-limit"), nil))
+		result, err := stream(streamCtx, request(targets[0], output(maxBytes/2, "within-limit"), nil))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
 		require.Contains(t, result.Output, "within-limit")
@@ -137,7 +166,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		started := time.Now()
-		result, err := requester.StreamRecordedTerminal(streamCtx, request(output(maxBytes+64<<10, "over-limit")+"; sleep 600", nil))
+		result, err := stream(streamCtx, request(targets[1], output(maxBytes+64<<10, "over-limit")+"; sleep 600", nil))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
 		require.NotContains(t, result.Output, "over-limit", "no unrecorded output passes the limit")
