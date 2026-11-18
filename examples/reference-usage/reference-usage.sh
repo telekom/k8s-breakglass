@@ -330,7 +330,7 @@ install_stack() {
 
   log "Installing public auth-operator chart ${AUTH_OPERATOR_VERSION}"
   helm upgrade --install auth-operator "${AUTH_OPERATOR_CHART}" \
-    --version "${AUTH_OPERATOR_VERSION}" --namespace auth-operator-system \
+    --version "${AUTH_OPERATOR_VERSION#v}" --namespace auth-operator-system \
     --create-namespace --wait --timeout 5m
 
   if kubectl get namespace "${DEBUG_NAMESPACE}" >/dev/null 2>&1; then
