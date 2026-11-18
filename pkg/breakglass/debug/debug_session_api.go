@@ -86,6 +86,7 @@ type DebugSessionAPIController struct {
 	recordingArtifacts      *backend.Service
 	recordingMaxBytes       int64
 	recordingConnections    TerminalRecordingConnectionProvider
+	recordingRotationGrace  time.Duration
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
 }

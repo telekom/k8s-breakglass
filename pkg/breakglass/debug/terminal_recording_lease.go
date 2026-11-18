@@ -91,12 +91,19 @@ const (
 	terminalStreamPrevExpiryAnnotation      = "breakglass.telekom.com/terminal-stream-previous-expires-at"
 )
 
+// parseGeneration returns 0, never a valid generation, for a malformed value.
+func parseGeneration(v string) int64 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 type terminalRecordingLeaseProvider struct {
 	service     *ConnectionLeaseService
 	credentials TerminalRecordingCredentialSource
 }
-
-func mustParseInt(v string) int64 { n, _ := strconv.ParseInt(v, 10, 64); return n }
 
 func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
 	if p.service == nil {
@@ -116,8 +123,9 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		// Only the unchanged object created by this call may be retired. A
-		// concurrent publisher/acquirer changes resourceVersion and is preserved.
+		// Only the object created by this call, unchanged since this call's own
+		// last write, may be retired. A concurrent publisher/acquirer changes
+		// resourceVersion and is preserved.
 		uid, rv := ref.UID, ref.ResourceVersion
 		err := p.service.client.Delete(cleanupCtx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv})
 		if apierrors.IsNotFound(err) {
@@ -134,7 +142,7 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		return failed(fmt.Errorf("read terminal recording generation: %w", err))
 	}
 	if p.credentials != nil {
-		if lease, err = p.ensureCredentialGeneration(ctx, ref, lease, binding); err != nil {
+		if lease, err = p.ensureCredentialGeneration(ctx, &ref, lease, binding); err != nil {
 			return failed(err)
 		}
 	}
@@ -145,10 +153,13 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 	if err := p.service.Validate(ctx, ref, generation); err != nil {
 		return failed(err)
 	}
-	// The previous slot only matters while its generation is in grace; a stale
-	// one is dropped so it cannot be mistaken for a live claim.
-	delete(lease.Annotations, terminalStreamPrevClaimAnnotation)
-	delete(lease.Annotations, terminalStreamPrevExpiryAnnotation)
+	// The previous slot only matters while the previous generation is in
+	// grace. A draining claim must survive acquisitions that do not replace it
+	// (e.g. after the new-generation stream closed); a stale one is dropped.
+	if previous, err := strconv.ParseInt(lease.Annotations[connectionLeasePreviousGenerationAnnotation], 10, 64); err != nil || !leaseGenerationValid(lease, previous, time.Now()) {
+		delete(lease.Annotations, terminalStreamPrevClaimAnnotation)
+		delete(lease.Annotations, terminalStreamPrevExpiryAnnotation)
+	}
 	if claim := lease.Annotations[terminalStreamClaimAnnotation]; claim != "" {
 		expires, err := time.Parse(time.RFC3339Nano, lease.Annotations[terminalStreamExpiryAnnotation])
 		active := err != nil || time.Now().Before(expires)
@@ -157,7 +168,7 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		if active && !(retiring && p.service.rotationGrace > 0) {
 			return failed(fmt.Errorf("terminal target already has an active stream claim"))
 		}
-		if active && err == nil && leaseGenerationValid(lease, mustParseInt(claimGen), time.Now()) {
+		if active && err == nil && retiring && leaseGenerationValid(lease, parseGeneration(claimGen), time.Now()) {
 			lease.Annotations[terminalStreamPrevClaimAnnotation] = claim
 			lease.Annotations[terminalStreamPrevExpiryAnnotation] = lease.Annotations[terminalStreamExpiryAnnotation]
 		}
@@ -207,7 +218,9 @@ func generationPublishError(stage string, err error) error {
 // ready or the target credential Secret changed since the last publication.
 // Publication uses the lease's staged/ready compare-and-swap, so concurrent
 // replicas cannot both publish; the loser fails closed and the client retries.
-func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.Context, ref ConnectionLeaseRef, lease *coordinationv1.Lease, binding TerminalRecordingConnectionBinding) (*coordinationv1.Lease, error) {
+// ref.ResourceVersion tracks this call's own writes so cleanup of a newly
+// created lease still recognises it.
+func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.Context, ref *ConnectionLeaseRef, lease *coordinationv1.Lease, binding TerminalRecordingConnectionBinding) (*coordinationv1.Lease, error) {
 	want, err := p.credentials(ctx, binding)
 	if err != nil || want.UID == "" || want.ResourceVersion == "" {
 		if err == nil {
@@ -222,11 +235,12 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 	if current >= 1 && lease.Annotations[connectionLeaseSecretUIDAnnotation] == string(want.UID) && lease.Annotations[connectionLeaseSecretVersionAnnotation] == want.ResourceVersion {
 		return lease, nil
 	}
-	staged, err := p.service.StageGeneration(ctx, ref, current+1)
+	staged, err := p.service.StageGeneration(ctx, *ref, current+1)
 	if err != nil {
 		return nil, generationPublishError("stage", err)
 	}
-	if _, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
+	ref.ResourceVersion = staged.Lease.ResourceVersion
+	published, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
 		// The proof is re-read after staging so a rotation in between is never published.
 		got, err := p.credentials(readyCtx, binding)
 		if err != nil {
@@ -236,14 +250,16 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 			return ConnectionCredential{}, errCredentialChangedDuringPublication
 		}
 		return got, nil
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, generationPublishError("publish", err)
 	}
-	published := &coordinationv1.Lease{}
-	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, published); err != nil {
+	ref.ResourceVersion = published.Lease.ResourceVersion
+	live := &coordinationv1.Lease{}
+	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, live); err != nil {
 		return nil, fmt.Errorf("read published terminal recording generation: %w", err)
 	}
-	return published, nil
+	return live, nil
 }
 
 type terminalRecordingLeaseConnection struct {
@@ -271,15 +287,19 @@ func (c *terminalRecordingLeaseConnection) Validate(ctx context.Context) error {
 	if err := ValidateConnectionLease(lease, c.ref, now); err != nil {
 		return err
 	}
+	// Without a grace on this replica only the current generation and claim
+	// count, even if a grace replica left previous-generation annotations.
+	grace := c.service.rotationGrace > 0
 	expiryKey := terminalStreamExpiryAnnotation
 	if lease.Annotations[terminalStreamClaimAnnotation] != c.claim {
 		expiryKey = terminalStreamPrevExpiryAnnotation
-		if lease.Annotations[terminalStreamPrevClaimAnnotation] != c.claim {
+		if !grace || lease.Annotations[terminalStreamPrevClaimAnnotation] != c.claim {
 			return fmt.Errorf("terminal stream claim expired or changed")
 		}
 	}
+	generationValid := lease.Annotations[connectionLeaseGenerationAnnotation] == strconv.FormatInt(c.generation, 10) || grace && leaseGenerationValid(lease, c.generation, now)
 	expires, err := time.Parse(time.RFC3339Nano, lease.Annotations[expiryKey])
-	if c.closed.Load() || err != nil || !now.Before(expires) || !now.Before(c.binding.ExpiresAt) || !leaseGenerationValid(lease, c.generation, now) {
+	if c.closed.Load() || err != nil || !now.Before(expires) || !now.Before(c.binding.ExpiresAt) || !generationValid {
 		return fmt.Errorf("terminal stream claim expired or changed")
 	}
 	return nil

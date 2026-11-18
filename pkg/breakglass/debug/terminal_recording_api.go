@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,7 +84,33 @@ func (c *DebugSessionAPIController) WithTerminalRecordingArtifacts(service *back
 
 func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider TerminalRecordingConnectionProvider) *DebugSessionAPIController {
 	c.recordingConnections = provider
+	// The lease service's grace is the single source of truth for how long a
+	// running stream may outlive a credential rotation.
+	c.recordingRotationGrace = 0
+	if leases, ok := provider.(terminalRecordingLeaseProvider); ok && leases.service != nil {
+		c.recordingRotationGrace = leases.service.rotationGrace
+	}
 	return c
+}
+
+// credentialRotationFence ends a running stream on a privileged credential
+// input change, as before, unless a blue/green grace is configured: then the
+// change is tolerated for grace after it was first observed. Every other error
+// still ends the stream at once.
+type credentialRotationFence struct {
+	grace   time.Duration
+	changed atomic.Int64 // unix nanos of the first observed change
+}
+
+func (f *credentialRotationFence) check(err error, now time.Time) error {
+	if err == nil || f.grace <= 0 || !errors.Is(err, cluster.ErrPrivilegedInputChanged) {
+		return err
+	}
+	f.changed.CompareAndSwap(0, now.UnixNano())
+	if now.Sub(time.Unix(0, f.changed.Load())) >= f.grace {
+		return err
+	}
+	return nil
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
@@ -180,8 +208,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 				err = clientErr
 			} else {
 				pod, err = kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
+				rotation := &credentialRotationFence{grace: c.recordingRotationGrace}
 				validateTarget = func(checkCtx context.Context) error {
-					if checkErr := c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured); checkErr != nil {
+					if checkErr := rotation.check(c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured), time.Now()); checkErr != nil {
 						return checkErr
 					}
 					current, checkErr := kubeClient.CoreV1().Pods(namespace).Get(checkCtx, podName, metav1.GetOptions{})

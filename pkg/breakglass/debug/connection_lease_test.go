@@ -402,9 +402,8 @@ func TestConnectionLeaseRevokeCannotDeleteRecreatedLease(t *testing.T) {
 	ctx, base, _, service, proof, ref := successorFixture(t)
 	require.NoError(t, base.Delete(ctx, getLease(t, base, ref)))
 	base.(*leaseUIDClient).nonce++
-	succ := proof
-	succ.SessionUID = "session-b"
-	ref2, err := service.Acquire(ctx, succ)
+	// Same holder, epoch and name: only the UID tells the successor apart.
+	ref2, err := service.Acquire(ctx, proof)
 	require.NoError(t, err)
 	require.NotEqual(t, ref.UID, ref2.UID)
 	require.ErrorIs(t, service.Revoke(ctx, ref), ErrConnectionLeaseSuperseded)
@@ -420,7 +419,9 @@ func sessionWithLease(ref ConnectionLeaseRef) *breakglassv1alpha1.DebugSession {
 // A different session's lease is never touched by session cleanup, whether
 // recorded (stale status) or swept as "unrecorded".
 func TestConnectionLeaseSessionCleanupPreservesSuccessorSession(t *testing.T) {
-	ctx, base, _, service, _, ref := successorFixture(t)
+	ctx, base, _, service, proof, _ := successorFixture(t)
+	ref, err := service.acquire(ctx, proof, true) // session-scoped: the sweeper's domain
+	require.NoError(t, err)
 	l := getLease(t, base, ref)
 	l.Spec.HolderIdentity = connPtr("session-b")
 	l.Annotations[connectionLeaseSessionAnnotation] = "session-b"
@@ -452,24 +453,20 @@ func TestConnectionLeaseUnrecordedSweepCannotDeleteSuccessorRacingBeforeDelete(t
 // because the same session re-acquired (epoch bump): the stale ref is skipped
 // and the sweeper still removes the session's own live lease.
 func TestConnectionLeaseRevokeSessionStaleRecordedRefDoesNotWedgeCleanup(t *testing.T) {
-	ctx, base, _, service, proof, ref := successorFixture(t)
-	l := getLease(t, base, ref)
+	ctx, base, _, service, proof, _ := successorFixture(t)
 	old := metav1.NewMicroTime(time.Now().Add(-time.Hour))
-	l.Spec.RenewTime = &old
-	require.NoError(t, base.Update(ctx, l))
-	proof.SessionUID = "session-a"
 	// session-scoped acquire so the sweeper (session prefix) applies.
 	scoped, err := service.acquire(ctx, proof, true)
 	require.NoError(t, err)
-	l = getLease(t, base, scoped)
+	l := getLease(t, base, scoped)
 	l.Spec.RenewTime = &old
 	require.NoError(t, base.Update(ctx, l))
 	again, err := service.acquire(ctx, proof, true)
 	require.NoError(t, err)
 	require.Equal(t, scoped.Epoch+1, again.Epoch)
 	ds := sessionWithLease(scoped) // status still records the old epoch
+	// RevokeSession alone: the terminal cleanup paths do not call the sweeper.
 	require.NoError(t, service.RevokeSession(ctx, ds))
-	require.NoError(t, service.RevokeUnrecordedSessionLeases(ctx, ds))
 	err = base.Get(ctx, types.NamespacedName{Namespace: again.Namespace, Name: again.Name}, &coordinationv1.Lease{})
 	require.True(t, apierrors.IsNotFound(err), "own live lease must be removed: %v", err)
 }

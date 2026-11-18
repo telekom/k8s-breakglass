@@ -452,6 +452,11 @@ func (p *ClientProvider) liveReaderOrClient() ctrlclient.Reader {
 	return p.k8s
 }
 
+// ErrPrivilegedInputChanged reports that a credential or trust input of a
+// privileged client (Secret, IdentityProvider) changed since its snapshot, for
+// example a credential rotation.
+var ErrPrivilegedInputChanged = errors.New("privileged input changed")
+
 func (p *ClientProvider) validatePrivilegedInputVersions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, expected map[string]string) error {
 	if len(expected) == 0 {
 		return nil
@@ -462,7 +467,7 @@ func (p *ClientProvider) validatePrivilegedInputVersions(ctx context.Context, cc
 	}
 	for identity, version := range expected {
 		if actual[identity] != version {
-			return fmt.Errorf("privileged input %s changed", identity)
+			return fmt.Errorf("%w: %s", ErrPrivilegedInputChanged, identity)
 		}
 	}
 	return nil
