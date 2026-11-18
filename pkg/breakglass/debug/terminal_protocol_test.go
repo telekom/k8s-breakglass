@@ -165,6 +165,7 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Equal(t, "prompttyped", string(output))
 	require.Equal(t, "completed", response.Trailer.Get("X-Breakglass-Recording-Status"))
+	require.Equal(t, response.Trailer.Get("X-Breakglass-Recording-ID"), response.Header.Get(TerminalRecordingPendingIDHeader), "the recording is named in a header proxies keep")
 
 	replay, err := http.Get(server.URL + "/api/v1/debugSessions/session/terminal/" + response.Trailer.Get("X-Breakglass-Recording-ID") + "?namespace=hub")
 	require.NoError(t, err)

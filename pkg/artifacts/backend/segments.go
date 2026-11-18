@@ -25,6 +25,10 @@ import (
 // manifest is the commit point: after a controller crash everything it covers
 // is readable and verifiable; bytes after it are unproven and ignored.
 
+// errNoSegments reports that a reservation has no committed segments (the
+// feature was off, or the stream ended before its first flush).
+var errNoSegments = fmt.Errorf("%w: no committed recording segments", storage.ErrNotFound)
+
 const (
 	// MaxRecordingSegments bounds object count per recording.
 	MaxRecordingSegments = 4096
@@ -129,7 +133,7 @@ func (w *SegmentWriter) Append(ctx context.Context, data []byte, chainHead [32]b
 // Finalize publishes what this writer committed, without rediscovering it.
 func (w *SegmentWriter) Finalize(ctx context.Context, metadata RecordingMetadata) (PublicRecord, error) {
 	if w.manifest.Segments == 0 {
-		return PublicRecord{}, storage.ErrNotFound
+		return PublicRecord{}, errNoSegments
 	}
 	return w.service.finalizeFromManifest(ctx, w.record, w.manifest, metadata)
 }
@@ -207,7 +211,7 @@ func (service *Service) latestSegmentManifest(ctx context.Context, record Record
 		return SegmentManifest{}, err
 	}
 	if count == 0 {
-		return SegmentManifest{}, storage.ErrNotFound
+		return SegmentManifest{}, errNoSegments
 	}
 	seq := count - 1
 	key, err := service.segmentObjectKey(record, "manifest", seq)
@@ -224,7 +228,7 @@ func (service *Service) latestSegmentManifest(ctx context.Context, record Record
 		return SegmentManifest{}, readErr
 	}
 	var manifest SegmentManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Version != 1 || manifest.Seq != seq || manifest.Segments < 1 || manifest.Segments > MaxRecordingSegments || manifest.Size < 1 {
+	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Version != 1 || manifest.Seq != seq || manifest.Segments < 1 || manifest.Segments > MaxRecordingSegments || manifest.Size < 1 || !digestValid(manifest.ChainHead) {
 		return SegmentManifest{}, fmt.Errorf("%w: invalid recording manifest %d", ErrConflict, seq)
 	}
 	return manifest, nil
@@ -336,10 +340,19 @@ func (service *Service) RecoverAbandonedRecording(ctx context.Context, record Re
 	if record.Recipe != TerminalRecordingRecipe || record.State != StatePending || record.Recording == nil || service.now().Before(record.Recording.StreamExpiresAt.Add(grace)) {
 		return PublicRecord{}, false, nil
 	}
+	// The caller's copy may be stale: only a still pending recording is
+	// recovered here, so a handler's own publication is never reported as one.
+	current, err := service.Recording(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+	if err != nil {
+		return PublicRecord{}, false, err
+	}
+	if current.ArtifactUID != record.ArtifactUID || current.State != StatePending {
+		return PublicRecord{}, false, nil
+	}
 	recovered := *record.Recording
 	recovered.Complete, recovered.FinishedAt = false, recovered.StreamExpiresAt
 	published, err := service.FinalizeRecordingFromSegments(ctx, record, recovered)
-	if errors.Is(err, storage.ErrNotFound) {
+	if errors.Is(err, errNoSegments) {
 		return PublicRecord{}, false, nil
 	}
 	if err != nil {
@@ -353,6 +366,9 @@ func (service *Service) RecoverAbandonedRecording(ctx context.Context, record Re
 // anything is published. Segments are removed afterwards (best effort;
 // Cleanup removes leftovers at retention expiry).
 func (service *Service) finalizeFromManifest(ctx context.Context, reservation Record, manifest SegmentManifest, metadata RecordingMetadata) (PublicRecord, error) {
+	if !digestValid(manifest.ChainHead) {
+		return PublicRecord{}, fmt.Errorf("%w: recording manifest has no chain head", ErrConflict)
+	}
 	if manifest.Size > reservation.MaxBytes {
 		return PublicRecord{}, fmt.Errorf("%w: recording exceeds its size limit", ErrInvalid)
 	}
@@ -362,8 +378,9 @@ func (service *Service) finalizeFromManifest(ctx context.Context, reservation Re
 	if err != nil {
 		return PublicRecord{}, err
 	}
-	// Known counts: no rediscovery on the stream's finalize path.
-	_ = service.deleteSegmentObjects(ctx, reservation, "segment", manifest.Segments)
+	// Known counts: no rediscovery on the stream's finalize path. One more
+	// segment may exist: written, but its manifest failed.
+	_ = service.deleteSegmentObjects(ctx, reservation, "segment", manifest.Segments+1)
 	_ = service.deleteSegmentObjects(ctx, reservation, "manifest", manifest.Seq+1)
 	return published, nil
 }

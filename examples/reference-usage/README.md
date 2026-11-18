@@ -18,7 +18,7 @@ restricted lifecycle and real catalogue DebugSessions:
 - a second request is denied by an approver;
 - a catalogue DebugSession is requested and approved by the distinct approver;
 - a restricted catalogue Job runs the packaged workload-debug command;
-- audit recording contains request, start, deployment, termination, and cleanup events;
+- audit recording contains the request, approval, start, and termination events (workload removal is asserted by the zero-residue check; resource deployed/cleanup events exist only for auxiliary resources);
 - the session is terminated and its workload/policy resources are removed.
 
 The elevated node-repair profile is intentionally unavailable in this example.
@@ -51,6 +51,37 @@ fixtures. Standalone consumers can set `REFERENCE_SETUP_SCRIPT` (or provide
 `REFERENCE_TOKEN_HELPER` for equivalent upstream fixtures. The executable does
 not require a checked-out chart or audit YAML. It does not accept credentials
 or print tokens; identity values are supplied through the selected fixture.
+
+## CI lanes and evidence
+
+[`reference-usage.yml`](../../.github/workflows/reference-usage.yml) runs the
+**source** lane on every pull request and push to `main` (check
+`Reference usage (source)`; it is part of `all-checks-green` and
+`hack/release-required-checks.json`). The **published** lane runs after the
+`Release` workflow succeeds for a tag, weekly, and on demand. For tag and
+scheduled runs it resolves the released `ghcr.io/telekom/k8s-breakglass:<tag>`
+image and the immutable digest of the `debug-session-catalogue` chart whose
+`appVersion` matches the tag, and fails on any skipped or failed row.
+
+Set `REFERENCE_EVIDENCE_DIR` to export `junit.xml` and `reference-usage.json`
+(rows plus the image and chart digests used); the workflow uploads them as the
+`reference-usage-<mode>` artifact. Rows: `prepare-image`, `verify-supply-chain`
+(published), `install-stack`, `configure-reference`,
+`request-approve-use-deny-terminate`, `debug-session`, `zero-residue`.
+
+Making the check a required branch-protection check is a repository-owner
+decision.
+
+### Terminal recording is not part of this lane
+
+`bgctl debug terminal` / `bgctl debug recordings` need a template with
+`audit.enableTerminalRecording`, a configured diagnostic artifact backend and
+controller, and a ClusterConfig with a published credential generation
+([terminal recording](../../docs/terminal-recording.md)). The consumer-defined
+`workload-diagnostics` catalogue profile used here has none of these, and
+adding them would couple the reference lane to controller internals. The
+recorded-terminal path is exercised in kind by
+`e2e/api/debug_session_terminal_recording_test.go` instead.
 
 ## Catalogue release contract
 

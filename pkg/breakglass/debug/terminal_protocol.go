@@ -22,6 +22,10 @@ const (
 	// type (1 byte) | length (4 bytes, big endian) | payload. Type 0 carries
 	// stdin bytes, type 1 a JSON {"width":W,"height":H} terminal size.
 	TerminalProtocolFramed = "framed.v1"
+	// TerminalRecordingPendingIDHeader is a response header (not a trailer)
+	// naming the recording up front, so a client behind a proxy that drops
+	// trailers can look the outcome up in the recording listing.
+	TerminalRecordingPendingIDHeader = "X-Breakglass-Recording-Pending-ID"
 
 	TerminalFrameStdin  byte = 0
 	TerminalFrameResize byte = 1

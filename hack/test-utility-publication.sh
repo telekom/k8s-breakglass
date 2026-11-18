@@ -192,6 +192,19 @@ SMOKE_FAILURE=true DOCKER_RUN_LOG="${smoke_run_log}" expect_fail "${verify_env[@
   ghcr.io/telekom/k8s-breakglass/utils/test \
   sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
   '["--help"]' exact-smoke-ok
+# Mutable (tag-only) and malformed references are not subjects: the verifier
+# must refuse them before any signature or attestation lookup is trusted.
+# Assert the digest guard itself rejected them, not a later stub mismatch.
+expect_fail_with() { # expect_fail_with <stderr substring> <command...>
+  local want="$1" err; shift
+  if err="$("$@" 2>&1 >/dev/null)"; then echo "unexpected success: $*" >&2; exit 1; fi
+  grep -qF -- "${want}" <<<"${err}" || { echo "failed for another reason (want '${want}'): ${err}" >&2; exit 1; }
+}
+for mutable_ref in latest rolling v1.2.3 sha256:short eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do
+  rm -f "${inspect_count_file}"
+  expect_fail_with 'invalid index digest' "${verify_env[@]}" "${root}/hack/verify-utility-publication.sh" ghcr.io/telekom/k8s-breakglass/utils/test "${mutable_ref}"
+done
+DOCKER_MODE=exists expect_fail_with 'require-tag IMAGE TAG DIGEST' "${helper}" require-tag ghcr.io/telekom/k8s-breakglass/utils/test rolling latest
 # A competing provenance claim for the same tag/digest fails closed.
 expect_fail env COMPETING_PROVENANCE=true "${verify_env[@]}" "${root}/hack/verify-utility-publication.sh" ghcr.io/telekom/k8s-breakglass/utils/test sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 

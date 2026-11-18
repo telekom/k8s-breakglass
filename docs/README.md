@@ -30,6 +30,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[Logging Reference](./logging-reference.md)** - What every program logs at which level, with fields, personal-data notes and the generated message catalogue
 - **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
+- **[DebugSession acceptance matrix](./debug-session-acceptance-matrix.md)** - Generic safety requirements mapped to the tests that enforce them
 - **[DebugSession authoring guide](./debug-session-authoring.md)** - Generic template, identity, isolation, lifecycle, and utility-mode guidance
 - **[Network-debug runbook](./network-debug-image.md)** - Intent-driven network diagnostics and host/pod capture limits
 - **[Network-debug vs Netshoot](./network-debug-vs-netshoot.md)** - Tool parity matrix, CVE and signing comparison
