@@ -621,85 +621,72 @@ jobs:
     # variable ARTIFACTORY_MIRROR_ENABLED=true to turn it back on.
     if: ${{ vars.ARTIFACTORY_MIRROR_ENABLED == 'true' }}
     needs: [assemble]
-    continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
+    # Best-effort by default; set vars.ARTIFACTORY_MIRROR_REQUIRED=true to make a
+    # mirror failure fail this job. `release` does not depend on it either way.
+    continue-on-error: ${{ vars.ARTIFACTORY_MIRROR_REQUIRED != 'true' }}
     env:
       ARTIFACTORY_CONFIGURED: ${{ secrets.AF_REGISTRY != '' && secrets.AF_REPOSITORY != '' && secrets.AF_USER != '' && secrets.AF_TOKEN != '' }}
     permissions:
       packages: read
-      id-token: write  # Required for cosign keyless signing/copy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
+      - name: Fail when mirror secrets are incomplete
+        if: ${{ env.ARTIFACTORY_CONFIGURED != 'true' }}
+        run: |
+          echo "::error title=Artifactory mirror::ARTIFACTORY_MIRROR_ENABLED is true but AF_REGISTRY/AF_REPOSITORY/AF_USER/AF_TOKEN are not all set."
+          exit 1
       - name: Login to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Install ORAS
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
       - name: Install cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-      - name: Tag and push image to Artifactory OCI
-        if: ${{ env.ARTIFACTORY_CONFIGURED == 'true' }}
+      - name: Mirror and verify image in Artifactory OCI
         env:
           ARTIFACTORY_URL: ${{ secrets.AF_REGISTRY }}
           ARTIFACTORY_REPO: ${{ secrets.AF_REPOSITORY }}
+          AF_USER: ${{ secrets.AF_USER }}
+          AF_TOKEN: ${{ secrets.AF_TOKEN }}
           REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ needs.assemble.outputs.digest }}
         run: |
           set -euo pipefail
-          # docker CLI login using environment secrets
-          echo "Logging in to Artifactory OCI at ${ARTIFACTORY_URL}"
-          echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
+          # Any failure below fails this job. The job is non-blocking for the
+          # release unless vars.ARTIFACTORY_MIRROR_REQUIRED == 'true'
+          # (see continue-on-error above); `release` never needs this job.
+          fail() { echo "::error title=Artifactory mirror::$1"; exit 1; }
 
-          # Diagnose Artifactory repo accessibility
-          REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
-          echo "::add-mask::${REPO_KEY}"
-          echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
-          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
-          if [ "${HTTP_STATUS}" != "200" ]; then
-            echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). Ensure AF_USER/AF_TOKEN are valid and have deploy permissions."
-          fi
+          echo "Logging in to Artifactory OCI"
+          printf '%s' "${AF_TOKEN}" | docker login --username "${AF_USER}" --password-stdin "${ARTIFACTORY_URL}" \
+            || fail "docker login failed. Rotate AF_USER/AF_TOKEN (see docs/release-process.md)."
 
-          IMAGE=${{ env.IMAGE_NAME }}
-          TAG=${{ github.ref_name }}
-          SRC=${REGISTRY}/${IMAGE}:${TAG}
-          DST=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${TAG}
+          # Copy the exact signed manifest by digest, with its OCI referrers
+          # (cosign v3 signature and attestation bundles, SLSA provenance).
+          # `cosign copy` does not copy cosign v3 bundles.
+          SRC="${REGISTRY}/${IMAGE}@${DIGEST}"
+          DST="${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}"
+          echo "Copying ${SRC} and its referrers to the mirror"
+          oras copy -r "${SRC}" "${DST}:${TAG}" \
+            || fail "oras copy failed. Check AF_REPOSITORY and that AF_USER/AF_TOKEN may push to it."
 
-          echo "Copying multi-arch manifest ${SRC} -> ${DST}"
-
-          # Use buildx imagetools to copy the full multi-arch manifest (all platforms)
-          docker buildx imagetools create --tag "${DST}" "${SRC}"
-
-          # Copy cosign signatures and attestations to Artifactory
-          # Cosign artifacts (signatures, SBOM attestations) are stored as OCI referrers
-          # alongside the image in GHCR. docker buildx imagetools does not copy these,
-          # so we use cosign copy to replicate them to the Artifactory mirror.
-          # Use digest-based source reference to ensure we copy artifacts for the exact
-          # signed manifest, not whatever the tag resolves to at copy time.
-          SRC_DIGEST=${REGISTRY}/${IMAGE}@${{ needs.assemble.outputs.digest }}
-          echo "Copying cosign artifacts (signatures + attestations) to Artifactory"
-          # Set explicit registry credentials for cosign — docker login credentials
-          # are not always reused by cosign for the destination registry.
-          export COSIGN_REPOSITORY="${DST}"
-          cosign copy "${SRC_DIGEST}" "${DST}" --only=sig,att || echo "::warning::cosign copy failed — Artifactory image will not be verifiable via cosign"
-
-          # Verify the pushed image is indexed in Artifactory (retry with backoff)
-          CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
-          echo "Checking storage for path: ${CHECK_PATH}"
-          for attempt in 1 2 3; do
-            sleep $((attempt * 2))
-            HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
-            echo "Attempt ${attempt}: HTTP status ${HTTP_STATUS_AFTER}"
-            if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
-              echo "Artifact path appears present in Artifactory."
-              break
-            fi
-          done
-          if [ "${HTTP_STATUS_AFTER}" != "200" ]; then
-            echo "Warning: Artifact path not confirmed after retries (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
-          fi
+          # Prove the mirror serves the signed digest with a verifiable signature
+          # and SBOM attestation from this workflow run's identity.
+          IDENTITY="https://github.com/${GITHUB_WORKFLOW_REF}"
+          ISSUER="https://token.actions.githubusercontent.com"
+          cosign verify "${DST}@${DIGEST}" \
+            --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" >/dev/null \
+            || fail "mirrored image signature does not verify."
+          cosign verify-attestation --type spdxjson "${DST}@${DIGEST}" \
+            --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" >/dev/null \
+            || fail "mirrored SBOM attestation does not verify."
+          echo "Mirrored image and Cosign artifacts verified."
 
   # Generate one SBOM for each packaged chart. Keeping this as a matrix makes
   # the package selected for scanning explicit and prevents one aggregate SBOM
