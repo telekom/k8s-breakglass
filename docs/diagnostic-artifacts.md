@@ -329,3 +329,20 @@ their existing 404, 409, and 410 responses.
 
 The shared production Kubernetes scheme includes coordination/v1 Lease objects,
 which are required before debug-session activation can acquire its durable lease.
+
+## Connection lease coverage
+
+DebugSession connection leases (monotonic epoch plus credential generation) fence these paths today:
+
+| Path | Fence |
+| --- | --- |
+| Session activation, renewal | `AcquireForSession`, `ValidateSession`, `RenewSession` against the live session |
+| kubectl-debug exec/attach/inject requests | lease validated per request |
+| Artifact upload/download | `NewConnectionLeaseFence` validates epoch and expiry per request |
+| Terminal recording streams | generation-bound stream claim, re-validated every 500 ms; blue/green via `artifacts.credentialRotationGrace` |
+| Terminal cleanup | `RevokeSession` plus `RevokeUnrecordedSessionLeases`, UID/resourceVersion-guarded so a successor lease is never deleted |
+
+Controller-internal operations (hotfix, node maintenance, traffic mirror, collector Jobs) use the privileged
+target credential on behalf of the controller, not a user connection, and are deliberately not lease-fenced.
+Known limit: a terminal stream claim left by a crashed controller pod blocks a new stream on the same target
+until the session expires; the lease itself stays valid across rollover.

@@ -379,3 +379,45 @@ func TestConnectionLeaseRotationGraceIsBoundedAndCappedAtExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, deadline.After(binding.ExpiresAt), "grace never outlives the session")
 }
+
+// Controller rollover (pod restart / leader change): all fencing state lives in
+// the Lease, so a fresh service instance must keep the active session's lease
+// valid, fence the dead process's stream claim rather than double-claiming, and
+// still revoke everything at session end, which also fences the old stream.
+func TestTerminalLeaseControllerRolloverWithActiveSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	newController := func() (*ConnectionLeaseService, TerminalRecordingConnectionProvider) {
+		svc := NewConnectionLeaseService(hub).WithNamespace("execution")
+		return svc, NewTerminalRecordingConnectionProvider(svc, credential.source)
+	}
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)}
+
+	_, oldProvider := newController()
+	oldStream, err := oldProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+
+	// New controller process; the old one is gone (its Close is never called).
+	newSvc, newProvider := newController()
+	_, err = newProvider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.ErrorContains(t, err, "active stream claim", "the dead process's claim fences a second stream instead of being double-claimed")
+
+	// The session's lease reference survives the restart.
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(ctx, leases))
+	require.Len(t, leases.Items, 1)
+	l := leases.Items[0]
+	ds := sessionWithLease(ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: "session", TargetUID: "pod", ProfileDigest: strings.Repeat("a", 64), Epoch: 1, ExpiresAt: binding.ExpiresAt})
+	require.NoError(t, newSvc.ValidateSession(ctx, ds), "an active session keeps a valid lease across controller rollover")
+
+	// Session end on the new controller revokes the lease and fences the old stream.
+	require.NoError(t, newSvc.RevokeSession(ctx, ds))
+	require.Error(t, oldStream.Validate(ctx), "revoked lease fences the pre-rollover stream")
+	require.Error(t, newSvc.ValidateSession(ctx, ds))
+	require.NoError(t, hub.List(ctx, leases))
+	require.Empty(t, leases.Items, "zero residual leases")
+}
