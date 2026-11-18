@@ -286,11 +286,15 @@ type Artifacts struct {
 	TerminalRecordingMaxBytes int64 `yaml:"terminalRecordingMaxBytes,omitempty"`
 	// TerminalRecordingMaxConcurrent caps live recording streams per replica.
 	// Zero keeps the default of 2; otherwise 1..32.
-	TerminalRecordingMaxConcurrent int            `yaml:"terminalRecordingMaxConcurrent,omitempty"`
-	TokenSecretName                string         `yaml:"tokenSecretName,omitempty"`
-	TokenSignerKeyID               string         `yaml:"tokenSignerKeyID,omitempty"`
-	S3                             *ArtifactS3    `yaml:"s3,omitempty"`
-	Local                          *ArtifactLocal `yaml:"local,omitempty"`
+	TerminalRecordingMaxConcurrent int `yaml:"terminalRecordingMaxConcurrent,omitempty"`
+	// TerminalRecordingSegmentBytes opts in to incremental terminal recording
+	// flush: frames are persisted as segments of about this size plus a hash
+	// chain manifest while the stream runs. Zero (default) disables it.
+	TerminalRecordingSegmentBytes int64          `yaml:"terminalRecordingSegmentBytes,omitempty"`
+	TokenSecretName               string         `yaml:"tokenSecretName,omitempty"`
+	TokenSignerKeyID              string         `yaml:"tokenSignerKeyID,omitempty"`
+	S3                            *ArtifactS3    `yaml:"s3,omitempty"`
+	Local                         *ArtifactLocal `yaml:"local,omitempty"`
 	// CredentialRotationGrace is how long a retired target-credential
 	// generation keeps serving already-running terminal streams after a
 	// rotation (blue/green), for example "30s". New streams always bind to the

@@ -546,6 +546,12 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 			return err
 		}
 	}
+	if record.Recipe == TerminalRecordingRecipe {
+		// Incremental-flush leftovers (no-op when the feature was never used).
+		if err := service.deleteRecordingSegments(ctx, record); err != nil {
+			return err
+		}
+	}
 	key, err := artifactStorageKey(record)
 	if err != nil {
 		return err

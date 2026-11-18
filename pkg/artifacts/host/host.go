@@ -81,6 +81,29 @@ type Components struct {
 	Close          func() error
 }
 
+// Bounds for config.Artifacts.TerminalRecordingSegmentBytes when enabled.
+const (
+	MinTerminalRecordingSegmentBytes = 64 << 10
+	MaxTerminalRecordingSegmentBytes = 64 << 20
+)
+
+// validateTerminalRecordingSegmentBytes rejects a segment size out of bounds
+// or too small to reach the recording limit (recordingMax) within
+// MaxRecordingSegments.
+func validateTerminalRecordingSegmentBytes(c config.Artifacts, recordingMax int64) error {
+	seg := c.TerminalRecordingSegmentBytes
+	if seg == 0 {
+		return nil
+	}
+	if seg < MinTerminalRecordingSegmentBytes || seg > MaxTerminalRecordingSegmentBytes {
+		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d must be 0 (off) or within %d..%d", seg, MinTerminalRecordingSegmentBytes, MaxTerminalRecordingSegmentBytes)
+	}
+	if seg*backend.MaxRecordingSegments < recordingMax {
+		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d is too small: %d segments must hold the recording limit (%d)", seg, backend.MaxRecordingSegments, recordingMax)
+	}
+	return nil
+}
+
 // MaxTerminalRecordingConcurrent is the upper bound for
 // Artifacts.TerminalRecordingMaxConcurrent; each stream buffers up to one
 // recording in memory.
@@ -114,6 +137,9 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	recordingMax, recordingStreams, err := terminalRecordingLimits(artifactConfig)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateTerminalRecordingSegmentBytes(artifactConfig, recordingMax); err != nil {
 		return nil, err
 	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
@@ -159,7 +185,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()
@@ -167,6 +193,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
 	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: issuer, Log: deps.Log}
+	reconciler.RecordingRecovered = deps.DebugAPI.AuditRecoveredTerminalRecording
 	reconciler.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), artifactConfig.CollectorImagePullSecrets...)
 	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
 	if err != nil {

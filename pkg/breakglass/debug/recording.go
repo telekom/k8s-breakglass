@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"sync"
@@ -57,10 +58,18 @@ const (
 // payload is intentionally opaque to status and audit code; callers should
 // persist it only through an explicitly configured artifact store.
 type TerminalRecording struct {
+	// Bytes is empty for a segmented recorder: the bytes are already in the
+	// artifact store (see NewSegmentedTerminalRecorder).
 	Bytes  []byte
 	SHA256 string
 	Frames int64
+	// Size is the total framed size, flushed or not.
+	Size int64
 }
+
+// SegmentFlusher durably persists one non-empty, frame-aligned segment plus
+// the chain head after it. data is only valid for the duration of the call.
+type SegmentFlusher func(data []byte, chainHead [sha256.Size]byte) error
 
 // TerminalRecorder frames and hash-chains terminal bytes while enforcing a
 // hard byte limit. It is safe for stdout and stderr writers to use
@@ -73,6 +82,58 @@ type TerminalRecorder struct {
 	closed   bool
 	frames   int64
 	started  time.Time
+
+	// Opt-in incremental flush; flush == nil keeps the whole stream in memory.
+	flush        SegmentFlusher
+	segmentBytes int
+	flushed      int64
+	flushErr     error
+	digest       hash.Hash
+	result       *TerminalRecording
+}
+
+// NewSegmentedTerminalRecorder is NewTerminalRecorder with incremental flush:
+// once segmentBytes of frames are buffered, the next Write first hands them to
+// flush at a frame boundary and releases them, so memory is bounded by one
+// segment plus one frame. A flush error fails that Write and every later one
+// (and therefore the stream) closed: the frame that needed the flush is
+// neither recorded nor delivered. Everything flushed before stays committed,
+// and Finalize retries the buffered, already delivered tail once.
+func NewSegmentedTerminalRecorder(maxBytes, segmentBytes int64, flush SegmentFlusher) *TerminalRecorder {
+	r := NewTerminalRecorder(maxBytes)
+	if flush != nil && segmentBytes > 0 {
+		r.flush, r.segmentBytes, r.digest = flush, int(min(segmentBytes, math.MaxInt32)), sha256.New()
+	}
+	return r
+}
+
+func (r *TerminalRecorder) size() int64 { return r.flushed + int64(r.bytes.Len()) }
+
+// flushLocked hands the buffered frames to the flusher and releases them.
+// After a failure only the final flush tries again; the first error stays.
+func (r *TerminalRecorder) flushLocked(final bool) error {
+	if r.flushErr != nil && !final {
+		return r.flushErr
+	}
+	if r.bytes.Len() == 0 {
+		return r.flushErr
+	}
+	if err := r.flush(r.bytes.Bytes(), r.previous); err != nil {
+		if r.flushErr == nil {
+			r.flushErr = fmt.Errorf("flush terminal recording segment: %w", err)
+		}
+		return r.flushErr
+	}
+	r.flushed += int64(r.bytes.Len())
+	r.bytes.Reset()
+	return r.flushErr
+}
+
+// FlushError reports the first failed incremental flush, if any.
+func (r *TerminalRecorder) FlushError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.flushErr
 }
 
 // NewTerminalRecorder creates a bounded recorder. A zero limit uses the
@@ -102,11 +163,19 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	if r.maxBytes < 0 {
 		return errTerminalRecordingLimit
 	}
+	if r.flush != nil && r.bytes.Len() >= r.segmentBytes {
+		if err := r.flushLocked(false); err != nil {
+			return err
+		}
+	}
+	if r.flushErr != nil {
+		return r.flushErr
+	}
 	frameSize, err := terminalRecordingFrameSize(len(payload))
 	if err != nil {
 		return err
 	}
-	if frameSize > math.MaxInt-r.bytes.Len() || int64(r.bytes.Len()) > r.maxBytes-int64(frameSize) {
+	if frameSize > math.MaxInt-r.bytes.Len() || r.size() > r.maxBytes-int64(frameSize) {
 		return errTerminalRecordingLimit
 	}
 	frame := make([]byte, frameSize)
@@ -122,6 +191,9 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	}
 	r.previous = sha256.Sum256(frame)
 	r.frames++
+	if r.flush != nil {
+		_, _ = r.digest.Write(frame)
+	}
 	return nil
 }
 
@@ -138,10 +210,13 @@ func terminalRecordingFrameSize(payloadLength int) (int, error) {
 func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.result != nil {
+		return *r.result, r.flushErr
+	}
 	if !r.closed {
 		// An empty successful terminal still has a valid framed evidence object;
 		// artifact stores intentionally reject zero-byte objects.
-		if r.bytes.Len() == 0 {
+		if r.size() == 0 {
 			if r.maxBytes < terminalRecordingFrameHeaderSize {
 				return TerminalRecording{}, errTerminalRecordingLimit
 			}
@@ -150,12 +225,23 @@ func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 			binary.BigEndian.PutUint64(frame[2:10], uint64(time.Since(r.started)))
 			_, _ = r.bytes.Write(frame)
 			r.frames = 1
+			if r.flush != nil {
+				_, _ = r.digest.Write(frame)
+				r.previous = sha256.Sum256(frame)
+			}
 		}
 		r.closed = true
 	}
+	if r.flush != nil {
+		// Final commit of the tail; retried once after an earlier failure.
+		_ = r.flushLocked(true)
+		sum := r.digest.Sum(nil)
+		r.result = &TerminalRecording{SHA256: hex.EncodeToString(sum), Frames: r.frames, Size: r.flushed}
+		return *r.result, r.flushErr
+	}
 	payload := append([]byte(nil), r.bytes.Bytes()...)
 	digest := sha256.Sum256(payload)
-	return TerminalRecording{Bytes: payload, SHA256: hex.EncodeToString(digest[:]), Frames: r.frames}, nil
+	return TerminalRecording{Bytes: payload, SHA256: hex.EncodeToString(digest[:]), Frames: r.frames, Size: int64(len(payload))}, nil
 }
 
 // StreamTerminal executes a controller-owned Kubernetes exec/attach stream

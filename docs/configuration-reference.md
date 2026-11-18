@@ -66,6 +66,7 @@ artifacts:
   uploadMaxBytes: 67108864
   # terminalRecordingMaxBytes: 67108864    # optional, 1..uploadMaxBytes
   # terminalRecordingMaxConcurrent: 2       # optional, 1..32
+  # terminalRecordingSegmentBytes: 4194304 # optional: flush terminal recordings incrementally
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
   credentialRotationGrace: 30s # optional, default 0s (abort running terminal streams on rotation)
@@ -118,7 +119,8 @@ stream at its first frame. `terminalRecordingMaxConcurrent` (optional, default
 buffers up to one recording in memory, so budget memory as
 `terminalRecordingMaxConcurrent` times the effective byte limit
 (`terminalRecordingMaxBytes`, else `uploadMaxBytes`), with about 2x headroom for
-buffer growth. Zero is the "unset" value; with artifacts enabled, negative
+buffer growth (with `terminalRecordingSegmentBytes` set, a stream buffers only
+about one segment). Zero is the "unset" value; with artifacts enabled, negative
 values, a byte limit above `uploadMaxBytes` and a concurrency above 32 are
 rejected at startup.
 Requests exceeding the HTTP upload body limit return HTTP 413, not a retryable
@@ -166,7 +168,9 @@ own directories or sentinels at startup. Provision an empty volume once with
 `stagingDir` as well. See [diagnostic artifacts](diagnostic-artifacts.md) for
 reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed
-generation readiness requirement.
+generation readiness requirement. `terminalRecordingSegmentBytes` (default
+off, 65536 to 67108864 when set, and at least the recording byte limit / 4096) enables
+[incremental recording flush](terminal-recording.md#incremental-flush-opt-in).
 
 ### `server`
 

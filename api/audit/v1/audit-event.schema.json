@@ -1811,8 +1811,14 @@
           "description": "Failed stage. Known values are listed in examples; accept others.",
           "examples": [
             "reserve",
-            "finalize"
+            "flush",
+            "finalize",
+            "recover"
           ]
+        },
+        "recovered": {
+          "type": "boolean",
+          "description": "True when the artifact controller published the committed incremental-flush segments after the stream's controller died; the actor is then system."
         },
         "sha256": {
           "type": "string",

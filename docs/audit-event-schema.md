@@ -275,7 +275,8 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 | `frames`, `bytes`, `complete` | integer, integer, boolean | finalized, failed (finalize) | Recording size and completeness. |
 | `sha256` | 64 hex digits | finalized, accessed (replay) | SHA-256 of the stored recording; compare it with a replayed copy. |
 | `streamError`, `abortReason` | string, enum | finalized, failed | Aborted stream: `credential_changed`, `cluster_config_changed`, `target_changed`, `session_authority_changed`, `lease_changed`, `expired`, `client_disconnected`, `recording_limit`, `stream_failed`. |
-| `stage` | `reserve`, `finalize` | failed | Failed stage. |
+| `stage` | `reserve`, `flush`, `finalize`, `recover` | failed | Failed stage (`flush`: opt-in incremental flush; `recover`: the artifact controller could not publish the committed prefix, reported once per recording and controller process). |
+| `recovered` | boolean | finalized, failed (recover) | The artifact controller published (or failed to publish) the committed incremental-flush prefix after the stream's controller died (actor `system`, `complete: false`). |
 | `access` | `list`, `replay` | accessed | Access kind; the actor is the reader. |
 | `recordingIds` | string[] | accessed (list) | Listed recordings. |
 

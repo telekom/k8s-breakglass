@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -109,6 +110,12 @@ func (service *Service) Recordings(ctx context.Context, namespace, sessionName, 
 // No public upload route calls this method. Exact reservation identity and the
 // retention deadline, rather than current access permission, fence publication.
 func (service *Service) FinalizeRecording(ctx context.Context, reservation Record, source io.Reader, metadata RecordingMetadata) (PublicRecord, error) {
+	return service.finalizeRecording(ctx, reservation, source, metadata, "")
+}
+
+// finalizeRecording is FinalizeRecording that, when chainHead is set, also
+// requires the staged frames to end at that hex SHA-256 chain head.
+func (service *Service) finalizeRecording(ctx context.Context, reservation Record, source io.Reader, metadata RecordingMetadata, chainHead string) (PublicRecord, error) {
 	current, err := service.Recording(ctx, reservation.Namespace, reservation.SessionName, reservation.ArtifactID)
 	if err != nil {
 		return PublicRecord{}, err
@@ -127,7 +134,7 @@ func (service *Service) FinalizeRecording(ctx context.Context, reservation Recor
 		return PublicRecord{}, err
 	}
 	defer func() { _ = staged.Close(); _ = os.Remove(staged.Name()) }()
-	frames, err := validateRecordingFrames(ctx, staged, size)
+	frames, err := validateRecordingFramesWithHead(ctx, staged, size, chainHead)
 	if err != nil {
 		return PublicRecord{}, err
 	}
@@ -276,6 +283,25 @@ func (r *recordingReader) Read(p []byte) (int, error) {
 }
 
 func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) (int64, error) {
+	return validateRecordingFramesWithHead(ctx, source, size, "")
+}
+
+// validateRecordingFramesWithHead also requires the chain to end at the hex
+// chainHead when it is set.
+func validateRecordingFramesWithHead(ctx context.Context, source io.Reader, size int64, chainHead string) (int64, error) {
+	frames, head, err := validateRecordingFramesHead(ctx, source, size)
+	if err != nil {
+		return 0, err
+	}
+	if chainHead != "" && hex.EncodeToString(head[:]) != chainHead {
+		return 0, fmt.Errorf("%w: recording chain head does not match its manifest", ErrConflict)
+	}
+	return frames, nil
+}
+
+// validateRecordingFramesHead also returns the SHA-256 chain head: the digest
+// of the last frame, which the next frame (or a segment manifest) commits to.
+func validateRecordingFramesHead(ctx context.Context, source io.Reader, size int64) (int64, [32]byte, error) {
 	var previous [32]byte
 	var frames int64
 	var version byte
@@ -283,13 +309,13 @@ func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) 
 	remaining := size
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		// Version 1: version | direction | length | prev (42 bytes).
 		// Version 2: version | direction | monotonic offset | length | prev (50 bytes).
 		var header [50]byte
 		if _, err := io.ReadFull(source, header[:1]); err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		if frames == 0 {
 			version = header[0]
@@ -298,40 +324,40 @@ func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) 
 		if version == 2 {
 			headerSize, lengthAt, directions = 50, 10, "ior"
 		} else if version != 1 {
-			return 0, errors.New("invalid terminal recording frame version")
+			return 0, [32]byte{}, errors.New("invalid terminal recording frame version")
 		}
 		if header[0] != version || remaining < headerSize {
-			return 0, errors.New("invalid terminal recording frame")
+			return 0, [32]byte{}, errors.New("invalid terminal recording frame")
 		}
 		if _, err := io.ReadFull(source, header[1:headerSize]); err != nil {
-			return 0, err
+			return 0, [32]byte{}, err
 		}
 		length := binary.BigEndian.Uint64(header[lengthAt : lengthAt+8])
 		if length > math.MaxInt64 {
-			return 0, errors.New("invalid terminal recording frame length")
+			return 0, [32]byte{}, errors.New("invalid terminal recording frame length")
 		}
 		payloadLength := int64(length)
 		if version == 2 {
 			offset := binary.BigEndian.Uint64(header[2:10])
 			if offset < lastOffset {
-				return 0, errors.New("terminal recording timing is not monotonic")
+				return 0, [32]byte{}, errors.New("terminal recording timing is not monotonic")
 			}
 			lastOffset = offset
 		}
 		if !strings.ContainsRune(directions, rune(header[1])) || string(header[lengthAt+8:headerSize]) != string(previous[:]) || payloadLength > remaining-headerSize {
-			return 0, errors.New("invalid terminal recording frame")
+			return 0, [32]byte{}, errors.New("invalid terminal recording frame")
 		}
 		digest := sha256.New()
 		_, _ = digest.Write(header[:headerSize])
 		if _, err := io.CopyN(digest, source, payloadLength); err != nil {
-			return 0, fmt.Errorf("read terminal frame: %w", err)
+			return 0, [32]byte{}, fmt.Errorf("read terminal frame: %w", err)
 		}
 		copy(previous[:], digest.Sum(nil))
 		remaining -= headerSize + payloadLength
 		frames++
 	}
 	if frames == 0 {
-		return 0, errors.New("terminal recording is empty")
+		return 0, [32]byte{}, errors.New("terminal recording is empty")
 	}
-	return frames, nil
+	return frames, previous, nil
 }

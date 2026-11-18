@@ -12,6 +12,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -63,7 +64,45 @@ type Reconciler struct {
 	Now              func() time.Time
 	ClusterProvider  TargetClientProvider
 	LiveReader       ctrlclient.Reader
+	// RecordingRecovered, when set, is told (for audit) about a terminal
+	// recording the reconciler published from incremental-flush segments, or,
+	// once per recording and process, why that failed (err != nil).
+	RecordingRecovered func(context.Context, backend.Record, backend.PublicRecord, error)
+
+	recoveryFailed sync.Map // ArtifactUID of recordings whose recovery failure was reported
 }
+
+// abandonedRecordingRecoverer is the part of *backend.Service recovery uses.
+type abandonedRecordingRecoverer interface {
+	RecoverAbandonedRecording(context.Context, backend.Record, time.Duration) (backend.PublicRecord, bool, error)
+}
+
+// recoverAbandonedRecording publishes the committed incremental-flush prefix
+// of a recording whose stream and handler are gone, and reports the outcome:
+// every success, and a failure once per recording (it is retried every
+// reconcile until retention expiry).
+func (reconciler *Reconciler) recoverAbandonedRecording(ctx context.Context, recoverer abandonedRecordingRecoverer, record backend.Record) {
+	published, recovered, err := recoverer.RecoverAbandonedRecording(ctx, record, terminalRecordingRecoveryGrace)
+	if err != nil {
+		if _, reported := reconciler.recoveryFailed.LoadOrStore(record.ArtifactUID, true); reported {
+			return
+		}
+		if reconciler.Log != nil {
+			reconciler.Log.Warnw("Terminal recording recovery from segments failed; retrying until retention expiry", "namespace", record.Namespace, "recordingId", record.ArtifactID, "error", err)
+		}
+	} else if !recovered {
+		return
+	}
+	if reconciler.RecordingRecovered != nil {
+		reconciler.RecordingRecovered(ctx, record, published, err)
+	}
+}
+
+// terminalRecordingRecoveryGrace is how long after a stream's expiry its own
+// handler may still flush and publish (flush, completeness probe and
+// finalize, each bounded, plus clock skew between replicas). Recovery waits
+// for it so it never publishes a prefix the handler is about to extend.
+const terminalRecordingRecoveryGrace = time.Minute
 
 func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	if reconciler.Client == nil || reconciler.LiveReader == nil || reconciler.Service == nil || reconciler.TokenIssuer == nil || reconciler.ClusterProvider == nil {
@@ -122,6 +161,10 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
 		}
+		// Neither the stream nor its handler can still be running: publish
+		// whatever incremental flush committed (opt-in) as incomplete evidence.
+		// Without segments the reservation stays as before.
+		reconciler.recoverAbandonedRecording(ctx, reconciler.Service, record)
 		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
 	}
 	if object.DeletionTimestamp.IsZero() && record.Recipe != backend.TerminalRecordingRecipe && (record.State == backend.StatePending || record.State == backend.StateUploading || record.State == backend.StateAvailable) {

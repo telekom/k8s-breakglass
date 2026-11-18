@@ -23,6 +23,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -342,6 +343,10 @@ func (terminalDenyCollector) AuthorizeArtifact(context.Context, backend.SessionB
 	return backend.ErrForbidden
 }
 func terminalArtifactFixture(t *testing.T, session *breakglassv1alpha1.DebugSession) (*backend.Service, ctrlclient.Client) {
+	return terminalArtifactFixtureWithStore(t, session, func(s storage.Store) storage.Store { return s })
+}
+
+func terminalArtifactFixtureWithStore(t *testing.T, session *breakglassv1alpha1.DebugSession, wrap func(storage.Store) storage.Store) (*backend.Service, ctrlclient.Client) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -363,7 +368,7 @@ func terminalArtifactFixture(t *testing.T, session *breakglassv1alpha1.DebugSess
 	require.NoError(t, err)
 	keys, err := token.NewKeyring("https://breakglass.example", "artifact", "key", []token.Key{{ID: "key", Secret: bytes.Repeat([]byte{1}, 32)}}, token.Limits{MaxTTL: 15 * time.Minute})
 	require.NoError(t, err)
-	service, err := backend.New(backend.Config{Repository: repo, Store: store, Authorizer: terminalDenyCollector{}, Tokens: keys, StagingDir: cfg.StagingRoot})
+	service, err := backend.New(backend.Config{Repository: repo, Store: wrap(store), Authorizer: terminalDenyCollector{}, Tokens: keys, StagingDir: cfg.StagingRoot})
 	require.NoError(t, err)
 	return service, hub
 }
