@@ -402,6 +402,50 @@ func TestConnectionLeaseRotationGraceIsBoundedAndCappedAtExpiry(t *testing.T) {
 	require.False(t, deadline.After(binding.ExpiresAt), "grace never outlives the session")
 }
 
+// A stream draining on the previous generation keeps its claim when a later
+// acquisition does not replace it (the new-generation stream already closed).
+func TestTerminalLeaseGraceKeepsDrainingClaimAcrossLaterAcquire(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, green.Close(ctx))
+	again, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx), "the draining stream keeps working until its deadline")
+	require.NoError(t, again.Validate(ctx))
+}
+
+// A failed acquisition retires only the unchanged Lease it created: a
+// concurrent writer between its read and its delete must survive.
+func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	base := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	racing := &beforeDeleteClient{Client: base}
+	racing.hook = func() {
+		leases := &coordinationv1.LeaseList{}
+		require.NoError(t, base.List(context.Background(), leases))
+		require.Len(t, leases.Items, 1)
+		l := leases.Items[0].DeepCopy()
+		l.Annotations[connectionLeasePendingGenerationAnnotation] = "1"
+		require.NoError(t, base.Update(context.Background(), l))
+	}
+	// No credential source and no published generation: acquisition fails
+	// after creating the Lease and tries to retire it.
+	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(racing).WithNamespace("execution"))
+	_, err := provider.AcquireTerminalRecordingConnection(context.Background(), TerminalRecordingConnectionBinding{
+		Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.Error(t, err)
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, base.List(context.Background(), leases))
+	require.Len(t, leases.Items, 1, "the concurrently changed Lease must not be deleted")
+}
+
 // Controller rollover (pod restart / leader change): all fencing state lives in
 // Leases, so a fresh service instance keeps the active session's lease valid
 // and renewable without re-fencing it, a stream claim of the dead process
@@ -453,48 +497,4 @@ func TestTerminalLeaseControllerRolloverWithActiveSession(t *testing.T) {
 	for _, l := range leases.Items {
 		require.False(t, strings.HasPrefix(l.Name, connectionSessionLeasePrefix), "session lease %s must be revoked", l.Name)
 	}
-}
-
-// A stream draining on the previous generation keeps its claim when a later
-// acquisition does not replace it (the new-generation stream already closed).
-func TestTerminalLeaseGraceKeepsDrainingClaimAcrossLaterAcquire(t *testing.T) {
-	ctx := context.Background()
-	_, provider, credential, binding := graceFixture(t, time.Minute)
-	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
-	require.NoError(t, err)
-	rotate(credential, "2")
-	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
-	require.NoError(t, err)
-	require.NoError(t, green.Close(ctx))
-	again, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
-	require.NoError(t, err)
-	require.NoError(t, blue.Validate(ctx), "the draining stream keeps working until its deadline")
-	require.NoError(t, again.Validate(ctx))
-}
-
-// A failed acquisition retires only the unchanged Lease it created: a
-// concurrent writer between its read and its delete must survive.
-func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T) {
-	scheme := runtime.NewScheme()
-	require.NoError(t, coordinationv1.AddToScheme(scheme))
-	base := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
-	racing := &beforeDeleteClient{Client: base}
-	racing.hook = func() {
-		leases := &coordinationv1.LeaseList{}
-		require.NoError(t, base.List(context.Background(), leases))
-		require.Len(t, leases.Items, 1)
-		l := leases.Items[0].DeepCopy()
-		l.Annotations[connectionLeasePendingGenerationAnnotation] = "1"
-		require.NoError(t, base.Update(context.Background(), l))
-	}
-	// No credential source and no published generation: acquisition fails
-	// after creating the Lease and tries to retire it.
-	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(racing).WithNamespace("execution"))
-	_, err := provider.AcquireTerminalRecordingConnection(context.Background(), TerminalRecordingConnectionBinding{
-		Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Minute),
-	})
-	require.Error(t, err)
-	leases := &coordinationv1.LeaseList{}
-	require.NoError(t, base.List(context.Background(), leases))
-	require.Len(t, leases.Items, 1, "the concurrently changed Lease must not be deleted")
 }

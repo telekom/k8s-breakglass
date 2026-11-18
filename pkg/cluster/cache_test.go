@@ -221,7 +221,7 @@ func TestValidatePrivilegedOperationClusterConfigRejectsCredentialSecretChange(t
 	err = provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPrivilegedInputChanged)
-	assert.Contains(t, err.Error(), "privileged input changed: secret/default/kube-secret")
+	assert.Contains(t, err.Error(), "privileged input secret/default/kube-secret changed")
 }
 
 func TestValidatePrivilegedOperationClusterConfigRejectsLiveChanges(t *testing.T) {
