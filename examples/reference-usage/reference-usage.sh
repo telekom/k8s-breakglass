@@ -67,6 +67,8 @@ VERIFY_GH_ATTESTATION="${REFERENCE_VERIFY_GH_ATTESTATION:-false}"
 PUBLISHED_IMAGE_DIGEST_REF=""
 # Optional evidence export: JUnit + JSON rows and the artifact digests used.
 REFERENCE_EVIDENCE_DIR="${REFERENCE_EVIDENCE_DIR:-}"
+AUDIT_FORWARD_PID=""
+AUDIT_FORWARD_PORT="${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}"
 PHASE=""
 ROWS=() # "name<TAB>status<TAB>detail"
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-usage.XXXXXX")"
@@ -225,6 +227,7 @@ cleanup() {
   local cleanup_failed=false
   set +e
   [[ -n "${CATALOGUE_VALUES_FILE}" ]] && rm -f "${CATALOGUE_VALUES_FILE}"
+  [[ -n "${AUDIT_FORWARD_PID}" ]] && kill "${AUDIT_FORWARD_PID}" 2>/dev/null
   if [[ -n "${KUBECONFIG_FILE}" ]]; then
     if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
       KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
@@ -620,6 +623,29 @@ webhook_check() {
   die "webhook ${resource}: expected allowed=${expected}, got ${response}"
 }
 
+# Prefer the fixture's receiver URL; if it is not reachable (the e2e setup forwards
+# a service name the kustomize prefix renamed), forward the service named by
+# REFERENCE_AUDIT_WEBHOOK_URL (http://<svc>.<ns>.svc[...]) ourselves.
+audit_receiver_url() {
+  local url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-}" host svc ns _
+  if [[ -n "${url}" ]] && curl -fsS "${url}/health" >/dev/null 2>&1; then
+    printf '%s' "${url}"
+    return 0
+  fi
+  host="${REFERENCE_AUDIT_WEBHOOK_URL#*://}"
+  host="${host%%[:/]*}"
+  svc="${host%%.*}"
+  ns="${host#*.}"
+  ns="${ns%%.*}"
+  kubectl -n "${ns}" port-forward "svc/${svc}" "${AUDIT_FORWARD_PORT}:80" >/dev/null 2>&1 &
+  AUDIT_FORWARD_PID=$!
+  for _ in $(seq 1 15); do
+    curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  printf 'http://localhost:%s' "${AUDIT_FORWARD_PORT}"
+}
+
 reference_flow() {
   [[ -n "${REFERENCE_TOKEN_HELPER}" ]] || die "REFERENCE_TOKEN_HELPER is required for the selected identity fixture"
   local issuer_host="${KEYCLOAK_ISSUER_HOST:-}"
@@ -662,7 +688,8 @@ reference_flow() {
   wait_for_state "${REQUESTER_TOKEN}" "${REJECTED_SESSION_NAME}" Rejected
 
   log "Checking audit recording contains the reference session"
-  local audit_url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}}/events"
+  local audit_url
+  audit_url="$(audit_receiver_url)/events"
   local audit=''
   for _ in $(seq 1 30); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
