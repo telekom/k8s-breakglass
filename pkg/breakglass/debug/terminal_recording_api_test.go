@@ -30,7 +30,9 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -560,19 +562,22 @@ func (deniedRecordingProvider) AcquireTerminalRecordingConnection(context.Contex
 
 func TestTerminalRecordingAbortReason(t *testing.T) {
 	for want, err := range map[string]error{
-		"credential_changed":        fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("privileged input secret/hub/kubeconfig changed")),
-		"cluster_config_changed":    fmt.Errorf("ClusterConfig hub/spoke was replaced"),
-		"target_changed":            fmt.Errorf("terminal target identity changed"),
-		"session_authority_changed": fmt.Errorf("terminal session authority changed"),
-		"lease_changed":             fmt.Errorf("terminal stream claim expired or changed"),
-		"expired":                   fmt.Errorf("stream: %w", context.DeadlineExceeded),
-		"client_disconnected":       fmt.Errorf("stream: %w", context.Canceled),
-		"recording_limit":           fmt.Errorf("stream terminal session: record terminal output: %w", errTerminalRecordingLimit),
-		"authority_check_failed":    fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("get target pod: %w", context.DeadlineExceeded)),
-		"output_truncated":          fmt.Errorf("stream terminal session: %w", errTerminalOutputTruncated),
-		"transport_failed":          fmt.Errorf("stream terminal session: deliver terminal output: write: broken pipe"),
-		"stream_failed":             io.ErrUnexpectedEOF,
+		"credential_changed":                  fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("privileged input secret/hub/kubeconfig changed")),
+		"cluster_config_changed":              fmt.Errorf("ClusterConfig hub/spoke was replaced"),
+		"target_changed":                      fmt.Errorf("terminal target identity changed"),
+		"session_authority_changed":           fmt.Errorf("terminal session authority changed"),
+		"lease_changed":                       fmt.Errorf("terminal stream claim expired or changed"),
+		"expired":                             fmt.Errorf("stream: %w", context.DeadlineExceeded),
+		"client_disconnected":                 fmt.Errorf("stream: %w", context.Canceled),
+		"recording_limit":                     fmt.Errorf("stream terminal session: record terminal output: %w", errTerminalRecordingLimit),
+		"session_authority_changed (deleted)": fmt.Errorf("read terminal session authority: %w", apierrors.NewNotFound(schema.GroupResource{Resource: "debugsessions"}, "session")),
+		"authority_check_failed (read)":       fmt.Errorf("terminal authority check failed: read terminal stream claim: %w", context.DeadlineExceeded),
+		"authority_check_failed":              fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("get target pod: %w", context.DeadlineExceeded)),
+		"output_truncated":                    fmt.Errorf("stream terminal session: %w", errTerminalOutputTruncated),
+		"transport_failed":                    fmt.Errorf("stream terminal session: deliver terminal output: write: broken pipe"),
+		"stream_failed":                       io.ErrUnexpectedEOF,
 	} {
+		want, _, _ = strings.Cut(want, " ")
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
 		require.NotContains(t, want, "kubeconfig", "reason codes never carry Secret names")
 	}

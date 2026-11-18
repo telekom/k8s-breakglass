@@ -97,7 +97,7 @@ func TestStreamEndsWhenOutputAdmissionFails(t *testing.T) {
 		authorize: failingAt(3, errors.New("read terminal session authority: context deadline exceeded"))}
 	recording, err := streamForTest(clientGoCopyExecutor{chunks: 10}, nil, guard)
 	require.Error(t, err, "a stream that dropped output must not end cleanly")
-	require.Equal(t, "session_authority_changed", terminalRecordingAbortReason(err))
+	require.Equal(t, "authority_check_failed", terminalRecordingAbortReason(err))
 	require.Equal(t, strings.Repeat(clientGoChunk, 2), delivered.String())
 	require.True(t, strings.HasPrefix(recordedOutput(t, recording), delivered.String()), "every delivered byte is recorded")
 }
@@ -117,7 +117,7 @@ func TestStreamEndsWhenInputAdmissionFails(t *testing.T) {
 		authorize: failingAt(2, errors.New("read terminal stream claim: context deadline exceeded"))}
 	_, err := streamForTest(clientGoCopyExecutor{chunks: 1, readInput: true}, guard, io.Discard)
 	require.Error(t, err, "input dropped by a failed admission must end the stream")
-	require.Equal(t, "lease_changed", terminalRecordingAbortReason(err))
+	require.Equal(t, "authority_check_failed", terminalRecordingAbortReason(err))
 }
 
 // A client that closes its input ends stdin cleanly, not the stream.
@@ -229,10 +229,16 @@ type countingConnection struct {
 	delay   time.Duration
 }
 
-func (c *countingConnection) Validate(context.Context) error {
+// Validate reads the state when it starts, like a live read, then takes delay.
+func (c *countingConnection) Validate(ctx context.Context) error {
 	c.calls.Add(1)
-	time.Sleep(c.delay)
-	if c.revoked.Load() {
+	revoked := c.revoked.Load()
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return fmt.Errorf("read terminal session authority: %w", ctx.Err())
+	}
+	if revoked {
 		return errors.New("terminal session authority changed")
 	}
 	return nil
@@ -286,31 +292,62 @@ func TestTerminalAuthoritySerializesLiveChecks(t *testing.T) {
 	require.EqualValues(t, 1, live.calls.Load())
 }
 
-// The documented revocation bound: after a revocation becomes visible to live
-// reads, admission stops within maxAge of the last successful check's start.
+// The documented revocation bound: once a revocation is visible to live
+// reads, nothing is admitted later than maxAge after the start of the last
+// successful check. Worst case: the revocation lands just after a slow check
+// read the state, so the cache is stale already when that check returns.
 func TestTerminalAuthorityRevocationBound(t *testing.T) {
-	const maxAge = 300 * time.Millisecond
-	live := &countingConnection{delay: 20 * time.Millisecond}
+	const maxAge, delay = 300 * time.Millisecond, 200 * time.Millisecond
+	live := &countingConnection{delay: delay}
 	authority := newTerminalAuthority(live, maxAge)
+	go func() {
+		time.Sleep(20 * time.Millisecond) // the check below has read the state
+		live.revoked.Store(true)
+	}()
+	revokedAt := time.Now().Add(20 * time.Millisecond)
 	require.NoError(t, authority.Admit(context.Background()))
-	time.Sleep(100 * time.Millisecond)
-	revokedAt := time.Now()
-	live.revoked.Store(true)
 	var lastAdmitted time.Time
 	for authority.Admit(context.Background()) == nil {
 		lastAdmitted = time.Now()
 		time.Sleep(time.Millisecond)
 	}
-	cutAfter := time.Since(revokedAt)
-	t.Logf("admission stopped %v after the revocation (bound %v)", cutAfter, maxAge)
-	require.Less(t, lastAdmitted.Sub(revokedAt), maxAge, "nothing is admitted later than maxAge after the revocation")
-	require.Less(t, cutAfter, maxAge+live.delay+100*time.Millisecond)
+	t.Logf("last admission %v after the revocation (bound %v)", lastAdmitted.Sub(revokedAt), maxAge)
+	// Admission ends maxAge after the check started (about 280ms after the
+	// revocation); counted from the check's end it would be about 480ms.
+	require.Less(t, lastAdmitted.Sub(revokedAt), maxAge)
+}
+
+// The watcher's check must not time out because an admission check holds the
+// slot: a healthy stream with slow (but successful) reads is not aborted.
+func TestTerminalAuthorityWatcherWaitsForConcurrentCheck(t *testing.T) {
+	live := &countingConnection{delay: 1200 * time.Millisecond}
+	authority := newTerminalAuthority(live, time.Millisecond)
+	admitted := make(chan error, 1)
+	go func() { admitted <- authority.Admit(context.Background()) }()
+	time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*terminalAuthorityCheckTimeout)
+	defer cancel()
+	require.NoError(t, authority.Validate(ctx), "the watcher's budget covers the concurrent check and its own")
+	require.NoError(t, <-admitted)
+}
+
+// A hung read cannot hold the check slot: every live check is bounded.
+func TestTerminalAuthorityBoundsEachCheck(t *testing.T) {
+	live := &countingConnection{delay: time.Hour}
+	authority := newTerminalAuthority(live, time.Second)
+	started := time.Now()
+	err := authority.Admit(context.Background())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, "authority_check_failed", terminalRecordingAbortReason(err))
+	require.Less(t, time.Since(started), terminalAuthorityCheckTimeout+time.Second)
 }
 
 // #1760 at the route: a failed admission inside the output copy publishes the
-// recording incomplete with an audited reason, in strict and in cached mode.
+// recording incomplete with an audited reason. Strict mode makes the output
+// guard, not the watcher, meet the failure; the e2e_fault e2e covers the
+// default cached mode on a real controller.
 func TestTerminalRouteMarksDroppedOutputIncomplete(t *testing.T) {
-	for _, strict := range []bool{true, false} {
+	for _, strict := range []bool{true} {
 		t.Run(fmt.Sprintf("strict=%v", strict), func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			now := metav1.Now()
@@ -342,12 +379,7 @@ func TestTerminalRouteMarksDroppedOutputIncomplete(t *testing.T) {
 			controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
 				return clientGoCopyExecutor{chunks: 6, before: func(i int) {
 					if i == 3 {
-						// One slow live read; cached mode meets it once the
-						// last check is older than the bound.
-						failNext.Store(true)
-						if !strict {
-							time.Sleep(terminalAuthorityMaxAge + 100*time.Millisecond)
-						}
+						failNext.Store(true) // one slow live read
 					}
 				}}, nil
 			}
@@ -357,15 +389,10 @@ func TestTerminalRouteMarksDroppedOutputIncomplete(t *testing.T) {
 			require.NoError(t, err)
 			defer response.Body.Close()
 			require.Equal(t, http.StatusOK, response.StatusCode)
-			// When the watcher meets the failure first it cuts the response
-			// before its trailers.
 			output, err := io.ReadAll(response.Body)
-			if strict {
-				require.NoError(t, err)
-				require.Equal(t, "incomplete", response.Trailer.Get("X-Breakglass-Recording-Status"))
-				require.Less(t, len(output), 6*len(clientGoChunk), "the failed admission dropped output")
-			}
-			require.NotEqual(t, "completed", response.Trailer.Get("X-Breakglass-Recording-Status"))
+			require.NoError(t, err)
+			require.Equal(t, "incomplete", response.Trailer.Get("X-Breakglass-Recording-Status"))
+			require.Equal(t, strings.Repeat(clientGoChunk, 3), string(output), "the failed admission dropped output")
 			// A cut response can return before the handler finalized.
 			var finalized *audit.Event
 			require.Eventually(t, func() bool {
@@ -377,7 +404,7 @@ func TestTerminalRouteMarksDroppedOutputIncomplete(t *testing.T) {
 				return finalized != nil
 			}, 5*time.Second, 20*time.Millisecond)
 			require.Equal(t, false, finalized.Details["complete"])
-			require.Equal(t, "lease_changed", finalized.Details["abortReason"])
+			require.Equal(t, "authority_check_failed", finalized.Details["abortReason"])
 		})
 	}
 }

@@ -218,6 +218,11 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 			// the documented client-body-timeout keep the session open.
 			time.Sleep(70 * time.Second)
 			_, _ = io.WriteString(stdinWriter, "via-ingress\n")
+			// Closing a TTY's input at once can hang up the shell before its
+			// read consumed the line: keep it open until the reply arrived.
+			for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline) && !strings.Contains(out.String(), "got:via-ingress"); {
+				time.Sleep(100 * time.Millisecond)
+			}
 			_ = stdinWriter.Close()
 		}()
 		streamCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)

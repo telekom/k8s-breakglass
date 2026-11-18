@@ -524,6 +524,8 @@ func terminalRecordingAbortReason(err error) string {
 		return "credential_changed"
 	case strings.Contains(message, "ClusterConfig") && (strings.Contains(message, "replaced") || strings.Contains(message, "spec changed")):
 		return "cluster_config_changed"
+	case terminalAuthorityReadFailed(err, message):
+		return "authority_check_failed"
 	case strings.Contains(message, "terminal target"):
 		return "target_changed"
 	case strings.Contains(message, "terminal session authority") || strings.Contains(message, "terminal profile authority"):
@@ -547,6 +549,14 @@ func terminalRecordingAbortReason(err error) string {
 	default:
 		return "stream_failed"
 	}
+}
+
+// terminalAuthorityReadFailed reports a live check that could not read the
+// session or the stream claim (for example a timeout), which says nothing
+// about whether the authority changed. A deleted object is a revocation.
+func terminalAuthorityReadFailed(err error, message string) bool {
+	return !apierrors.IsNotFound(err) && (strings.Contains(message, "read terminal session authority") ||
+		strings.Contains(message, "recheck terminal session authority") || strings.Contains(message, "read terminal stream claim"))
 }
 
 // terminalRecordingAuditTimeout bounds the synchronous delivery of one
@@ -730,7 +740,9 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 			case <-streamCtx.Done():
 				return
 			case <-ticker.C:
-				validateCtx, validateCancel := context.WithTimeout(streamCtx, 2*time.Second)
+				// Room for one concurrent check (which the watcher may wait for)
+				// and its own, each bounded by terminalAuthorityCheckTimeout.
+				validateCtx, validateCancel := context.WithTimeout(streamCtx, 2*terminalAuthorityCheckTimeout)
 				err := connection.Validate(validateCtx)
 				validateCancel()
 				if err != nil {

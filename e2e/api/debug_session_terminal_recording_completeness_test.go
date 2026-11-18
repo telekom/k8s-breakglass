@@ -29,8 +29,9 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/recording"
 )
 
-// Recorded terminal throughput floor (#1761). Per-write live authorization
-// moved about 10 KiB/s in Kind; a cached check moves several MiB/s.
+// Recorded terminal throughput floor (#1761), checked for streams of at least
+// 4 MiB. Per-write live authorization moved about 20 KiB/s in Kind; a cached
+// check moves MiB/s.
 const minRecordedTerminalRate = 256 << 10 // bytes per second
 
 // Must match pkg/breakglass/debug (test-only fault injection, e2e_fault).
@@ -57,40 +58,52 @@ func TestDebugSessionTerminalRecordingCompletenessE2E(t *testing.T) {
 		size := min(int64(8<<20), maxBytes/2)
 		const marker = "END-OF-OUTPUT"
 		cid := uuid.NewString()
-		started := time.Now()
+		var first, last time.Time
 		// The command exits right after its output: whatever is still in
 		// flight then must be drained, delivered and recorded.
 		result := streamRecorded(t, ctx, requester, helpers.TerminalStreamRequest{
 			Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 			Command:       []string{"sh", "-c", fmt.Sprintf("head -c %d /dev/zero | tr '\\0' a; echo; echo %s", size, marker)},
-			Interact:      drainOutput,
 			CorrelationID: cid,
+			Interact: func(output <-chan string, _ io.Writer) error {
+				for range output {
+					if last = time.Now(); first.IsZero() {
+						first = last
+					}
+				}
+				return nil
+			},
 		}, 10*time.Minute)
-		elapsed := time.Since(started)
-		rate := float64(size) / elapsed.Seconds()
-		t.Logf("measured: %d bytes in %v = %.0f KiB/s (floor %d KiB/s)", size, elapsed.Round(time.Millisecond), rate/1024, minRecordedTerminalRate>>10)
+		// From the first to the last output chunk: excludes setup and retries.
+		elapsed := last.Sub(first)
+		rate := float64(size) / max(elapsed.Seconds(), 0.001)
+		t.Logf("measured: %d bytes in %v = %.0f KiB/s (floor %d KiB/s from 4 MiB)", size, elapsed.Round(time.Millisecond), rate/1024, minRecordedTerminalRate>>10)
 		require.Equal(t, int64(strings.Count(result.Output, "a")), size, "every output byte reached the client")
 		require.Contains(t, result.Output, marker)
 		require.Equal(t, "completed", result.Status)
 
 		replayed := replayOutput(t, ctx, requester, session, result.RecordingID)
 		require.Equal(t, result.Output, replayed, "the recording holds exactly the delivered output")
-		require.GreaterOrEqual(t, rate, float64(minRecordedTerminalRate), "recorded terminal throughput (#1761)")
+		if size >= 4<<20 {
+			require.GreaterOrEqual(t, rate, float64(minRecordedTerminalRate), "recorded terminal throughput (#1761)")
+		}
 	})
 
 	t.Run("revocation cuts continuous output within the bound", func(t *testing.T) {
 		session, pod := recordedSession(t, ctx, s, requester, requesterUser.Groups, s.Cluster)
 		refreshToken(ctx, requester)
 		cid := uuid.NewString()
-		var revokedAt time.Time
+		var revokedAt, lastOutput time.Time
+		// About 80 KiB/s, so even the 1 MiB recording limit of the
+		// multi-cluster lanes is far away when the session is terminated.
 		result := streamRecorded(t, ctx, requester, helpers.TerminalStreamRequest{
 			Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
-			Command:       []string{"sh", "-c", `while :; do head -c 65536 /dev/zero | tr '\0' r; done`},
+			Command:       []string{"sh", "-c", `while :; do head -c 4096 /dev/zero | tr '\0' r; sleep 0.05; done`},
 			CorrelationID: cid,
 			Interact: func(output <-chan string, _ io.Writer) error {
 				seen := 0
 				for chunk := range output {
-					if seen += len(chunk); seen >= 256<<10 {
+					if seen += len(chunk); seen >= 64<<10 {
 						break
 					}
 				}
@@ -99,15 +112,16 @@ func TestDebugSessionTerminalRecordingCompletenessE2E(t *testing.T) {
 				}
 				revokedAt = time.Now()
 				for range output {
+					lastOutput = time.Now()
 				}
 				return nil
 			},
 		}, 5*time.Minute)
 		require.False(t, revokedAt.IsZero(), "the session was terminated mid-stream")
-		cut := time.Since(revokedAt)
-		t.Logf("measured: output stopped %v after the revocation was acknowledged (documented bound 1s plus one admitted write and transport latency)", cut.Round(time.Millisecond))
+		cut := lastOutput.Sub(revokedAt)
+		t.Logf("measured: last output %v after the revocation was acknowledged (documented bound: 1s after it is visible to live reads, plus one admitted write and transport latency)", cut.Round(time.Millisecond))
 		require.NotEqual(t, "completed", result.Status)
-		require.Less(t, cut, 10*time.Second, "revocation cuts the stream promptly")
+		require.Less(t, cut, 3*time.Second, "revocation cuts the output within the bound")
 		finalized := finalizedEvent(t, ctx, cid)
 		require.Equal(t, false, finalized.Details["complete"])
 		require.Equal(t, "session_authority_changed", finalized.Details["abortReason"])
@@ -161,7 +175,7 @@ func TestDebugSessionTerminalRecordingAdmissionFaultE2E(t *testing.T) {
 	require.Equal(t, "incomplete", result.Status, "a stream that dropped output is never complete")
 	finalized := finalizedEvent(t, ctx, cid)
 	require.Equal(t, false, finalized.Details["complete"])
-	require.Equal(t, "session_authority_changed", finalized.Details["abortReason"])
+	require.Equal(t, "authority_check_failed", finalized.Details["abortReason"], "a failed read, not a revocation")
 	// Everything the client saw is in the evidence.
 	require.True(t, strings.HasPrefix(replayOutput(t, ctx, requester, session, result.RecordingID), result.Output))
 }

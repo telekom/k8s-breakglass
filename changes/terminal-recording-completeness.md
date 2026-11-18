@@ -8,13 +8,16 @@ section: Behaviour changes
   failed check. A revocation now stops recorded terminal I/O within one second
   of being visible to the controller instead of on the next write. Set
   `artifacts.terminalRecordingStrictAuthorization: true` to keep the previous
-  per-write checks, at the cost of throughput (about 10 KiB/s in Kind) (#1761).
+  per-write checks, at the cost of throughput (about 20 KiB/s in Kind) (#1761).
 - A recorded stream that loses output is never published as complete: a failed
   authority check inside the stream copy, a failed client read or write, or a
   target connection that ends without its final status (output in flight when
   the command exited) now ends the stream and publishes the recording
-  incomplete with the audited `abortReason` `session_authority_changed` (or the
-  fence that failed), `transport_failed` or `output_truncated` (#1760, #1761).
-- A live authority check that fails without naming what changed (for example a
-  target Pod lookup that timed out) is audited as `authority_check_failed`
-  instead of `expired`.
+  incomplete with the audited `abortReason` of the fence that failed,
+  `authority_check_failed`, `transport_failed` or `output_truncated` (#1760,
+  #1761). A client that disconnects mid-write is usually audited as
+  `transport_failed` instead of `client_disconnected`.
+- A live authority check that could not complete (for example a timed-out read
+  of the session, stream claim or target Pod) is audited as
+  `authority_check_failed` instead of `session_authority_changed`,
+  `lease_changed` or `expired`.

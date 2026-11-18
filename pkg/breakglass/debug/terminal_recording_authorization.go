@@ -65,12 +65,17 @@ func (c *DebugSessionAPIController) terminalRecordingAuthority(session *breakgla
 // re-checks every terminalWatchInterval, additionally ends the stream.
 const terminalAuthorityMaxAge = time.Second
 
+// terminalAuthorityCheckTimeout bounds one live check, so a hung read cannot
+// hold the serialized check slot.
+const terminalAuthorityCheckTimeout = 2 * time.Second
+
 // terminalAuthority admits transport I/O on a cached live authority check.
-// Validate is always a live check (watcher, reservation, post-stream probe)
-// and refreshes the cache; Admit reuses a successful check that started less
-// than maxAge ago and otherwise runs one. Live checks are serialized, so the
-// cache always reflects the most recent one and a failure stops admission at
-// once. maxAge <= 0 is the strict mode: every Admit is a live check.
+// Validate is always backed by a live check that started after it was called
+// (watcher, reservation, post-stream probe); Admit reuses a successful check
+// that started less than maxAge ago. Live checks are serialized, so the cache
+// reflects the most recent one, a failure stops admission at once, and callers
+// waiting for the slot share a check that started after they asked. maxAge <=
+// 0 is the strict mode: every admission is backed by its own live check.
 type terminalAuthority struct {
 	TerminalRecordingConnection
 	maxAge time.Duration
@@ -86,14 +91,10 @@ func (a *terminalAuthority) Validate(ctx context.Context) error { return a.check
 
 // Admit authorizes one transport read or write.
 func (a *terminalAuthority) Admit(ctx context.Context) error {
-	var err error
-	switch {
-	case a.maxAge <= 0:
-		err = a.TerminalRecordingConnection.Validate(ctx)
-	case !a.fresh():
-		err = a.check(ctx, true)
+	if a.fresh() {
+		return nil
 	}
-	if err != nil {
+	if err := a.check(ctx, true); err != nil {
 		return fmt.Errorf("terminal authority check failed: %w", err)
 	}
 	return nil
@@ -104,20 +105,23 @@ func (a *terminalAuthority) fresh() bool {
 	return okAt != nil && time.Since(*okAt) < a.maxAge
 }
 
-func (a *terminalAuthority) check(ctx context.Context, reuse bool) error {
+func (a *terminalAuthority) check(ctx context.Context, admit bool) error {
+	requested := time.Now()
 	select {
 	case a.live <- struct{}{}:
 	case <-ctx.Done():
 		return fmt.Errorf("wait for terminal authority check: %w", ctx.Err())
 	}
 	defer func() { <-a.live }()
-	if reuse && a.fresh() {
-		// Another caller (usually the watcher) checked while this one waited.
+	if okAt := a.okAt.Load(); okAt != nil && (!okAt.Before(requested) || admit && a.fresh()) {
+		// A check that another caller ran while this one waited suffices.
 		return nil
 	}
+	checkCtx, cancel := context.WithTimeout(ctx, terminalAuthorityCheckTimeout)
+	defer cancel()
 	// The start of the check bounds admission: all of its reads happen later.
 	started := time.Now()
-	if err := a.TerminalRecordingConnection.Validate(ctx); err != nil {
+	if err := a.TerminalRecordingConnection.Validate(checkCtx); err != nil {
 		a.okAt.Store(nil)
 		return err
 	}

@@ -128,19 +128,20 @@ by unit tests (`TestTerminalRecordingLimits`, `TestRegisteredTerminalRouteStream
 `TestDebugSessionTerminalRecordingCompletenessE2E` runs in all four artifact
 lanes (#1760, #1761). A stream of half the recording limit (8 MiB at most)
 whose command exits right after its output must reach the client byte for
-byte, be published `completed`, replay exactly the delivered output, and move
-at least 256 KiB/s; the test logs the measured rate. A second stream of
-continuous output is revoked (the session is terminated) mid-stream; it must
-stop promptly, and the finalized audit event must say `complete: false` with
-`session_authority_changed`; the test logs how long after the revocation the
-output stopped.
+byte, be published `completed` and replay exactly the delivered output; the
+test logs the rate from the first to the last output chunk and requires at
+least 256 KiB/s for streams of 4 MiB or more. A second stream of throttled
+continuous output is revoked (the session is terminated) mid-stream; its last
+output must arrive within 3 seconds of the terminate call, and the finalized
+audit event must say `complete: false` with `session_authority_changed`; the
+test logs that delay.
 
 `TestDebugSessionTerminalRecordingAdmissionFaultE2E` runs last in the
 `artifacts-local` lane. It restarts the controller with the `e2e_fault` build
 (`TAGS=e2e_fault HA_IMAGE=breakglass:e2e-fault e2e/build-ha-image.sh`), which
 refuses the 20th output admission of every stream once while the session stays
 valid, like one failed live read. The stream must stop, be published
-`incomplete` with `session_authority_changed`, and its recording must hold
+`incomplete` with `authority_check_failed`, and its recording must hold
 everything the client received.
 
 ## Explicit backend and lifecycle matrix

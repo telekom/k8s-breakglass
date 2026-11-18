@@ -317,13 +317,14 @@ the default behavior) to persist the recording while it runs:
 
 Every transport read and write is admitted only on a successful live
 authority check that started less than one second earlier. The stream checks
-its authority live every 500 milliseconds (each check has a two-second
-timeout), and a read or write runs its own live check when the last one is
-older, so recorded output is not throttled by API reads (#1761). A failed
-check ends the stream and stops admission at once. Revocation bound: once a
-revocation is visible to the controller's live reads, no further input or
-output is admitted after at most one second; the periodic check also cancels
-the stream within 500 milliseconds plus the duration of one check. Kubernetes
+its authority live every 500 milliseconds, and a read or write runs its own
+live check when the last one is older, so recorded output is not throttled by
+API reads (#1761). Live checks run one at a time, each bounded at two seconds.
+A failed check ends the stream and stops admission at once. Revocation bound:
+once a revocation is visible to the controller's live reads, no further input
+or output is admitted after at most one second; the periodic check also
+cancels the stream within 500 milliseconds plus at most two checks (one it
+waits for and its own). Kubernetes
 revocation and an irreversible socket write cannot form one atomic operation:
 one write admitted before the bound may still complete. These are detection
 intervals, not a guaranteed end-to-end delivery bound under scheduler or
@@ -332,8 +333,8 @@ network delays.
 `artifacts.terminalRecordingStrictAuthorization: true` restores the previous
 strict mode: a live check (a few API reads) before every transport read and
 write. Revocation then takes effect on the next read or write, but output is
-limited by the API reads; in Kind that was about 10 KiB/s, against several
-MiB/s with the default. Hard expiry sets transport deadlines. Buffering or
+limited by the API reads: about 20 KiB/s in Kind, against several MiB/s with
+the default. Hard expiry sets transport deadlines. Buffering or
 a post-write check cannot retract bytes already delivered to the client.
 
 Each ready target Lease admits one recording stream through a resource-version

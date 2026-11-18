@@ -1246,7 +1246,7 @@ jobs:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
 
-      # Last in this shard: it reconfigures and restarts the controller.
+      # Reconfigures and restarts the controller; only restarting steps follow.
       - name: Run terminal recording rotation grace and controller rollover E2E
         if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
