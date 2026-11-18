@@ -208,6 +208,60 @@ the harness can prove ownership from the captured immutable image ID; otherwise
 they are left for the runner's managed cleanup. The harness does not race a
 mutable image tag during teardown.
 
+## Release artifact inventory and gates
+
+`hack/release-artifact-inventory.json` lists every OCI image and Helm chart the
+release publishes and binds each to a digest subject that is signed (Cosign keyless),
+carries an SPDX SBOM attestation and a SLSA provenance attestation, and is
+verified after publication:
+
+| Artifact | Source | Publisher | Verified by |
+|---|---|---|---|
+| Controller image `ghcr.io/<repo>` | `Dockerfile` | `release.yml` `assemble` | `release.yml` "Verify controller image signature and attestations" step |
+| Utility images `.../utils/<name>` (derived from `hack/utility-image-matrix.json`) | each matrix `file` | `release.yml` `build-utility-images`, `utility-release.yml` | `hack/resolve-release-refs.sh`, `hack/verify-utility-publication.sh` |
+| Charts `.../charts/escalation-config`, `.../charts/debug-session-catalogue` | `charts/*/Chart.yaml` | `release.yml` `publish-chart` | same job, plus `hack/verify-catalogue-supply-chain.sh` for the catalogue |
+
+GitHub Release assets (manifests, `bgctl` binaries, checksums) are covered by
+the release checksums, not by this inventory. Test fixtures (`e2e/images/**`,
+`e2e/fixtures/**` charts) and the `Dockerfile.validator` compatibility symlink
+are listed under `excluded` with a reason; only `e2e/` fixtures and symlinks to
+an inventoried source may be excluded. The optional Artifactory mirror copies
+the controller image digest with its signatures and attestations and is not a
+separate subject.
+
+`hack/verify-release-inventory.sh` fails when
+
+- a `Dockerfile`, `Containerfile` or `Chart.yaml` (including symlinks, outside
+  `node_modules/` and `vendor/`) exists that is neither inventoried nor excluded, or an exclusion breaks the rule above,
+- an inventoried source is missing, or the utility build matrix in
+  `release.yml` differs from `hack/utility-image-matrix.json` (name and context),
+- a publisher no longer binds a digest (`...@sha256`) subject,
+- any signature, SBOM or provenance publish or verify gate named in the
+  inventory's `gateSets` is gone from the workflow or verifier script, or
+- a gate script listed under `invocations` is no longer called from
+  `release.yml` or `utility-release.yml`.
+
+Comment lines do not satisfy a gate. The check is textual: it catches a removed
+or commented-out gate, not one disabled with `if:` or `continue-on-error`, which
+review has to catch.
+
+It is a static check. It runs on every PR through `make verify-release-provenance`
+(the CI lint job, the dry run) and as the `Verify release artifact inventory`
+step of `validate-tag` before anything is published. To add an image or chart,
+add its inventory entry (utilities: a matrix entry) in the same change.
+
+Negative tests prove the gates fail closed: `hack/test-release-inventory.sh`
+(unlisted Dockerfile/Containerfile/symlink/chart, matrix drift, bad exclusions,
+tag-only or unbound subject, a commented-out gate, and every gate and invocation
+in the inventory removed in turn), `hack/verify-catalogue-supply-chain-test.sh`
+(signature, SBOM or provenance rejected by Cosign, standing in for a missing or
+tampered one, for an image or the chart; tag-only chart or image reference),
+`hack/test-slsa-provenance.sh` (tag-only, malformed or embedded digests and a
+non-SHA commit are refused) and `hack/test-utility-publication.sh` (tag-only
+subjects refused by the digest guard, digest mismatch, and the earlier
+signature, SBOM, provenance, platform and smoke failures). They run through
+`make test-release-security` and the utility release contract.
+
 ## Release Checklist
 
 - Verify CI success on the release commit.
