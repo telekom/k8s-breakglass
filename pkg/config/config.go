@@ -284,6 +284,26 @@ type Artifacts struct {
 	TokenSignerKeyID          string                        `yaml:"tokenSignerKeyID,omitempty"`
 	S3                        *ArtifactS3                   `yaml:"s3,omitempty"`
 	Local                     *ArtifactLocal                `yaml:"local,omitempty"`
+	// CredentialRotationGrace is how long a retired target-credential
+	// generation keeps serving already-running terminal streams after a
+	// rotation (blue/green), for example "30s". New streams always bind to the
+	// new generation immediately. Empty or "0s" (the default) revokes the old
+	// generation at once; the maximum is 15m.
+	CredentialRotationGrace string `yaml:"credentialRotationGrace,omitempty"`
+}
+
+// RotationGrace parses CredentialRotationGrace. Unset means no grace period;
+// negative or over-long values are rejected so the window stays bounded.
+func (a Artifacts) RotationGrace() (time.Duration, error) {
+	value := strings.TrimSpace(a.CredentialRotationGrace)
+	if value == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 || d > 15*time.Minute {
+		return 0, fmt.Errorf("artifacts.credentialRotationGrace must be a duration between 0s and 15m, got %q", a.CredentialRotationGrace)
+	}
+	return d, nil
 }
 
 // ArtifactS3 contains administrator-owned S3 settings. The credential Secret
