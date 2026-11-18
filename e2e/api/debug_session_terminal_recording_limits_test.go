@@ -186,7 +186,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		// More than the opt-in lane's limit when run with the default limit.
+		// Half the limit, at most 512 KiB (throughput, #1761).
 		within := min(maxBytes/2, 512<<10)
 		result, err := stream(streamCtx, request(targets[0], output(within, "within-limit")+"; read x", untilMarker("within-limit")))
 		require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 
 	t.Run("recording over the byte limit stops the stream", func(t *testing.T) {
 		if maxBytes > 2<<20 {
-			t.Skipf("the default limit (uploadMaxBytes, %d bytes) is too large to fill through a recorded terminal here; the opt-in lane covers the cut", maxBytes)
+			t.Skipf("the default limit (uploadMaxBytes, %d bytes) is too large to fill through a recorded terminal here (#1761); the opt-in lanes cover the cut", maxBytes)
 		}
 		refresh()
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -211,7 +211,9 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		require.NotContains(t, result.Output, "over-limit", "no unrecorded output passes the limit")
 		require.Less(t, int64(len(result.Output)), maxBytes, "delivered output stays within the recording limit")
 		require.Equal(t, "incomplete", result.Status, "the evidence up to the limit is published as incomplete")
-		require.Less(t, time.Since(started), 3*time.Minute, "the stream ends at the limit, not at the target's exit or session expiry")
+		// About 2 minutes at Kind throughput (#1761); without the cut the stream
+		// runs into the client's 5-minute timeout (sleep 600).
+		require.Less(t, time.Since(started), 270*time.Second, "the stream ends at the limit, not at the target's exit or session expiry")
 		events, err := helpers.AuditEventsByCorrelation(ctx, req.CorrelationID)
 		require.NoError(t, err)
 		var reasons []any

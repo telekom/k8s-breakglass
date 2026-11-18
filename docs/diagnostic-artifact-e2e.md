@@ -92,7 +92,11 @@ multi-cluster lanes set `terminalRecordingMaxBytes: 1048576` and
 `terminalRecordingMaxConcurrent: 3`. The fixture exports the effective values
 (`E2E_RECORDING_MAX_BYTES`, `E2E_RECORDING_MAX_STREAMS`); the test holds that
 many streams open, requires `429` for one more, and requires a recording below
-the byte limit to complete and one above it to stop the stream as incomplete.
+the byte limit to complete and one above it to stop the stream as incomplete
+(audited as `recording_limit`). A recorded terminal moves only a few hundred
+KiB per minute in Kind (#1761), so the stream above the limit runs only in the
+opt-in lanes (1 MiB); that the default byte limit is `uploadMaxBytes` is covered
+by unit tests (`TestTerminalRecordingLimits`, `TestRegisteredTerminalRouteStreamsAndPublishesRecording`).
 
 ## Explicit backend and lifecycle matrix
 
