@@ -345,15 +345,16 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		_ = requestBody.Close()
 	}
 	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, sizes, recorder, abortTransport)
-	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
-	defer finalizeCancel()
 	metadata.FinishedAt = time.Now().UTC()
 	metadata.Complete = streamErr == nil && apiCtx.Err() == nil && metadata.FinishedAt.Before(binding.ExpiresAt)
 	if metadata.Complete {
-		checkCtx, checkCancel := context.WithTimeout(finalizeCtx, 2*time.Second)
-		metadata.Complete = connection.Validate(checkCtx) == nil
-		checkCancel()
+		// Own budget: retries must not eat into publication's finalize timeout.
+		probeCtx, probeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalFinalValidateBudget)
+		metadata.Complete = validateAfterCleanStream(probeCtx, connection)
+		probeCancel()
 	}
+	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
+	defer finalizeCancel()
 	metadata.Frames = recording.Frames
 	// Publication preserves already-admitted evidence after disconnection or expiry.
 	// The durable reservation, not a now-revoked stream lease, fences this write.
@@ -389,6 +390,43 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
+}
+
+// The completeness probe after a stream that ended without error: at most
+// terminalFinalValidateAttempts live checks, terminalFinalValidateBackoff
+// apart, within terminalFinalValidateBudget.
+const (
+	terminalFinalValidateAttempts = 3
+	terminalFinalValidateBackoff  = 250 * time.Millisecond
+	terminalFinalValidateBudget   = 5 * time.Second
+)
+
+// validateAfterCleanStream reports whether the connection authority still holds
+// after a stream that ended without error. The probe is a handful of live API
+// reads with a short timeout, so one slow or failed read on a loaded cluster
+// must not turn a cleanly closed stream into "incomplete". An attempt succeeds
+// only if the authority holds at that moment, and nothing executes after the
+// stream ended, so retrying admits nothing new.
+func validateAfterCleanStream(ctx context.Context, connection TerminalRecordingConnection) bool {
+	for attempt := 0; attempt < terminalFinalValidateAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(terminalFinalValidateBackoff):
+			}
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := connection.Validate(checkCtx)
+		cancel()
+		if err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // errTerminalStreamExpired reports that the stream reached its binding expiry.
@@ -549,6 +587,12 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 				err := connection.Validate(validateCtx)
 				validateCancel()
 				if err != nil {
+					if streamCtx.Err() != nil {
+						// The stream already ended (for example the command exited
+						// cleanly) and interrupted this check: not a revocation.
+						// The post-stream probe decides completeness.
+						return
+					}
 					select {
 					case validationErr <- fmt.Errorf("terminal recording connection validation failed: %w", err):
 					default:

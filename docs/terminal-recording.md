@@ -223,7 +223,10 @@ must use the controller endpoint. Retention metadata is
 stored in an independent `DebugSessionArtifact` before target execution. Captured
 bytes and final metadata are published through that reservation even after
 stream expiry or revocation; incomplete streams are marked `complete: false`. A final live-authority check
-classifies completion without discarding evidence after revocation.
+classifies completion without discarding evidence after revocation. It is
+checked up to three times within 5 seconds, so one slow API read does not mark
+a cleanly ended stream incomplete; a periodic in-stream check that the
+stream's own clean end interrupts is not treated as a revocation.
 The shared artifact controller recovers ambiguous publication and performs
 exact-version cleanup without depending on the session status or its lifetime.
 Replay permits retained terminal sessions, but requires the original live session
