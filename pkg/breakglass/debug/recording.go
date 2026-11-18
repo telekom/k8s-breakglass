@@ -67,10 +67,9 @@ type TerminalRecording struct {
 	Size int64
 }
 
-// SegmentFlusher durably persists one frame-aligned segment plus the chain
-// head after it. data is only valid for the duration of the call; it is empty
-// for a final commit when everything was flushed already.
-type SegmentFlusher func(data []byte, chainHead [sha256.Size]byte, final bool) error
+// SegmentFlusher durably persists one non-empty, frame-aligned segment plus
+// the chain head after it. data is only valid for the duration of the call.
+type SegmentFlusher func(data []byte, chainHead [sha256.Size]byte) error
 
 // TerminalRecorder frames and hash-chains terminal bytes while enforcing a
 // hard byte limit. It is safe for stdout and stderr writers to use
@@ -94,10 +93,12 @@ type TerminalRecorder struct {
 }
 
 // NewSegmentedTerminalRecorder is NewTerminalRecorder with incremental flush:
-// whenever segmentBytes of frames are buffered they are handed to flush at a
-// frame boundary and released, so memory is bounded by one segment plus one
-// frame. A flush error fails the recorder (and therefore the stream) closed;
-// everything flushed before it stays committed.
+// once segmentBytes of frames are buffered, the next Write first hands them to
+// flush at a frame boundary and releases them, so memory is bounded by one
+// segment plus one frame. A flush error fails that Write and every later one
+// (and therefore the stream) closed: the frame that needed the flush is
+// neither recorded nor delivered. Everything flushed before stays committed,
+// and Finalize retries the buffered, already delivered tail once.
 func NewSegmentedTerminalRecorder(maxBytes, segmentBytes int64, flush SegmentFlusher) *TerminalRecorder {
 	r := NewTerminalRecorder(maxBytes)
 	if flush != nil && segmentBytes > 0 {
@@ -109,20 +110,30 @@ func NewSegmentedTerminalRecorder(maxBytes, segmentBytes int64, flush SegmentFlu
 func (r *TerminalRecorder) size() int64 { return r.flushed + int64(r.bytes.Len()) }
 
 // flushLocked hands the buffered frames to the flusher and releases them.
+// After a failure only the final flush tries again; the first error stays.
 func (r *TerminalRecorder) flushLocked(final bool) error {
-	if r.flushErr != nil {
+	if r.flushErr != nil && !final {
 		return r.flushErr
 	}
-	if r.bytes.Len() == 0 && !final {
-		return nil
+	if r.bytes.Len() == 0 {
+		return r.flushErr
 	}
-	if err := r.flush(r.bytes.Bytes(), r.previous, final); err != nil {
-		r.flushErr = fmt.Errorf("flush terminal recording segment: %w", err)
+	if err := r.flush(r.bytes.Bytes(), r.previous); err != nil {
+		if r.flushErr == nil {
+			r.flushErr = fmt.Errorf("flush terminal recording segment: %w", err)
+		}
 		return r.flushErr
 	}
 	r.flushed += int64(r.bytes.Len())
 	r.bytes.Reset()
-	return nil
+	return r.flushErr
+}
+
+// FlushError reports the first failed incremental flush, if any.
+func (r *TerminalRecorder) FlushError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.flushErr
 }
 
 // NewTerminalRecorder creates a bounded recorder. A zero limit uses the
@@ -152,6 +163,11 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	if r.maxBytes < 0 {
 		return errTerminalRecordingLimit
 	}
+	if r.flush != nil && r.bytes.Len() >= r.segmentBytes {
+		if err := r.flushLocked(false); err != nil {
+			return err
+		}
+	}
 	if r.flushErr != nil {
 		return r.flushErr
 	}
@@ -177,9 +193,6 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	r.frames++
 	if r.flush != nil {
 		_, _ = r.digest.Write(frame)
-		if r.bytes.Len() >= r.segmentBytes {
-			return r.flushLocked(false)
-		}
 	}
 	return nil
 }
@@ -220,7 +233,7 @@ func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 		r.closed = true
 	}
 	if r.flush != nil {
-		// Final commit: flush the tail (or only the final manifest).
+		// Final commit of the tail; retried once after an earlier failure.
 		_ = r.flushLocked(true)
 		sum := r.digest.Sum(nil)
 		r.result = &TerminalRecording{SHA256: hex.EncodeToString(sum), Frames: r.frames, Size: r.flushed}

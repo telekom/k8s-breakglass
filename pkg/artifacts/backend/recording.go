@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -109,6 +110,12 @@ func (service *Service) Recordings(ctx context.Context, namespace, sessionName, 
 // No public upload route calls this method. Exact reservation identity and the
 // retention deadline, rather than current access permission, fence publication.
 func (service *Service) FinalizeRecording(ctx context.Context, reservation Record, source io.Reader, metadata RecordingMetadata) (PublicRecord, error) {
+	return service.finalizeRecording(ctx, reservation, source, metadata, "")
+}
+
+// finalizeRecording is FinalizeRecording that, when chainHead is set, also
+// requires the staged frames to end at that hex SHA-256 chain head.
+func (service *Service) finalizeRecording(ctx context.Context, reservation Record, source io.Reader, metadata RecordingMetadata, chainHead string) (PublicRecord, error) {
 	current, err := service.Recording(ctx, reservation.Namespace, reservation.SessionName, reservation.ArtifactID)
 	if err != nil {
 		return PublicRecord{}, err
@@ -127,7 +134,7 @@ func (service *Service) FinalizeRecording(ctx context.Context, reservation Recor
 		return PublicRecord{}, err
 	}
 	defer func() { _ = staged.Close(); _ = os.Remove(staged.Name()) }()
-	frames, err := validateRecordingFrames(ctx, staged, size)
+	frames, err := validateRecordingFramesWithHead(ctx, staged, size, chainHead)
 	if err != nil {
 		return PublicRecord{}, err
 	}
@@ -276,8 +283,20 @@ func (r *recordingReader) Read(p []byte) (int, error) {
 }
 
 func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) (int64, error) {
-	frames, _, err := validateRecordingFramesHead(ctx, source, size)
-	return frames, err
+	return validateRecordingFramesWithHead(ctx, source, size, "")
+}
+
+// validateRecordingFramesWithHead also requires the chain to end at the hex
+// chainHead when it is set.
+func validateRecordingFramesWithHead(ctx context.Context, source io.Reader, size int64, chainHead string) (int64, error) {
+	frames, head, err := validateRecordingFramesHead(ctx, source, size)
+	if err != nil {
+		return 0, err
+	}
+	if chainHead != "" && hex.EncodeToString(head[:]) != chainHead {
+		return 0, fmt.Errorf("%w: recording chain head does not match its manifest", ErrConflict)
+	}
+	return frames, nil
 }
 
 // validateRecordingFramesHead also returns the SHA-256 chain head: the digest

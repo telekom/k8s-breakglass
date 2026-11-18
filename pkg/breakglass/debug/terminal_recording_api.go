@@ -316,17 +316,17 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	}
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
 	// Opt-in incremental flush: bounded memory and crash-durable evidence.
-	var flushErr error
-	segmented := c.recordingSegmentBytes > 0
-	if segmented {
-		writer := c.recordingArtifacts.NewSegmentWriter(reservation)
-		recorder = NewSegmentedTerminalRecorder(reservation.MaxBytes, c.recordingSegmentBytes, func(data []byte, head [sha256.Size]byte, final bool) error {
+	var segments *backend.SegmentWriter
+	if c.recordingSegmentBytes > 0 {
+		segments = c.recordingArtifacts.NewSegmentWriter(reservation)
+		recorder = NewSegmentedTerminalRecorder(reservation.MaxBytes, c.recordingSegmentBytes, func(data []byte, head [sha256.Size]byte) error {
 			// Detached: a disconnecting client must not abort evidence persistence.
+			// Output waits for the flush (up to this timeout): backpressure.
 			flushCtx, flushCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 			defer flushCancel()
-			err := writer.Append(flushCtx, data, head, final)
-			if err != nil && flushErr == nil {
-				flushErr = err
+			err := segments.Append(flushCtx, data, head)
+			if err != nil {
+				c.log.Warnw("Terminal recording segment flush failed; stopping the stream", "session", session.Name, "recordingId", reservation.ArtifactID, "error", err)
 			}
 			return err
 		})
@@ -372,8 +372,8 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	// The durable reservation, not a now-revoked stream lease, fences this write.
 	var published backend.PublicRecord
 	for attempt := 0; attempt < 3; attempt++ {
-		if segmented {
-			published, err = c.recordingArtifacts.FinalizeRecordingFromSegments(finalizeCtx, reservation, metadata)
+		if segments != nil {
+			published, err = segments.Finalize(finalizeCtx, metadata)
 		} else {
 			published, err = c.recordingArtifacts.FinalizeRecording(finalizeCtx, reservation, bytes.NewReader(recording.Bytes), metadata)
 		}
@@ -384,6 +384,10 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	ctx.Header("X-Breakglass-Recording-ID", reservation.ArtifactID)
 	recordingDetails["frames"] = metadata.Frames
 	recordingDetails["bytes"] = recording.Size
+	if err == nil && published.Recording != nil {
+		// What was published, which after a failed flush is the committed prefix.
+		recordingDetails["frames"], recordingDetails["bytes"] = published.Recording.Frames, published.Size
+	}
 	recordingDetails["complete"] = metadata.Complete
 	if streamErr != nil {
 		recordingDetails["streamError"] = "stream aborted"
@@ -391,7 +395,10 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		// Secret names: the bounded reason code identifies what changed.
 		recordingDetails["abortReason"] = terminalRecordingAbortReason(streamErr)
 	}
-	if flushErr != nil {
+	if err != nil && finalizeCtx.Err() == nil {
+		c.log.Warnw("Terminal recording publication failed", "session", session.Name, "recordingId", reservation.ArtifactID, "error", err)
+	}
+	if recorder.FlushError() != nil {
 		// The stream was stopped fail-closed; flushed segments stay committed.
 		flushDetails := maps.Clone(recordingDetails)
 		flushDetails["stage"] = "flush"
@@ -489,6 +496,36 @@ func (c *DebugSessionAPIController) emitTerminalRecordingAudit(ctx *gin.Context,
 		return fmt.Errorf("deliver %s audit event: %w", eventType, err)
 	}
 	return nil
+}
+
+// AuditRecoveredTerminalRecording emits the finalized event for a recording
+// that the artifact controller published from incremental-flush segments after
+// the stream's controller died. No request exists, so the actor is the system.
+func (c *DebugSessionAPIController) AuditRecoveredTerminalRecording(ctx context.Context, record backend.Record, published backend.PublicRecord) {
+	emitter, ok := c.auditService.(syncAuditEmitter)
+	if c.auditService == nil || !ok || !c.auditService.IsEnabled() {
+		c.log.Warnw("Recovered terminal recording was not audited: audit is not available", "session", record.SessionName, "recordingId", record.ArtifactID)
+		return
+	}
+	details := map[string]interface{}{"recordingId": record.ArtifactID, "recovered": true, "complete": false, "sha256": published.SHA256, "bytes": published.Size}
+	if published.Recording != nil {
+		details["frames"] = published.Recording.Frames
+		details["podNamespace"], details["podName"], details["podUID"] = published.Recording.PodNamespace, published.Recording.PodName, published.Recording.PodUID
+		details["operation"], details["formatVersion"] = published.Recording.Operation, published.Recording.FormatVersion
+	}
+	event := &audit.Event{
+		Type:           audit.EventDebugSessionTerminalRecordingFinalized,
+		Timestamp:      time.Now(),
+		Actor:          audit.Actor{User: "system"},
+		Target:         audit.Target{UID: record.SessionUID, Kind: "DebugSession", Name: record.SessionName, Namespace: record.Namespace},
+		RequestContext: &audit.RequestContext{SessionName: record.SessionName, SessionUID: record.SessionUID, DebugSessionName: record.SessionName, DebugSessionUID: record.SessionUID, CorrelationID: uuid.NewString()},
+		Details:        details,
+	}
+	emitCtx, cancel := context.WithTimeout(ctx, terminalRecordingAuditTimeout)
+	defer cancel()
+	if err := emitter.EmitSync(emitCtx, event); err != nil {
+		c.log.Errorw("Recovered terminal recording audit event was not delivered", "session", record.SessionName, "recordingId", record.ArtifactID, "error", err)
+	}
 }
 
 // terminalRecordingFlushWriter keeps interactive exec/attach output flowing
