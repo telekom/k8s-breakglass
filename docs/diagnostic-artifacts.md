@@ -336,13 +336,24 @@ DebugSession connection leases (monotonic epoch plus credential generation) fenc
 
 | Path | Fence |
 | --- | --- |
-| Session activation, renewal | `AcquireForSession`, `ValidateSession`, `RenewSession` against the live session |
-| kubectl-debug exec/attach/inject requests | lease validated per request |
-| Artifact upload/download | `NewConnectionLeaseFence` validates epoch and expiry per request |
-| Terminal recording streams | generation-bound stream claim, re-validated every 500 ms; blue/green via `artifacts.credentialRotationGrace` |
-| Terminal cleanup | `RevokeSession` plus `RevokeUnrecordedSessionLeases`, UID/resourceVersion-guarded so a successor lease is never deleted |
+| Session activation and renewal | `AcquireForSession` records the session-scoped Lease; `RenewSession` re-reads the live session before extending it; `ValidateSession` checks the Lease |
+| kubectl-debug ephemeral-container inject, pod copy, node debug pod | `ValidateSession` on every request |
+| Artifact collection, upload and download | `NewConnectionLeaseFence` checks Lease UID, holder, epoch, target, profile and the live session before and after I/O and on every chunk; the artifact reconciler revokes a collection whose session Lease is no longer valid |
+| Terminal recording streams | per-target Lease with a generation-bound stream claim, re-validated every 500 ms together with the live session; blue/green via `artifacts.credentialRotationGrace` |
+| Session end | `RevokeSession` (it also sweeps the session's own leases when the recorded reference is stale); deletion additionally runs `RevokeUnrecordedSessionLeases`. Deletes are UID/resourceVersion-guarded, so a successor lease is never deleted |
 
-Controller-internal operations (hotfix, node maintenance, traffic mirror, collector Jobs) use the privileged
-target credential on behalf of the controller, not a user connection, and are deliberately not lease-fenced.
-Known limit: a terminal stream claim left by a crashed controller pod blocks a new stream on the same target
-until the session expires; the lease itself stays valid across rollover.
+Not lease-fenced:
+
+- Direct `kubectl exec`, `attach`, `port-forward` and `logs` through the SubjectAccessReview webhook are fenced by the
+  live session state (state, expiry, allowed pods, participants), not by the Lease. When terminal recording is
+  required, direct exec and attach are denied and must use the fenced terminal endpoint.
+- Terminal recording replay is authorized against the live session, so evidence stays readable after the session.
+- Controller-internal operations (hotfix, node maintenance, traffic mirror) use the privileged target credential on
+  behalf of the controller, not a user connection.
+
+Known limits:
+
+- A terminal stream claim is released when the stream closes. A controller restart, rollout or crash during an
+  active recorded stream leaves the claim behind, and it blocks a new stream on the same target until the session
+  expiry at the time the claim was taken. The session Lease itself stays valid across the rollover.
+- Per-target terminal recording Leases are not deleted at session end; they expire with the session.
