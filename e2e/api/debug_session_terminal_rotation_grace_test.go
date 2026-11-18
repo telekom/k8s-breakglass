@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -83,8 +82,11 @@ func TestDebugSessionTerminalRecordingRotationGraceE2E(t *testing.T) {
 	short("before-rollover")
 	before := liveLease()
 
+	// Enabling the grace restarts the controller: a rollover with an active
+	// session. The config is restored when the whole test ends.
+	setCredentialRotationGrace(t, ctx, rotationGraceE2E.String())
+
 	t.Run("active session survives controller rollover", func(t *testing.T) {
-		setCredentialRotationGrace(t, ctx, rotationGraceE2E.String())
 		after := liveLease()
 		require.Equal(t, before.UID, after.UID, "the session keeps its Lease across the rollover")
 		require.Equal(t, before.Epoch, after.Epoch, "a rollover never re-fences the session")
@@ -97,18 +99,40 @@ func TestDebugSessionTerminalRecordingRotationGraceE2E(t *testing.T) {
 		started := make(chan struct{})
 		type outcome struct {
 			rotated, greenDone time.Time
+			err                error
 		}
 		rotation := make(chan outcome, 1)
+		// No require in this goroutine: failures travel back over the channel.
 		go func() {
 			select {
 			case <-started:
 			case <-ctx.Done():
 				return
 			}
-			annotate(t, ctx, s.Client, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name}})
+			secret := &corev1.Secret{}
+			err := s.Client.Get(ctx, key, secret)
+			if err == nil {
+				patch := client.MergeFrom(secret.DeepCopy())
+				if secret.Annotations == nil {
+					secret.Annotations = map[string]string{}
+				}
+				secret.Annotations["e2e.breakglass.telekom.com/terminal-recording-rotation"] = fmt.Sprint(time.Now().UnixNano())
+				err = s.Client.Patch(ctx, secret, patch)
+			}
+			if err != nil {
+				rotation <- outcome{err: fmt.Errorf("rotate credential Secret: %w", err)}
+				return
+			}
 			rotated := time.Now()
 			// New streams bind to the new generation while the old one drains.
-			short("green")
+			if !assert.EventuallyWithT(t, func(c *assert.CollectT) {
+				result := stream(c, "echo green", nil, "")
+				require.Equal(c, "completed", result.Status)
+				require.Contains(c, result.Output, "green")
+			}, time.Minute, 2*time.Second) {
+				rotation <- outcome{err: fmt.Errorf("no new-generation stream completed after the rotation")}
+				return
+			}
 			rotation <- outcome{rotated: rotated, greenDone: time.Now()}
 		}()
 
@@ -133,9 +157,10 @@ func TestDebugSessionTerminalRecordingRotationGraceE2E(t *testing.T) {
 		var got outcome
 		select {
 		case got = <-rotation:
-		case <-time.After(time.Minute):
+		case <-time.After(2 * time.Minute):
 			t.Fatal("no new-generation stream completed after the rotation")
 		}
+		require.NoError(t, got.err)
 		require.True(t, got.greenDone.Before(blueDone), "the new stream ran while the old one was still draining")
 		drained := blueDone.Sub(got.rotated)
 		t.Logf("old stream drained %s after the rotation (grace %s)", drained, rotationGraceE2E)

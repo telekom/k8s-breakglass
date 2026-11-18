@@ -547,6 +547,8 @@ func TestCredentialRotationFence(t *testing.T) {
 	require.ErrorIs(t, off.check(changed, now), cluster.ErrPrivilegedInputChanged, "default: a rotation ends the stream at once")
 
 	grace := &credentialRotationFence{grace: 30 * time.Second}
+	require.ErrorIs(t, grace.check(changed, now), cluster.ErrPrivilegedInputChanged, "before the command starts nothing is tolerated")
+	grace.armed.Store(true)
 	require.NoError(t, grace.check(nil, now))
 	require.Equal(t, other, grace.check(other, now), "only credential input changes get a grace")
 	require.NoError(t, grace.check(changed, now), "first observed rotation is tolerated")
@@ -555,5 +557,5 @@ func TestCredentialRotationFence(t *testing.T) {
 	require.Error(t, grace.check(changed, now.Add(time.Hour)))
 
 	api := (&DebugSessionAPIController{}).WithTerminalRecordingConnections(NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(nil).WithRotationGrace(time.Minute)))
-	require.Equal(t, time.Minute, api.recordingRotationGrace, "the stream fence uses the lease service's grace")
+	require.Equal(t, time.Minute, api.newCredentialRotationFence().grace, "the stream fence uses the lease service's grace")
 }

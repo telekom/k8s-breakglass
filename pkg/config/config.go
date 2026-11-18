@@ -295,10 +295,11 @@ type Artifacts struct {
 // RotationGrace parses CredentialRotationGrace. Unset means no grace period;
 // negative or over-long values are rejected so the window stays bounded.
 func (a Artifacts) RotationGrace() (time.Duration, error) {
-	if a.CredentialRotationGrace == "" {
+	value := strings.TrimSpace(a.CredentialRotationGrace)
+	if value == "" {
 		return 0, nil
 	}
-	d, err := time.ParseDuration(a.CredentialRotationGrace)
+	d, err := time.ParseDuration(value)
 	if err != nil || d < 0 || d > 15*time.Minute {
 		return 0, fmt.Errorf("artifacts.credentialRotationGrace must be a duration between 0s and 15m, got %q", a.CredentialRotationGrace)
 	}
