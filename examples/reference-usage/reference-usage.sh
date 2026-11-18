@@ -595,9 +595,14 @@ wait_for_state() {
 webhook_check() {
   local expected="$1" resource="$2" payload response allowed
   payload="$(jq -n --arg user "${REQUESTER_EMAIL}" --arg base_group "${REFERENCE_REQUESTER_GROUP}" --arg escalated_group "${REFERENCE_ESCALATED_GROUP}" --arg resource "${resource}" --arg namespace "${NAMESPACE}" '{apiVersion:"authorization.k8s.io/v1",kind:"SubjectAccessReview",spec:{user:$user,groups:[$base_group,$escalated_group],resourceAttributes:{verb:"get",resource:$resource,namespace:$namespace}}}')"
-  response="$(curl -sS -X POST -H 'Content-Type: application/json' --data "${payload}" "${API_BASE}/api/breakglass/webhook/authorize/${TENANT}")"
-  allowed="$(jq -r '.status.allowed' <<<"${response}")"
-  [[ "${allowed}" == "${expected}" ]] || die "webhook ${resource}: expected allowed=${expected}, got ${response}"
+  # A fresh approval can take a moment to reach the authorizer; poll for up to 30s.
+  for _ in $(seq 1 30); do
+    response="$(curl -sS -X POST -H 'Content-Type: application/json' --data "${payload}" "${API_BASE}/api/breakglass/webhook/authorize/${TENANT}")"
+    allowed="$(jq -r '.status.allowed' <<<"${response}")"
+    [[ "${allowed}" == "${expected}" ]] && return 0
+    sleep 1
+  done
+  die "webhook ${resource}: expected allowed=${expected}, got ${response}"
 }
 
 reference_flow() {
