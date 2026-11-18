@@ -167,6 +167,10 @@ jobs:
             kubectl --context kind-breakglass-reference -n breakglass-system describe pods
             kubectl --context kind-breakglass-reference -n breakglass-system logs --all-containers --tail=300 deployment/breakglass-manager
             kubectl --context kind-breakglass-reference -n breakglass-system get events --sort-by=.lastTimestamp
+            kubectl --context kind-breakglass-reference get roledefinition,binddefinition -A -o yaml
+            kubectl --context kind-breakglass-reference get clusterrole,clusterrolebinding -o yaml -l reference-usage.example.com/run
+            kubectl --context kind-breakglass-reference get clusterrole -o yaml | grep -B3 -A25 'reference-restricted-role'
+            kubectl --context kind-breakglass-reference -n auth-operator-system logs deploy/auth-operator-controller-manager --tail=200
           } > "${EVIDENCE_DIR}/cluster-diagnostics.txt" 2>&1 || true
       - name: Require no skipped or failed rows
         if: ${{ always() && env.MODE == 'published' }}
