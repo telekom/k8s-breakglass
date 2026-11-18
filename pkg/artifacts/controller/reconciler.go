@@ -29,7 +29,6 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
-	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
@@ -64,7 +63,16 @@ type Reconciler struct {
 	Now              func() time.Time
 	ClusterProvider  TargetClientProvider
 	LiveReader       ctrlclient.Reader
+	// RecordingRecovered, when set, is told about a terminal recording the
+	// reconciler published from incremental-flush segments (audit).
+	RecordingRecovered func(context.Context, backend.Record, backend.PublicRecord)
 }
+
+// terminalRecordingRecoveryGrace is how long after a stream's expiry its own
+// handler may still flush and publish (flush, completeness probe and
+// finalize, each bounded, plus clock skew between replicas). Recovery waits
+// for it so it never publishes a prefix the handler is about to extend.
+const terminalRecordingRecoveryGrace = time.Minute
 
 func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	if reconciler.Client == nil || reconciler.LiveReader == nil || reconciler.Service == nil || reconciler.TokenIssuer == nil || reconciler.ClusterProvider == nil {
@@ -123,15 +131,15 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
 		}
-		if record.State == backend.StatePending && record.Recording != nil && !now().Before(record.Recording.StreamExpiresAt) {
-			// The stream can no longer be running: publish whatever incremental
-			// flush committed (opt-in) as incomplete evidence. Without segments
-			// there is nothing to recover and the reservation stays as before.
-			recovered := *record.Recording
-			recovered.Complete, recovered.FinishedAt = false, recovered.StreamExpiresAt
-			if _, err := reconciler.Service.FinalizeRecordingFromSegments(ctx, record, recovered); err != nil && !errors.Is(err, storage.ErrNotFound) {
-				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-			}
+		// Neither the stream nor its handler can still be running: publish
+		// whatever incremental flush committed (opt-in) as incomplete evidence.
+		// Without segments the reservation stays as before.
+		published, recovered, err := reconciler.Service.RecoverAbandonedRecording(ctx, record, terminalRecordingRecoveryGrace)
+		if err != nil && reconciler.Log != nil {
+			reconciler.Log.Warnw("Terminal recording recovery from segments failed", "namespace", record.Namespace, "recordingId", record.ArtifactID, "error", err)
+		}
+		if recovered && reconciler.RecordingRecovered != nil {
+			reconciler.RecordingRecovered(ctx, record, published)
 		}
 		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
 	}

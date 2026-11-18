@@ -143,7 +143,7 @@ own directories or sentinels at startup. Provision an empty volume once with
 reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed
 generation readiness requirement. `terminalRecordingSegmentBytes` (default
-off, 65536 to 67108864 when set) enables
+off, 65536 to 67108864 when set, and at least `uploadMaxBytes` / 4096) enables
 [incremental recording flush](terminal-recording.md#incremental-flush-opt-in).
 
 ### `server`

@@ -213,34 +213,45 @@ metadata; it does not redact or alter the authorized terminal stream bytes.
 
 ### Incremental flush (opt-in)
 
-By default a stream's framed bytes are held in memory (up to 512 MiB) and
-published when the stream ends, so a controller crash, OOM kill or node loss
-mid-stream leaves only an empty reservation. Set
+By default a stream's framed bytes are held in memory (up to the recording
+limit) and published when the stream ends, so a controller crash, OOM kill or
+node loss mid-stream leaves only an empty reservation. Set
 `artifacts.terminalRecordingSegmentBytes` (65536 to 67108864; `0`/unset keeps
 the default behavior) to persist the recording while it runs:
 
-- Frames are flushed at frame boundaries once about that many bytes are
-  buffered. Per-stream memory is bounded by one segment plus one frame.
+- Once about that many bytes are buffered, they are flushed at a frame boundary
+  before the next frame is recorded. Per-stream memory is bounded by one
+  segment plus one frame. The flush happens while output waits, so a slow
+  backend slows the terminal (each flush is bounded by 10 seconds).
 - Each segment is a separate create-only object in the configured artifact
   backend (local PVC or S3). After each segment a numbered manifest object is
-  written that lists every segment (index, size, SHA-256) and the SHA-256 chain
-  head. The latest manifest is the commit point; bytes after it are unproven
-  and ignored. At most 4096 segments are written per recording.
-- If a flush fails, the stream is stopped (fail closed: no unrecorded bytes
-  pass), the recording is published as incomplete from what was committed, and
-  `debug_session.terminal_recording_failed` is emitted with `stage: flush`
-  (and `stage: finalize` if publication fails as well).
-- At the end of a stream the controller verifies the committed segments (sizes,
-  digests, frame hash chain, chain head) and publishes them as the usual single
-  recording artifact, so listing, replay and retention are unchanged. The
-  segment objects are then deleted. With the local backend the volume must
-  briefly hold the segments and the assembled object (about twice the
-  recording size).
+  written with the segment count, total size and SHA-256 chain head; the frame
+  hash chain commits to every earlier byte, so manifests stay small. The latest
+  manifest is the commit point; bytes after it are unproven and ignored.
+- At most 4096 segments are written per recording, so 4096 x segment size must
+  be at least `uploadMaxBytes`; a smaller segment size is rejected at startup.
+- If a flush fails, the stream is stopped: the frame that needed the flush and
+  everything after it are neither recorded nor delivered.
+  `debug_session.terminal_recording_failed` is emitted with `stage: flush` (and
+  `stage: finalize` if publication fails as well). At the end of the stream the
+  buffered, already delivered tail is flushed once more; if that also fails, up
+  to one segment of output the user already saw is missing from the evidence.
+  The committed part is published as incomplete.
+- At the end of a stream the controller publishes the committed segments as
+  the usual single recording artifact, after checking their size, frame hash
+  chain and chain head, so listing, replay and retention are unchanged. The
+  segment objects are then deleted. Publication stages the recording once in
+  `stagingDir`, so the local backend briefly holds the segments, the staged copy
+  and the published object (about three times the recording size).
 - If the controller dies mid-stream, the artifact controller publishes the
-  committed prefix as an incomplete recording (`complete: false`) once the
-  stream's binding has expired. Until then the segments and manifests stay in
-  the backend. Segments of recordings that are never published are removed with
-  the reservation at retention expiry.
+  committed prefix as an incomplete recording (`complete: false`) one minute
+  after the stream's binding expired, so a handler that is still finishing is
+  never overtaken. It audits `debug_session.terminal_recording_finalized` with
+  `recovered: true` and actor `system`. Up to one segment of output delivered
+  before the crash is not in that prefix. Until then the segments and manifests
+  stay in the backend; segments of recordings that are never published are
+  removed with the reservation at retention expiry (a retention shorter than
+  that minute removes them unpublished).
 
 ### Revocation and in-flight output
 

@@ -289,3 +289,31 @@ func TestArtifactSessionFenceHonorsExactIdleBoundary(t *testing.T) {
 	session.Status.ResolvedTemplate.Constraints.IdleTimeout = ""
 	require.True(t, artifactSessionIsLive(session, binding, now))
 }
+
+func TestBuildValidatesTerminalRecordingSegmentBytesAtStartup(t *testing.T) {
+	for name, tt := range map[string]struct {
+		seg, upload int64
+		wantErr     string
+	}{
+		"off":                 {0, 512 << 20, ""},
+		"minimum":             {MinTerminalRecordingSegmentBytes, 256 << 20, ""},
+		"maximum":             {MaxTerminalRecordingSegmentBytes, 512 << 20, ""},
+		"negative":            {-1, 1 << 20, "within"},
+		"below minimum":       {MinTerminalRecordingSegmentBytes - 1, 1 << 20, "within"},
+		"above maximum":       {MaxTerminalRecordingSegmentBytes + 1, 1 << 20, "within"},
+		"too few for maximum": {MinTerminalRecordingSegmentBytes, 512 << 20, "too small"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Artifacts{Enabled: true, UploadMaxBytes: tt.upload, TerminalRecordingSegmentBytes: tt.seg}
+			err := validateTerminalRecordingSegmentBytes(cfg)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+			components, buildErr := Build(context.Background(), cfg, "breakglass", Dependencies{})
+			require.ErrorContains(t, buildErr, "artifacts.terminalRecordingSegmentBytes", "rejected before any dependency is used")
+			require.Nil(t, components)
+		})
+	}
+}

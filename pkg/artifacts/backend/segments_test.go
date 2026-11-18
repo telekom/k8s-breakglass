@@ -52,16 +52,16 @@ func newSegmentFixture(t *testing.T, frames int) segmentFixture {
 	return segmentFixture{service: newServiceForTest(t, repo, store, allowAuthorizer{}), store: store, repo: repo, record: record, frames: v2Frames(offsets, directions)}
 }
 
-// flush writes the frames in segments of perSegment frames and returns the
-// writer plus the chain head after the last flushed frame.
-func (f segmentFixture) flush(t *testing.T, perSegment, count int, final bool) {
+// flush writes the frames in segments of perSegment frames.
+func (f segmentFixture) flush(t *testing.T, perSegment, count int) *SegmentWriter {
 	t.Helper()
 	w := f.service.NewSegmentWriter(f.record)
 	for start := 0; start < count; start += perSegment {
 		end := min(start+perSegment, count)
 		head := sha256.Sum256(f.frames[(end-1)*testFrameSize : end*testFrameSize])
-		require.NoError(t, w.Append(context.Background(), f.frames[start*testFrameSize:end*testFrameSize], head, final && end == count))
+		require.NoError(t, w.Append(context.Background(), f.frames[start*testFrameSize:end*testFrameSize], head))
 	}
+	return w
 }
 
 func (f segmentFixture) replaceSegment(t *testing.T, index int, content []byte) {
@@ -73,24 +73,30 @@ func (f segmentFixture) replaceSegment(t *testing.T, index int, content []byte) 
 	require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, content))
 }
 
+func (f segmentFixture) objects(t *testing.T, kind string) int {
+	t.Helper()
+	n, err := f.service.segmentObjectCount(context.Background(), f.record, kind)
+	require.NoError(t, err)
+	return n
+}
+
 func TestSegmentsCrashKeepsCommittedPrefixVerifiable(t *testing.T) {
 	f := newSegmentFixture(t, 7)
-	// No final flag: simulates a controller killed mid-stream after 3 segments.
-	f.flush(t, 3, 7, false)
-	manifest, size, err := f.service.VerifyRecordingSegments(context.Background(), f.record)
+	// A controller killed mid-stream after 3 segments.
+	f.flush(t, 3, 7)
+	manifest, err := f.service.VerifyRecordingSegments(context.Background(), f.record)
 	require.NoError(t, err)
-	require.Len(t, manifest.Segments, 3)
-	require.EqualValues(t, 7*testFrameSize, size)
-	require.False(t, manifest.Final)
+	require.Equal(t, 3, manifest.Segments)
+	require.EqualValues(t, 7*testFrameSize, manifest.Size)
 	require.Equal(t, 2, manifest.Seq)
 
 	// A segment written right before the crash, without its manifest, is not committed.
 	key, err := f.service.segmentObjectKey(f.record, "segment", 3)
 	require.NoError(t, err)
 	require.NoError(t, f.service.putSegmentObject(context.Background(), f.record, key, []byte("uncommitted")))
-	_, size, err = f.service.VerifyRecordingSegments(context.Background(), f.record)
+	manifest, err = f.service.VerifyRecordingSegments(context.Background(), f.record)
 	require.NoError(t, err)
-	require.EqualValues(t, 7*testFrameSize, size)
+	require.EqualValues(t, 7*testFrameSize, manifest.Size)
 }
 
 func TestSegmentsDetectTruncationAndTampering(t *testing.T) {
@@ -104,6 +110,14 @@ func TestSegmentsDetectTruncationAndTampering(t *testing.T) {
 			changed[testFrameSize-1] ^= 0xff
 			f.replaceSegment(t, 1, changed)
 		},
+		"modified last frame": func(t *testing.T, f segmentFixture) {
+			changed := bytes.Clone(f.frames[6*testFrameSize : 9*testFrameSize])
+			changed[len(changed)-1] ^= 0xff
+			f.replaceSegment(t, 2, changed)
+		},
+		"trailing bytes on the last segment": func(t *testing.T, f segmentFixture) {
+			f.replaceSegment(t, 2, append(bytes.Clone(f.frames[6*testFrameSize:9*testFrameSize]), "junk"...))
+		},
 		"missing tail segment": func(t *testing.T, f segmentFixture) {
 			require.NoError(t, f.service.deleteSegmentObject(ctx, f.record, "segment", 2))
 		},
@@ -114,12 +128,17 @@ func TestSegmentsDetectTruncationAndTampering(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newSegmentFixture(t, 9)
-			f.flush(t, 3, 9, true)
-			_, _, err := f.service.VerifyRecordingSegments(ctx, f.record)
+			f.flush(t, 3, 9)
+			_, err := f.service.VerifyRecordingSegments(ctx, f.record)
 			require.NoError(t, err)
 			tamper(t, f)
-			_, _, err = f.service.VerifyRecordingSegments(ctx, f.record)
+			_, err = f.service.VerifyRecordingSegments(ctx, f.record)
 			require.Error(t, err)
+			meta := *f.record.Recording
+			meta.FinishedAt = time.Unix(60, 0)
+			_, err = f.service.FinalizeRecordingFromSegments(ctx, f.record, meta)
+			require.Error(t, err, "publication applies the same checks")
+			require.Equal(t, StatePending, f.repo.record.State, "nothing is published")
 		})
 	}
 }
@@ -127,15 +146,36 @@ func TestSegmentsDetectTruncationAndTampering(t *testing.T) {
 func TestSegmentsRejectWrongChainHead(t *testing.T) {
 	f := newSegmentFixture(t, 3)
 	w := f.service.NewSegmentWriter(f.record)
-	require.NoError(t, w.Append(context.Background(), f.frames, sha256.Sum256([]byte("forged")), true))
-	_, _, err := f.service.VerifyRecordingSegments(context.Background(), f.record)
+	require.NoError(t, w.Append(context.Background(), f.frames, sha256.Sum256([]byte("forged"))))
+	_, err := f.service.VerifyRecordingSegments(context.Background(), f.record)
 	require.ErrorIs(t, err, ErrConflict)
+	meta := *f.record.Recording
+	meta.FinishedAt = time.Unix(60, 0)
+	_, err = w.Finalize(context.Background(), meta)
+	require.ErrorIs(t, err, ErrConflict, "the stream's own finalize checks the head too")
+}
+
+func TestSegmentAppendIsFencedAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 4)
+	w := f.flush(t, 2, 2)
+	// A retried write of identical bytes (after an ambiguous failure) succeeds.
+	key, err := f.service.segmentObjectKey(f.record, "segment", 1)
+	require.NoError(t, err)
+	require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, f.frames[2*testFrameSize:4*testFrameSize]))
+	require.NoError(t, w.Append(ctx, f.frames[2*testFrameSize:4*testFrameSize], sha256.Sum256(f.frames[3*testFrameSize:4*testFrameSize])))
+	require.Equal(t, 2, f.objects(t, "manifest"))
+
+	// Once the reservation left Pending (cleanup, publication), nothing more is written.
+	f.repo.record.State = StateDeleting
+	require.ErrorIs(t, w.Append(ctx, f.frames[:testFrameSize], sha256.Sum256(f.frames[:testFrameSize])), ErrConflict)
+	require.Equal(t, 2, f.objects(t, "segment"))
 }
 
 func TestFinalizeFromSegmentsPublishesRecoversAndCleansUp(t *testing.T) {
 	ctx := context.Background()
 	f := newSegmentFixture(t, 7)
-	f.flush(t, 3, 7, false) // crashed stream: recovered with Complete=false
+	f.flush(t, 3, 7) // crashed stream: recovered with Complete=false
 	meta := *f.record.Recording
 	meta.FinishedAt = time.Unix(60, 0)
 	published, err := f.service.FinalizeRecordingFromSegments(ctx, f.record, meta)
@@ -151,25 +191,65 @@ func TestFinalizeFromSegmentsPublishesRecoversAndCleansUp(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	require.Equal(t, f.frames, got)
+	require.Zero(t, f.objects(t, "segment"), "segments are removed after publication")
+	require.Zero(t, f.objects(t, "manifest"), "manifests are removed after publication")
 
-	for _, kind := range []string{"segment", "manifest"} {
-		key, err := f.service.segmentObjectKey(f.record, kind, 0)
-		require.NoError(t, err)
-		versions, err := f.store.InventoryKey(ctx, key)
-		require.NoError(t, err)
-		require.Empty(t, versions, "%s objects are removed after publication", kind)
-	}
+	// A second publication attempt (a racing handler) only recovers the result.
+	again, err := f.service.FinalizeRecordingFromSegments(ctx, f.record, meta)
+	require.NoError(t, err)
+	require.Equal(t, published.SHA256, again.SHA256)
+}
+
+func TestRecoverAbandonedRecordingWaitsForTheGrace(t *testing.T) {
+	ctx := context.Background()
+	f := newSegmentFixture(t, 4)
+	f.flush(t, 2, 4)
+	// The service clock is 50s past the stream's expiry.
+	_, recovered, err := f.service.RecoverAbandonedRecording(ctx, f.repo.record, time.Minute)
+	require.NoError(t, err)
+	require.False(t, recovered, "the stream's handler may still be publishing")
+	require.Equal(t, StatePending, f.repo.record.State)
+
+	published, recovered, err := f.service.RecoverAbandonedRecording(ctx, f.repo.record, 10*time.Second)
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.False(t, published.Recording.Complete, "recovered evidence is incomplete")
+	require.True(t, published.Recording.FinishedAt.Equal(f.record.Recording.StreamExpiresAt))
+	require.Equal(t, StateAvailable, f.repo.record.State)
+}
+
+func TestRecoverAbandonedRecordingWithoutSegmentsChangesNothing(t *testing.T) {
+	f := newSegmentFixture(t, 1)
+	_, recovered, err := f.service.RecoverAbandonedRecording(context.Background(), f.repo.record, 0)
+	require.NoError(t, err)
+	require.False(t, recovered)
+	require.Equal(t, StatePending, f.repo.record.State)
 }
 
 func TestCleanupRemovesUnpublishedSegments(t *testing.T) {
 	ctx := context.Background()
-	f := newSegmentFixture(t, 4)
-	f.flush(t, 2, 4, false)
-	require.NoError(t, f.service.Cleanup(ctx, f.repo.record, StateExpired))
-	key, err := f.service.segmentObjectKey(f.record, "manifest", 0)
-	require.NoError(t, err)
-	versions, err := f.store.InventoryKey(ctx, key)
-	require.NoError(t, err)
-	require.Empty(t, versions)
-	require.Equal(t, StateExpired, f.repo.record.State)
+	for name, setup := range map[string]func(*testing.T, segmentFixture){
+		"committed segments": func(t *testing.T, f segmentFixture) { f.flush(t, 2, 4) },
+		// A crash between the first segment and its manifest.
+		"segment without manifest": func(t *testing.T, f segmentFixture) {
+			key, err := f.service.segmentObjectKey(f.record, "segment", 0)
+			require.NoError(t, err)
+			require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, f.frames[:testFrameSize]))
+		},
+		"corrupt manifest": func(t *testing.T, f segmentFixture) {
+			f.flush(t, 2, 2)
+			key, err := f.service.segmentObjectKey(f.record, "manifest", 1)
+			require.NoError(t, err)
+			require.NoError(t, f.service.putSegmentObject(ctx, f.record, key, []byte("{not json")))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newSegmentFixture(t, 4)
+			setup(t, f)
+			require.NoError(t, f.service.Cleanup(ctx, f.repo.record, StateExpired))
+			require.Zero(t, f.objects(t, "segment"))
+			require.Zero(t, f.objects(t, "manifest"))
+			require.Equal(t, StateExpired, f.repo.record.State)
+		})
+	}
 }

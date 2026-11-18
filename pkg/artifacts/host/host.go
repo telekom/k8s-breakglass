@@ -81,19 +81,38 @@ type Components struct {
 	Close          func() error
 }
 
-// Build constructs the complete enabled artifact host. Disabled artifacts
-// return nil without reading Secrets or contacting a provider.
 // Bounds for config.Artifacts.TerminalRecordingSegmentBytes when enabled.
 const (
 	MinTerminalRecordingSegmentBytes = 64 << 10
 	MaxTerminalRecordingSegmentBytes = 64 << 20
 )
 
+// validateTerminalRecordingSegmentBytes rejects a segment size out of bounds
+// or too small to reach the recording limit within MaxRecordingSegments.
+func validateTerminalRecordingSegmentBytes(c config.Artifacts) error {
+	seg := c.TerminalRecordingSegmentBytes
+	if seg == 0 {
+		return nil
+	}
+	if seg < MinTerminalRecordingSegmentBytes || seg > MaxTerminalRecordingSegmentBytes {
+		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d must be 0 (off) or within %d..%d", seg, MinTerminalRecordingSegmentBytes, MaxTerminalRecordingSegmentBytes)
+	}
+	if seg*backend.MaxRecordingSegments < c.UploadMaxBytes {
+		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d is too small: %d segments must hold uploadMaxBytes (%d)", seg, backend.MaxRecordingSegments, c.UploadMaxBytes)
+	}
+	return nil
+}
+
+// Build constructs the complete enabled artifact host. Disabled artifacts
+// return nil without reading Secrets or contacting a provider.
 func Build(ctx context.Context, artifactConfig config.Artifacts, namespace string, deps Dependencies) (*Components, error) {
 	if !artifactConfig.Enabled {
 		return nil, nil
 	}
 	if err := artifactjob.ValidateImagePullSecrets(artifactConfig.CollectorImagePullSecrets); err != nil {
+		return nil, err
+	}
+	if err := validateTerminalRecordingSegmentBytes(artifactConfig); err != nil {
 		return nil, err
 	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
@@ -119,9 +138,6 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	if artifactConfig.Backend == "local" && artifactConfig.Local != nil && artifactConfig.Local.MaximumObjectBytes > 0 && artifactConfig.UploadMaxBytes > artifactConfig.Local.MaximumObjectBytes {
 		return nil, errors.New("artifact upload maximum exceeds local storage object limit")
-	}
-	if seg := artifactConfig.TerminalRecordingSegmentBytes; seg != 0 && (seg < MinTerminalRecordingSegmentBytes || seg > MaxTerminalRecordingSegmentBytes) {
-		return nil, errors.New("terminal recording segment size is outside the bounded contract")
 	}
 	issuer, err := controllerOrigin(artifactConfig.ControllerURL)
 	if err != nil {
@@ -150,6 +166,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
 	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: issuer, Log: deps.Log}
+	reconciler.RecordingRecovered = deps.DebugAPI.AuditRecoveredTerminalRecording
 	reconciler.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), artifactConfig.CollectorImagePullSecrets...)
 	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
 	if err != nil {
