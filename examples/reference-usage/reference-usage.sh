@@ -42,6 +42,7 @@ REFERENCE_SETUP_SCRIPT="${REFERENCE_SETUP_SCRIPT:-}"
 REFERENCE_TOKEN_HELPER="${REFERENCE_TOKEN_HELPER:-}"
 REFERENCE_ENV_FILE="${REFERENCE_ENV_FILE:-}"
 REFERENCE_REQUESTER_GROUP="${REFERENCE_REQUESTER_GROUP:-reference-requesters}"
+REFERENCE_APPROVER_GROUP="${REFERENCE_APPROVER_GROUP:-reference-approvers}" # blockSelfApproval needs an approver group
 REFERENCE_ESCALATED_GROUP="${REFERENCE_ESCALATED_GROUP:-reference-restricted}"
 REFERENCE_AUDIT_WEBHOOK_URL="${REFERENCE_AUDIT_WEBHOOK_URL:-}"
 REFERENCE_CLEANUP_TIMEOUT="${REFERENCE_CLEANUP_TIMEOUT:-60s}"
@@ -549,6 +550,7 @@ spec:
   blockSelfApproval: true
   approvers:
     users: ['${APPROVER_EMAIL}']
+    groups: ['${REFERENCE_APPROVER_GROUP}']
   requestReason:
     mandatory: true
     description: "Reference test reason"

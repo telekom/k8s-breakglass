@@ -126,6 +126,7 @@ jobs:
           REFERENCE_APPROVER_PASSWORD: complete-flow-approver-password
           REFERENCE_APPROVER_EMAIL: complete-flow-approver@example.com
           REFERENCE_REQUESTER_GROUP: complete-flow-requester-base
+          REFERENCE_APPROVER_GROUP: complete-flow-approver
           REFERENCE_AUDIT_WEBHOOK_URL: http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit
           CATALOGUE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.catalogue_version || '0.2.0' }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
@@ -150,6 +151,7 @@ jobs:
           REFERENCE_APPROVER_PASSWORD: complete-flow-approver-password
           REFERENCE_APPROVER_EMAIL: complete-flow-approver@example.com
           REFERENCE_REQUESTER_GROUP: complete-flow-requester-base
+          REFERENCE_APPROVER_GROUP: complete-flow-approver
           REFERENCE_AUDIT_WEBHOOK_URL: http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit
           CATALOGUE_VERSION: ${{ steps.resolve.outputs.catalogue_version || inputs.catalogue_version }}
           CATALOGUE_CHART_DIGEST: ${{ steps.resolve.outputs.catalogue_digest || inputs.catalogue_digest }}
