@@ -296,7 +296,7 @@ func (e interactiveTerminalExecutor) StreamWithContext(_ context.Context, option
 
 func TestRecordingInputLimitDoesNotForwardUnrecordedBytes(t *testing.T) {
 	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 2)
-	input := &recordingReader{reader: strings.NewReader("unrecorded command"), recorder: recorder, direction: TerminalRecordingInput}
+	input := &recordingReader{reader: strings.NewReader("unrecorded command"), recorder: recorder, direction: TerminalRecordingInput, fail: func(error) {}}
 	var target bytes.Buffer
 	_, err := io.Copy(&target, input)
 	require.Error(t, err)

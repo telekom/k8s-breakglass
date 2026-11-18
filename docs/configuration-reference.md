@@ -100,12 +100,15 @@ provider, signing key, target identity or these limits.
 The configured controller origin is normalized before creating upload URLs.
 `terminalRecordingMaxBytes` (optional) caps one terminal recording, framing
 included; unset keeps the historic behaviour of allowing up to `uploadMaxBytes`.
-`terminalRecordingMaxConcurrent` (optional, default 2, maximum 32) caps live
-recording streams per controller replica; each stream buffers up to one
-recording in memory, so size memory requests as
-`terminalRecordingMaxConcurrent x terminalRecordingMaxBytes`. Zero is the
-"unset" value; negative values, a byte limit above `uploadMaxBytes` and a
-concurrency above 32 are rejected at startup.
+Each frame carries a 50-byte header, so very small values abort every recorded
+stream at its first frame. `terminalRecordingMaxConcurrent` (optional, default
+2, maximum 32) caps live recording streams per controller replica. Each stream
+buffers up to one recording in memory, so budget memory as
+`terminalRecordingMaxConcurrent` times the effective byte limit
+(`terminalRecordingMaxBytes`, else `uploadMaxBytes`), with about 2x headroom for
+buffer growth. Zero is the "unset" value; with artifacts enabled, negative
+values, a byte limit above `uploadMaxBytes` and a concurrency above 32 are
+rejected at startup.
 Requests exceeding the HTTP upload body limit return HTTP 413, not a retryable
 storage-provider error.
 

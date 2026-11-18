@@ -165,12 +165,14 @@ identity, runtime binding digest, and version ID. The private transport binding
 keeps ClusterConfig UID, target Pod UID, and Lease UID distinct; none is inferred
 from a numeric generation. Finalized framing records its actual frame count.
 
-The bounded artifact volume defaults to `artifacts.uploadMaxBytes` (512 MiB
-is the recorder's fallback when no limit is supplied); set
+A recording is bounded by `artifacts.uploadMaxBytes` by default; set
 `artifacts.terminalRecordingMaxBytes` (1..`uploadMaxBytes`) to lower it. At most
 two concurrent streams run per serving process by default; set
 `artifacts.terminalRecordingMaxConcurrent` (1..32) to change that. Each stream
-buffers its recording in memory, so budget memory as concurrency x byte limit.
+buffers its recording in memory, so budget memory as concurrency x byte limit,
+with headroom for buffer growth. A stream whose next input or output would
+exceed the byte limit ends at once; the bytes recorded so far are published as
+incomplete evidence and the rest is neither delivered nor recorded.
 Invalid values are rejected at startup; see the
 [configuration reference](configuration-reference.md). The HTTP transport
 requires full duplex: output is flushed before further input is supplied.

@@ -84,6 +84,16 @@ to the Kind lane; it does not reproduce manager-cache timing or spoke transport.
 Completed ephemeral-operation replay records its existing reference once while
 preserving the separate Active-only allowed-Pod update.
 
+## Terminal recording limits
+
+`TestDebugSessionTerminalRecordingLimitsE2E` runs in all four artifact lanes.
+The single-cluster lanes keep the defaults (`uploadMaxBytes`, 2 streams); the
+multi-cluster lanes set `terminalRecordingMaxBytes: 1048576` and
+`terminalRecordingMaxConcurrent: 3`. The fixture exports the effective values
+(`E2E_RECORDING_MAX_BYTES`, `E2E_RECORDING_MAX_STREAMS`); the test holds that
+many streams open, requires `429` for one more, and requires a recording below
+the byte limit to complete and one above it to stop the stream as incomplete.
+
 ## Explicit backend and lifecycle matrix
 
 The same named test runs separately with `E2E_ARTIFACT_BACKEND=local` and `s3`.

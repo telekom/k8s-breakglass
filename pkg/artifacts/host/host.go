@@ -81,30 +81,39 @@ type Components struct {
 	Close          func() error
 }
 
-// Build constructs the complete enabled artifact host. Disabled artifacts
-// return nil without reading Secrets or contacting a provider.
 // MaxTerminalRecordingConcurrent is the upper bound for
 // Artifacts.TerminalRecordingMaxConcurrent; each stream buffers up to one
 // recording in memory.
 const MaxTerminalRecordingConcurrent = 32
 
-// ValidateTerminalRecordingLimits rejects out-of-range recording limits. Zero
-// means "use the default" for both.
-func ValidateTerminalRecordingLimits(c config.Artifacts) error {
+// terminalRecordingLimits validates the optional recording limits and returns
+// the effective per-recording byte cap (uploadMaxBytes when unset) and the
+// concurrent stream limit (0 keeps the controller default of 2).
+func terminalRecordingLimits(c config.Artifacts) (int64, int, error) {
 	if c.TerminalRecordingMaxBytes < 0 || c.TerminalRecordingMaxBytes > c.UploadMaxBytes {
-		return errors.New("terminal recording maximum must be between 1 and uploadMaxBytes")
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxBytes %d must be unset (0) or within 1..uploadMaxBytes (%d)", c.TerminalRecordingMaxBytes, c.UploadMaxBytes)
 	}
 	if c.TerminalRecordingMaxConcurrent < 0 || c.TerminalRecordingMaxConcurrent > MaxTerminalRecordingConcurrent {
-		return fmt.Errorf("terminal recording concurrency must be between 1 and %d", MaxTerminalRecordingConcurrent)
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxConcurrent %d must be unset (0) or within 1..%d", c.TerminalRecordingMaxConcurrent, MaxTerminalRecordingConcurrent)
 	}
-	return nil
+	maxBytes := c.UploadMaxBytes
+	if c.TerminalRecordingMaxBytes > 0 {
+		maxBytes = c.TerminalRecordingMaxBytes
+	}
+	return maxBytes, c.TerminalRecordingMaxConcurrent, nil
 }
 
+// Build constructs the complete enabled artifact host. Disabled artifacts
+// return nil without reading Secrets or contacting a provider.
 func Build(ctx context.Context, artifactConfig config.Artifacts, namespace string, deps Dependencies) (*Components, error) {
 	if !artifactConfig.Enabled {
 		return nil, nil
 	}
 	if err := artifactjob.ValidateImagePullSecrets(artifactConfig.CollectorImagePullSecrets); err != nil {
+		return nil, err
+	}
+	recordingMax, recordingStreams, err := terminalRecordingLimits(artifactConfig)
+	if err != nil {
 		return nil, err
 	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
@@ -131,9 +140,6 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if artifactConfig.Backend == "local" && artifactConfig.Local != nil && artifactConfig.Local.MaximumObjectBytes > 0 && artifactConfig.UploadMaxBytes > artifactConfig.Local.MaximumObjectBytes {
 		return nil, errors.New("artifact upload maximum exceeds local storage object limit")
 	}
-	if err := ValidateTerminalRecordingLimits(artifactConfig); err != nil {
-		return nil, err
-	}
 	issuer, err := controllerOrigin(artifactConfig.ControllerURL)
 	if err != nil {
 		return nil, err
@@ -153,11 +159,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	recordingMax := artifactConfig.UploadMaxBytes
-	if artifactConfig.TerminalRecordingMaxBytes > 0 {
-		recordingMax = artifactConfig.TerminalRecordingMaxBytes
-	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(artifactConfig.TerminalRecordingMaxConcurrent)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()

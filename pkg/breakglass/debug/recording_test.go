@@ -282,19 +282,30 @@ func TestStreamTerminalStopsWhenResizeCannotBeRecorded(t *testing.T) {
 	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly")
 }
 
-func TestTerminalRecorderEnforcesConfiguredLimit(t *testing.T) {
+// outputThenWaitExecutor writes output and then runs until canceled, like a
+// target whose further output blocks once the controller stops copying it.
+type outputThenWaitExecutor struct{ output []byte }
+
+func (outputThenWaitExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (e outputThenWaitExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	if _, err := options.Stdout.Write(e.output); err != nil {
+		// client-go only logs a failed output copy and keeps streaming.
+		_ = err
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+	return nil
+}
+
+func TestStreamTerminalStopsWhenOutputExceedsTheRecordingLimit(t *testing.T) {
 	frame, err := terminalRecordingFrameSize(10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := NewTerminalRecorder(int64(2 * frame))
-	payload := make([]byte, 10)
-	for i := 0; i < 2; i++ {
-		if err := r.Write(TerminalRecordingOutput, payload); err != nil {
-			t.Fatalf("write %d within limit: %v", i, err)
-		}
-	}
-	if err := r.Write(TerminalRecordingOutput, payload); err == nil {
-		t.Fatal("write beyond the configured limit succeeded")
-	}
+	require.NoError(t, err)
+	var delivered bytes.Buffer
+	started := time.Now()
+	_, err = StreamTerminal(context.Background(), outputThenWaitExecutor{output: make([]byte, 10)}, nil, &delivered, io.Discard, NewTerminalRecorder(int64(frame-1)))
+	require.ErrorIs(t, err, errTerminalRecordingLimit, "an unrecordable output fails the stream")
+	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly instead of running unrecorded")
+	require.Zero(t, delivered.Len(), "unrecorded output never reaches the client")
 }

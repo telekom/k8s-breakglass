@@ -100,7 +100,7 @@ func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64
 }
 
 // WithTerminalRecordingMaxStreams sets the concurrent recording streams per
-// process. Values below 1 keep the default of 2.
+// process. Values below 1 leave the setting unchanged (default 2).
 func (c *DebugSessionAPIController) WithTerminalRecordingMaxStreams(n int) *DebugSessionAPIController {
 	if n > 0 {
 		c.recordingMaxStreams = int32(min(n, math.MaxInt32))

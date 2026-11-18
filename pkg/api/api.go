@@ -144,8 +144,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 				limit = artifactBodySize
 			}
 			if isTerminalStreamRequest(c.Request) {
-				// A terminal body is a long-lived input stream, bounded by the
-				// recording budget (512 MiB per stream), not a JSON document.
+				// A terminal body is a long-lived input stream, not a JSON
+				// document; the recorder enforces the configured recording cap.
 				limit = terminalStreamBodySize
 				// Rejections by later middleware (auth, rate limits) must reach a
 				// client whose input stays open: without full duplex the HTTP/1.1
