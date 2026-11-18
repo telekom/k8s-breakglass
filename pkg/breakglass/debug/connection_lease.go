@@ -23,15 +23,21 @@ import (
 const connectionSessionLeasePrefix = "debug-connection-session-"
 
 const (
-	connectionLeaseEpochAnnotation             = "breakglass.telekom.com/connection-epoch"
-	connectionLeaseTargetUIDAnnotation         = "breakglass.telekom.com/connection-target-uid"
-	connectionLeaseProfileAnnotation           = "breakglass.telekom.com/connection-profile-digest"
-	connectionLeaseSessionAnnotation           = "breakglass.telekom.com/connection-session-uid"
-	connectionLeaseGenerationAnnotation        = "breakglass.telekom.com/connection-generation"
-	connectionLeasePendingGenerationAnnotation = "breakglass.telekom.com/connection-pending-generation"
-	connectionLeaseSecretUIDAnnotation         = "breakglass.telekom.com/connection-secret-uid"
-	connectionLeaseSecretVersionAnnotation     = "breakglass.telekom.com/connection-secret-resource-version"
+	connectionLeaseEpochAnnotation              = "breakglass.telekom.com/connection-epoch"
+	connectionLeaseTargetUIDAnnotation          = "breakglass.telekom.com/connection-target-uid"
+	connectionLeaseProfileAnnotation            = "breakglass.telekom.com/connection-profile-digest"
+	connectionLeaseSessionAnnotation            = "breakglass.telekom.com/connection-session-uid"
+	connectionLeaseGenerationAnnotation         = "breakglass.telekom.com/connection-generation"
+	connectionLeasePendingGenerationAnnotation  = "breakglass.telekom.com/connection-pending-generation"
+	connectionLeasePreviousGenerationAnnotation = "breakglass.telekom.com/connection-previous-generation"
+	connectionLeasePreviousDeadlineAnnotation   = "breakglass.telekom.com/connection-previous-generation-deadline"
+	connectionLeaseSecretUIDAnnotation          = "breakglass.telekom.com/connection-secret-uid"
+	connectionLeaseSecretVersionAnnotation      = "breakglass.telekom.com/connection-secret-resource-version"
 )
+
+// MaxConnectionRotationGrace bounds the blue/green grace period so a retired
+// credential generation can never stay usable for long.
+const MaxConnectionRotationGrace = 15 * time.Minute
 
 // ErrConnectionLeaseSuperseded reports that the lease named by a capability is
 // held by a successor (different UID, holder or epoch). The stale capability
@@ -149,6 +155,19 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness: %w", ErrConnectionGenerationRaced)
 	}
 	lease = lease.DeepCopy()
+	// Blue/green: with a grace period the retiring generation stays valid until
+	// its deadline (never beyond the lease expiry); only one previous
+	// generation is ever kept, so older ones are revoked immediately.
+	delete(lease.Annotations, connectionLeasePreviousGenerationAnnotation)
+	delete(lease.Annotations, connectionLeasePreviousDeadlineAnnotation)
+	if previous, perr := strconv.ParseInt(lease.Annotations[connectionLeaseGenerationAnnotation], 10, 64); perr == nil && previous >= 1 && s.rotationGrace > 0 {
+		deadline := time.Now().Add(s.rotationGrace)
+		if deadline.After(staged.Lease.ExpiresAt) {
+			deadline = staged.Lease.ExpiresAt
+		}
+		lease.Annotations[connectionLeasePreviousGenerationAnnotation] = strconv.FormatInt(previous, 10)
+		lease.Annotations[connectionLeasePreviousDeadlineAnnotation] = deadline.UTC().Format(time.RFC3339Nano)
+	}
 	lease.Annotations[connectionLeaseGenerationAnnotation] = strconv.FormatInt(staged.Generation, 10)
 	delete(lease.Annotations, connectionLeasePendingGenerationAnnotation)
 	lease.Annotations[connectionLeaseSecretUIDAnnotation] = string(uid)
@@ -171,9 +190,32 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 // ConnectionLeaseService provides durable, CAS-backed fencing for controller-
 // owned connection and attachment consumers.
 type ConnectionLeaseService struct {
-	client    ctrlclient.Client
-	reader    ctrlclient.Reader
-	namespace string
+	client        ctrlclient.Client
+	reader        ctrlclient.Reader
+	namespace     string
+	rotationGrace time.Duration
+}
+
+// WithRotationGrace keeps the previous credential generation valid for d after
+// a new one is published (blue/green). Zero, the default, revokes the old
+// generation immediately; values are capped at MaxConnectionRotationGrace.
+func (s *ConnectionLeaseService) WithRotationGrace(d time.Duration) *ConnectionLeaseService {
+	s.rotationGrace = min(max(d, 0), MaxConnectionRotationGrace)
+	return s
+}
+
+// leaseGenerationValid reports whether generation is the lease's published
+// generation, or its previous one still inside the grace deadline.
+func leaseGenerationValid(lease *coordinationv1.Lease, generation int64, now time.Time) bool {
+	g := strconv.FormatInt(generation, 10)
+	if lease.Annotations[connectionLeaseGenerationAnnotation] == g {
+		return true
+	}
+	if lease.Annotations[connectionLeasePreviousGenerationAnnotation] != g {
+		return false
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, lease.Annotations[connectionLeasePreviousDeadlineAnnotation])
+	return err == nil && now.Before(deadline)
 }
 
 func NewConnectionLeaseService(client ctrlclient.Client) *ConnectionLeaseService {
@@ -386,7 +428,7 @@ func (s *ConnectionLeaseService) Validate(ctx context.Context, ref ConnectionLea
 	if err != nil {
 		return err
 	}
-	if generation >= 0 && lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(generation, 10) {
+	if generation >= 0 && !leaseGenerationValid(lease, generation, time.Now().UTC()) {
 		return fmt.Errorf("connection lease is stale or expired")
 	}
 	return nil

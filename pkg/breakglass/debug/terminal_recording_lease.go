@@ -82,10 +82,21 @@ func ClusterConfigCredentialSource(provider *cluster.ClientProvider) TerminalRec
 const terminalStreamClaimAnnotation = "breakglass.telekom.com/terminal-stream-claim"
 const terminalStreamExpiryAnnotation = "breakglass.telekom.com/terminal-stream-expires-at"
 
+// The claim of a stream bound to the previous credential generation is kept in
+// its own slot while it drains inside the rotation grace period, so a stream
+// on the new generation can claim the target immediately.
+const (
+	terminalStreamClaimGenerationAnnotation = "breakglass.telekom.com/terminal-stream-claim-generation"
+	terminalStreamPrevClaimAnnotation       = "breakglass.telekom.com/terminal-stream-previous-claim"
+	terminalStreamPrevExpiryAnnotation      = "breakglass.telekom.com/terminal-stream-previous-expires-at"
+)
+
 type terminalRecordingLeaseProvider struct {
 	service     *ConnectionLeaseService
 	credentials TerminalRecordingCredentialSource
 }
+
+func mustParseInt(v string) int64 { n, _ := strconv.ParseInt(v, 10, 64); return n }
 
 func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
 	if p.service == nil {
@@ -134,15 +145,27 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 	if err := p.service.Validate(ctx, ref, generation); err != nil {
 		return failed(err)
 	}
+	// The previous slot only matters while its generation is in grace; a stale
+	// one is dropped so it cannot be mistaken for a live claim.
+	delete(lease.Annotations, terminalStreamPrevClaimAnnotation)
+	delete(lease.Annotations, terminalStreamPrevExpiryAnnotation)
 	if claim := lease.Annotations[terminalStreamClaimAnnotation]; claim != "" {
 		expires, err := time.Parse(time.RFC3339Nano, lease.Annotations[terminalStreamExpiryAnnotation])
-		if err != nil || time.Now().Before(expires) {
+		active := err != nil || time.Now().Before(expires)
+		claimGen := lease.Annotations[terminalStreamClaimGenerationAnnotation]
+		retiring := claimGen != "" && claimGen != strconv.FormatInt(generation, 10)
+		if active && !(retiring && p.service.rotationGrace > 0) {
 			return failed(fmt.Errorf("terminal target already has an active stream claim"))
+		}
+		if active && err == nil && leaseGenerationValid(lease, mustParseInt(claimGen), time.Now()) {
+			lease.Annotations[terminalStreamPrevClaimAnnotation] = claim
+			lease.Annotations[terminalStreamPrevExpiryAnnotation] = lease.Annotations[terminalStreamExpiryAnnotation]
 		}
 	}
 	claim := uuid.NewString()
 	lease.Annotations[terminalStreamClaimAnnotation] = claim
 	lease.Annotations[terminalStreamExpiryAnnotation] = ref.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	lease.Annotations[terminalStreamClaimGenerationAnnotation] = strconv.FormatInt(generation, 10)
 	connection := &terminalRecordingLeaseConnection{service: p.service, ref: ref, generation: generation, claim: claim, binding: TerminalRecordingConnectionBinding{
 		Namespace: binding.Namespace, ClusterName: binding.ClusterName, SessionUID: binding.SessionUID, TargetPodUID: binding.TargetPodUID, TargetClusterUID: binding.TargetClusterUID, LeaseUID: string(ref.UID),
 		Epoch: strconv.FormatInt(ref.Epoch, 10), Generation: strconv.FormatInt(generation, 10),
@@ -248,8 +271,15 @@ func (c *terminalRecordingLeaseConnection) Validate(ctx context.Context) error {
 	if err := ValidateConnectionLease(lease, c.ref, now); err != nil {
 		return err
 	}
-	expires, err := time.Parse(time.RFC3339Nano, lease.Annotations[terminalStreamExpiryAnnotation])
-	if c.closed.Load() || err != nil || !now.Before(expires) || !now.Before(c.binding.ExpiresAt) || lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(c.generation, 10) || lease.Annotations[terminalStreamClaimAnnotation] != c.claim {
+	expiryKey := terminalStreamExpiryAnnotation
+	if lease.Annotations[terminalStreamClaimAnnotation] != c.claim {
+		expiryKey = terminalStreamPrevExpiryAnnotation
+		if lease.Annotations[terminalStreamPrevClaimAnnotation] != c.claim {
+			return fmt.Errorf("terminal stream claim expired or changed")
+		}
+	}
+	expires, err := time.Parse(time.RFC3339Nano, lease.Annotations[expiryKey])
+	if c.closed.Load() || err != nil || !now.Before(expires) || !now.Before(c.binding.ExpiresAt) || !leaseGenerationValid(lease, c.generation, now) {
 		return fmt.Errorf("terminal stream claim expired or changed")
 	}
 	return nil
@@ -272,11 +302,20 @@ func (c *terminalRecordingLeaseConnection) Close(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if lease.UID != c.ref.UID || epoch != c.ref.Epoch || lease.Annotations[terminalStreamClaimAnnotation] != c.claim {
+		if lease.UID != c.ref.UID || epoch != c.ref.Epoch {
 			return nil
 		}
-		delete(lease.Annotations, terminalStreamClaimAnnotation)
-		delete(lease.Annotations, terminalStreamExpiryAnnotation)
+		switch c.claim {
+		case lease.Annotations[terminalStreamClaimAnnotation]:
+			delete(lease.Annotations, terminalStreamClaimAnnotation)
+			delete(lease.Annotations, terminalStreamExpiryAnnotation)
+			delete(lease.Annotations, terminalStreamClaimGenerationAnnotation)
+		case lease.Annotations[terminalStreamPrevClaimAnnotation]:
+			delete(lease.Annotations, terminalStreamPrevClaimAnnotation)
+			delete(lease.Annotations, terminalStreamPrevExpiryAnnotation)
+		default:
+			return nil
+		}
 		if err := c.service.client.Update(ctx, lease); err != nil {
 			return fmt.Errorf("release terminal stream claim: %w", err)
 		}
