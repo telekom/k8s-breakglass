@@ -105,8 +105,9 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		// Only the unchanged object created by this call may be retired. A
-		// concurrent publisher/acquirer changes resourceVersion and is preserved.
+		// Only the object created by this call, unchanged since this call's own
+		// last write, may be retired. A concurrent publisher/acquirer changes
+		// resourceVersion and is preserved.
 		uid, rv := ref.UID, ref.ResourceVersion
 		err := p.service.client.Delete(cleanupCtx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv})
 		if apierrors.IsNotFound(err) {
@@ -123,7 +124,7 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		return failed(fmt.Errorf("read terminal recording generation: %w", err))
 	}
 	if p.credentials != nil {
-		if lease, err = p.ensureCredentialGeneration(ctx, ref, lease, binding); err != nil {
+		if lease, err = p.ensureCredentialGeneration(ctx, &ref, lease, binding); err != nil {
 			return failed(err)
 		}
 	}
@@ -184,7 +185,9 @@ func generationPublishError(stage string, err error) error {
 // ready or the target credential Secret changed since the last publication.
 // Publication uses the lease's staged/ready compare-and-swap, so concurrent
 // replicas cannot both publish; the loser fails closed and the client retries.
-func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.Context, ref ConnectionLeaseRef, lease *coordinationv1.Lease, binding TerminalRecordingConnectionBinding) (*coordinationv1.Lease, error) {
+// ref.ResourceVersion tracks this call's own writes so cleanup of a newly
+// created lease still recognises it.
+func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.Context, ref *ConnectionLeaseRef, lease *coordinationv1.Lease, binding TerminalRecordingConnectionBinding) (*coordinationv1.Lease, error) {
 	want, err := p.credentials(ctx, binding)
 	if err != nil || want.UID == "" || want.ResourceVersion == "" {
 		if err == nil {
@@ -199,11 +202,12 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 	if current >= 1 && lease.Annotations[connectionLeaseSecretUIDAnnotation] == string(want.UID) && lease.Annotations[connectionLeaseSecretVersionAnnotation] == want.ResourceVersion {
 		return lease, nil
 	}
-	staged, err := p.service.StageGeneration(ctx, ref, current+1)
+	staged, err := p.service.StageGeneration(ctx, *ref, current+1)
 	if err != nil {
 		return nil, generationPublishError("stage", err)
 	}
-	if _, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
+	ref.ResourceVersion = staged.Lease.ResourceVersion
+	published, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
 		// The proof is re-read after staging so a rotation in between is never published.
 		got, err := p.credentials(readyCtx, binding)
 		if err != nil {
@@ -213,14 +217,16 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 			return ConnectionCredential{}, errCredentialChangedDuringPublication
 		}
 		return got, nil
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, generationPublishError("publish", err)
 	}
-	published := &coordinationv1.Lease{}
-	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, published); err != nil {
+	ref.ResourceVersion = published.Lease.ResourceVersion
+	live := &coordinationv1.Lease{}
+	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, live); err != nil {
 		return nil, fmt.Errorf("read published terminal recording generation: %w", err)
 	}
-	return published, nil
+	return live, nil
 }
 
 type terminalRecordingLeaseConnection struct {

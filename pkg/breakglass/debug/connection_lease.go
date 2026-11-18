@@ -33,9 +33,10 @@ const (
 	connectionLeaseSecretVersionAnnotation     = "breakglass.telekom.com/connection-secret-resource-version"
 )
 
-// ErrConnectionLeaseSuperseded reports that the lease named by a capability is
-// held by a successor (different UID, holder or epoch). The stale capability
-// owns nothing to clean up, and the successor is never touched.
+// ErrConnectionLeaseSuperseded reports that the lease named by a capability no
+// longer matches it (different UID, holder, epoch, target or profile), i.e. a
+// successor holds it. The stale capability owns nothing to clean up, and the
+// successor is never touched.
 var ErrConnectionLeaseSuperseded = errors.New("connection lease ownership changed before revoke")
 
 // ErrConnectionGenerationRaced reports that another writer staged or
@@ -248,11 +249,11 @@ func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakgla
 	}
 	l := ds.Status.ConnectionLease
 	err := s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
-	// A superseded recorded lease is not ours to delete; callers continue to
-	// RevokeUnrecordedSessionLeases, which only removes leases still held by
-	// this session. Failing here would wedge terminal cleanup forever.
+	// A superseded recorded lease is not ours to delete. Failing here would
+	// wedge terminal cleanup forever, so sweep instead: it removes only leases
+	// still held by this session (e.g. a re-acquire with a newer epoch).
 	if errors.Is(err, ErrConnectionLeaseSuperseded) {
-		return nil
+		return s.RevokeUnrecordedSessionLeases(ctx, ds)
 	}
 	return err
 }
