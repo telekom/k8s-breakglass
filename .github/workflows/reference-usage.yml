@@ -114,6 +114,8 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
+          # config/dev deploys breakglass:e2e and the setup script waits for it before retagging.
+          REFERENCE_IMAGE: breakglass:e2e
           REFERENCE_RETAIN_CLUSTER_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
@@ -136,6 +138,8 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
+          # config/dev deploys breakglass:e2e and the setup script waits for it before retagging.
+          REFERENCE_IMAGE: breakglass:e2e
           REFERENCE_RETAIN_CLUSTER_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
