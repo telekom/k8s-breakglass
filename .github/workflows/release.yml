@@ -610,6 +610,7 @@ jobs:
     permissions:
       packages: read
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Fail when mirror secrets are incomplete
         if: ${{ env.ARTIFACTORY_CONFIGURED != 'true' }}
@@ -647,14 +648,6 @@ jobs:
           printf '%s' "${AF_TOKEN}" | docker login --username "${AF_USER}" --password-stdin "${ARTIFACTORY_URL}" \
             || fail "docker login failed. Rotate AF_USER/AF_TOKEN (see docs/release-process.md)."
 
-          REPO_KEY="${ARTIFACTORY_REPO%%/*}"
-          echo "::add-mask::${REPO_KEY}"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${AF_USER}:${AF_TOKEN}" \
-            "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}") || HTTP_STATUS="curl-error"
-          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
-          [ "${HTTP_STATUS}" = "200" ] \
-            || fail "Artifactory repo not accessible (HTTP ${HTTP_STATUS}). Check AF_USER/AF_TOKEN validity and deploy permissions."
-
           # Copy the exact signed manifest by digest, with its OCI referrers
           # (cosign v3 signature and attestation bundles, SLSA provenance).
           # `cosign copy` does not copy cosign v3 bundles.
@@ -662,7 +655,7 @@ jobs:
           DST="${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}"
           echo "Copying ${SRC} and its referrers to the mirror"
           oras copy -r "${SRC}" "${DST}:${TAG}" \
-            || fail "oras copy of the image and its referrers failed."
+            || fail "oras copy failed. Check AF_REPOSITORY and that AF_USER/AF_TOKEN may push to it."
 
           # Prove the mirror serves the signed digest with a verifiable signature
           # and SBOM attestation from this workflow run's identity.

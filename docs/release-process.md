@@ -87,10 +87,11 @@ chart publication do not depend on the mirror.
 | `ARTIFACTORY_MIRROR_REQUIRED` | unset (non-blocking) | When `true`, a mirror failure leaves the `artifactory` job (and the workflow run) failed. When unset, the job is `continue-on-error`. |
 
 The GitHub Release job never depends on the mirror job, so a mirror failure
-cannot block release creation in either mode. Every failed login, access
-check, copy, or signature/attestation verification emits a `::error title=Artifactory mirror::`
+cannot block release creation in either mode. Every failed login, copy,
+or signature/attestation verification emits a `::error title=Artifactory mirror::`
 annotation and fails the step; there are no silent `|| true` checks. Secrets
-are passed only through `env:` and `docker login --password-stdin`.
+are passed only through `env:` and `docker login --password-stdin`; `oras`
+and `cosign` reuse that login.
 
 **Re-enabling the mirror**
 
@@ -106,7 +107,7 @@ are passed only through `env:` and `docker login --password-stdin`.
 To disable again, unset `ARTIFACTORY_MIRROR_ENABLED` or set it to anything
 other than `true`.
 
-CI and release workflows use repository or organization Actions secrets for the
+The release workflow uses repository or organization Actions secrets for the
 optional Artifactory mirror:
 
 | Secret | Value |
@@ -117,9 +118,7 @@ optional Artifactory mirror:
 | `AF_TOKEN` | Registry access token |
 
 When enabled, the job fails (see above) unless all four secrets are set. GHCR
-publication and release signing do not depend on the mirror. The derived
-repository key used by storage-API diagnostics is also explicitly masked in
-workflow logs.
+publication and release signing do not depend on the mirror.
 Deployments previously using the built-in mirror must configure `AF_REGISTRY`
 and `AF_REPOSITORY` to retain it.
 
