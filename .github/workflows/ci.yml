@@ -38,6 +38,8 @@ jobs:
         run: make test-release-security
       - name: Verify documentation snippets
         run: make verify-docs-snippets
+      - name: Verify DebugSession acceptance matrix test references
+        run: make verify-acceptance-matrix
       - name: Verify PR gate contract behavior
         run: |
           shellcheck .github/scripts/pr-gate-contract.sh .github/scripts/test-pr-gate-contract.sh
