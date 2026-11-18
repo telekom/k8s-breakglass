@@ -160,6 +160,17 @@ delete_created_debug_namespace() {
   fi
 }
 
+# auth-operator's webhook CA can lag the chart's --wait; retry the apply for up to a minute.
+apply_when_webhook_ready() {
+  local manifest="${STATE_DIR}/webhook-apply.yaml" _
+  cat >"${manifest}"
+  for _ in $(seq 1 30); do
+    kubectl apply -f "${manifest}" && return 0
+    sleep 2
+  done
+  return 1
+}
+
 require_commands() {
   local command
   for command in curl jq docker kubectl helm; do
@@ -459,7 +470,7 @@ configure_reference() {
   # without deleting catalogue-owned resources.
   local audit_url_json
   audit_url_json="$(printf '%s' "${REFERENCE_AUDIT_WEBHOOK_URL}" | jq -Rr @json)"
-  kubectl apply -f - <<YAML
+  apply_when_webhook_ready <<YAML
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: RoleDefinition
 metadata:
