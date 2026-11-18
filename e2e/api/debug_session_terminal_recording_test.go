@@ -184,7 +184,11 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 		query := url.Values{"namespace": {session.Namespace}, "podNamespace": {pod.Namespace}, "podName": {pod.Name}, "operation": {"exec"}, "command": {"sh", "-c", "echo raw"}}
 		rawCtx, rawCancel := context.WithTimeout(ctx, time.Minute)
 		defer rawCancel()
-		req, err := http.NewRequestWithContext(rawCtx, http.MethodPost, ingressURL+base+"?"+query.Encode(), strings.NewReader(""))
+		// Keep the request body open while the command runs: a TTY exec whose
+		// input ends at once can end before the command printed anything.
+		rawInput, rawInputWriter := io.Pipe()
+		defer func() { _ = rawInputWriter.Close() }()
+		req, err := http.NewRequestWithContext(rawCtx, http.MethodPost, ingressURL+base+"?"+query.Encode(), rawInput)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+requester.AuthToken)
 		resp, err := http.DefaultClient.Do(req)
@@ -192,6 +196,7 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 		rawBody, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
+		_ = rawInputWriter.Close()
 		require.Equal(t, http.StatusOK, resp.StatusCode, string(rawBody))
 		require.Contains(t, string(rawBody), "raw")
 		require.NotEmpty(t, resp.Header.Get("X-Breakglass-Recording-Pending-ID"), "the recording is named in a response header")
