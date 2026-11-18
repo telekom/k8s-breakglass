@@ -188,6 +188,10 @@ artifacts:
     maximumObjectBytes: 16777216
 '''
 if os.environ.get('E2E_MULTI_CLUSTER')=='true':
+    # Opt-in incremental recording flush runs in the multi-cluster lanes; the
+    # single-cluster lanes keep the default in-memory recording path.
+    c['data']['config.yaml']=c['data']['config.yaml'].replace('  uploadMaxBytes: 16777216\n','  uploadMaxBytes: 16777216\n  terminalRecordingSegmentBytes: 65536\n',1)
+    assert 'terminalRecordingSegmentBytes: 65536' in c['data']['config.yaml']
     # Opt-in recording limits run in the multi-cluster lanes; the single-cluster
     # lanes keep the defaults (uploadMaxBytes, 2 streams).
     c['data']['config.yaml']=c['data']['config.yaml'].replace('  uploadMaxBytes: 16777216\n','  uploadMaxBytes: 16777216\n  terminalRecordingMaxBytes: 1048576\n  terminalRecordingMaxConcurrent: 3\n',1)
@@ -288,8 +292,9 @@ done
 kubectl -n "$ns" exec deployment/breakglass-manager -c artifact-tls -- /fixture s3-provision
 wait_for_http "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" 60 "artifact fixture API port-forward"
 printf 'E2E_ARTIFACT_BACKEND=local\n' >> "$GITHUB_ENV"
-# Effective terminal recording limits for TestDebugSessionTerminalRecordingLimitsE2E.
+# Opt-in recording settings of the multi-cluster lanes, for the e2e tests.
 if [[ "${E2E_MULTI_CLUSTER:-false}" == "true" ]]; then
+ printf 'E2E_RECORDING_SEGMENT_BYTES=65536\n' >> "$GITHUB_ENV"
  printf 'E2E_RECORDING_MAX_BYTES=1048576\nE2E_RECORDING_MAX_STREAMS=3\n' >> "$GITHUB_ENV"
 else
  printf 'E2E_RECORDING_MAX_BYTES=16777216\nE2E_RECORDING_MAX_STREAMS=2\n' >> "$GITHUB_ENV"
