@@ -19,6 +19,26 @@ func TestLoggingReferenceUpToDate(t *testing.T) {
 	}
 }
 
+// TestPersonalDataClassified fails when a logged key that looks personal is
+// not classified in hack/logref/personal_data.go, or a classification is
+// stale or invalid.
+func TestPersonalDataClassified(t *testing.T) {
+	entries, _, err := scan(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPersonalData(entries); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckPersonalDataRejectsUnclassifiedKey(t *testing.T) {
+	entries := map[string]*entry{"x": {fields: map[string]bool{"approverName": true}}}
+	if err := checkPersonalData(entries); err == nil || !strings.Contains(err.Error(), `log key "approverName" is in neither`) {
+		t.Fatalf("unclassified key not detected: %v", err)
+	}
+}
+
 func TestScanExtractsMessagesLevelsAndFields(t *testing.T) {
 	root := t.TempDir()
 	src := `package x

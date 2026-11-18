@@ -43,11 +43,7 @@ const (
 var (
 	methodRe = regexp.MustCompile(`^(Debug|Info|Warn|Error|DPanic|Fatal)(w|f)?$`)
 	vLevelRe = regexp.MustCompile(`\.V\((\d+)\)`)
-	// piiKeyRe matches field keys whose values identify people, hosts or commands.
-	piiKeyRe = regexp.MustCompile(`(?i)(user|requester|requestor|requestedby|approver|approvedby|rejector|member|email|recipient|subject|identity|identifier|group|clientip|remoteaddr|remote_addr|^remote$|^ip$|sourceip|command|^cmd$|^args$|^sub$|^to$)`)
-	// notPIIKeyRe excludes counts, flags and descriptors of such values.
-	notPIIKeyRe = regexp.MustCompile(`(?i)(count|counts|len|length|size|nil|limit|source|hint)$|^(is|has|can)[A-Z]`)
-	levels      = []string{"debug", "info", "warn", "error", "dpanic", "fatal"}
+	levels   = []string{"debug", "info", "warn", "error", "dpanic", "fatal"}
 )
 
 // entry is one distinct message of one component at one level.
@@ -181,6 +177,53 @@ func checkProseLevels(doc string, entries map[string]*entry) error {
 	}
 	if len(bad) > 0 {
 		return fmt.Errorf("%s states wrong levels: %s", docPath, strings.Join(bad, "; "))
+	}
+	return nil
+}
+
+// checkPersonalData requires every logged key that looks personal to be
+// classified in personalData or listed in notPersonal, and both lists to name
+// only logged keys.
+func checkPersonalData(entries map[string]*entry) error {
+	logged := map[string]bool{}
+	for _, e := range entries {
+		for f := range e.fields {
+			logged[f] = true
+		}
+	}
+	not := map[string]bool{}
+	for _, k := range notPersonal {
+		not[k] = true
+	}
+	var bad []string
+	for _, k := range sortedKeys(logged) {
+		_, classified := personalData[k]
+		if !classified && !not[k] && candidateKeyRe.MatchString(k) && !notCandidateRe.MatchString(k) {
+			bad = append(bad, fmt.Sprintf("log key %q is in neither personalData nor notPersonal; classify it", k))
+		}
+	}
+	for k, p := range personalData {
+		if !logged[k] {
+			bad = append(bad, fmt.Sprintf("personalData lists %q, which no log call uses", k))
+		}
+		if not[k] {
+			bad = append(bad, fmt.Sprintf("%q is in both personalData and notPersonal", k))
+		}
+		if !validClass[p.class] || !validSubject[p.subject] || p.content == "" {
+			bad = append(bad, fmt.Sprintf("personalData[%q] needs a class (%s), a data subject (%s) and a content", k, strings.Join(sortedKeys(validClass), ", "), strings.Join(sortedKeys(validSubject), ", ")))
+		}
+	}
+	for k := range not {
+		if !logged[k] {
+			bad = append(bad, fmt.Sprintf("notPersonal lists %q, which no log call uses", k))
+		}
+		if !candidateKeyRe.MatchString(k) || notCandidateRe.MatchString(k) {
+			bad = append(bad, fmt.Sprintf("notPersonal lists %q, which candidateKeyRe does not select; remove it", k))
+		}
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		return fmt.Errorf("hack/logref/personal_data.go: %s", strings.Join(bad, "; "))
 	}
 	return nil
 }
@@ -470,11 +513,13 @@ func render(entries map[string]*entry) string {
 		fmt.Fprintf(&b, " %d |\n", v)
 	}
 
+	renderPersonalData(&b, list)
+
 	b.WriteString("\n## Message catalogue\n\n" +
-		"Fields marked † can hold personal or host data (user identities, e-mail\n" +
-		"addresses, group names, IP addresses, command lines). `(dynamic)` is a\n" +
-		"message built at run time, typically from an error value; `…` marks the\n" +
-		"variable part of a concatenated message.\n")
+		"Fields marked † can hold personal data; [Personal-data fields](#personal-data-fields)\n" +
+		"gives their class and data subject. `(dynamic)` is a message built at run\n" +
+		"time, typically from an error value; `…` marks the variable part of a\n" +
+		"concatenated message.\n")
 	app, comp := "", ""
 	for _, e := range list {
 		if e.app != app {
@@ -490,6 +535,45 @@ func render(entries map[string]*entry) string {
 	b.WriteString("\n")
 	return b.String()
 }
+
+// renderPersonalData writes one row per classified field, with the levels of
+// the log calls that pass it, least verbose first.
+func renderPersonalData(b *strings.Builder, list []*entry) {
+	b.WriteString("\n## Personal-data fields\n\n" +
+		"Class and data subject of each catalogued field that can hold personal\n" +
+		"data, as defined in [Personal data](#personal-data). *Levels* are the\n" +
+		"levels of the log calls that pass the field, least verbose first.\n\n" +
+		"| Field | Class | Data subject | Levels | Content |\n|---|---|---|---|---|\n")
+	levelsOf := map[string]map[string]bool{}
+	for _, e := range list {
+		for f := range e.fields {
+			if levelsOf[f] == nil {
+				levelsOf[f] = map[string]bool{}
+			}
+			levelsOf[f][strings.Fields(e.level)[0]] = true
+		}
+	}
+	keys := make([]string, 0, len(personalData))
+	for k := range personalData {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return strings.ToLower(keys[i]) < strings.ToLower(keys[j]) })
+	for _, k := range keys {
+		var ls []string
+		for i := len(levels) - 1; i >= 0; i-- {
+			if levelsOf[k][levels[i]] {
+				ls = append(ls, levels[i])
+			}
+		}
+		p := personalData[k]
+		fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n", cell(k), p.class, p.subject, strings.Join(ls, ", "), p.content)
+	}
+}
+
+var (
+	validClass   = map[string]bool{tenantPII: true, staffID: true, customerData: true, content: true}
+	validSubject = map[string]bool{operator: true, tenantUser: true, endCustomer: true}
+)
 
 func levelRank(l string) int {
 	for i, x := range levels {
@@ -515,7 +599,7 @@ func fieldList(fields map[string]bool) string {
 	keys := sortedKeys(fields)
 	for i, k := range keys {
 		keys[i] = cell(k)
-		if piiKeyRe.MatchString(k) && !notPIIKeyRe.MatchString(k) {
+		if _, ok := personalData[k]; ok {
 			keys[i] += "†"
 		}
 	}
