@@ -289,3 +289,49 @@ func TestArtifactSessionFenceHonorsExactIdleBoundary(t *testing.T) {
 	session.Status.ResolvedTemplate.Constraints.IdleTimeout = ""
 	require.True(t, artifactSessionIsLive(session, binding, now))
 }
+
+func TestTerminalRecordingLimits(t *testing.T) {
+	base := config.Artifacts{UploadMaxBytes: 1 << 20}
+	for _, tt := range []struct {
+		name        string
+		bytes       int64
+		conc        int
+		wantBytes   int64
+		wantStreams int
+		wantErr     bool
+	}{
+		{"defaults", 0, 0, 1 << 20, 0, false},
+		{"explicit within bounds", 1 << 19, MaxTerminalRecordingConcurrent, 1 << 19, MaxTerminalRecordingConcurrent, false},
+		{"minimum", 1, 1, 1, 1, false},
+		{"negative bytes", -1, 0, 0, 0, true},
+		{"bytes above upload maximum", 1<<20 + 1, 0, 0, 0, true},
+		{"negative concurrency", 0, -1, 0, 0, true},
+		{"concurrency above maximum", 0, MaxTerminalRecordingConcurrent + 1, 0, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base
+			c.TerminalRecordingMaxBytes, c.TerminalRecordingMaxConcurrent = tt.bytes, tt.conc
+			gotBytes, gotStreams, err := terminalRecordingLimits(c)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantBytes, gotBytes)
+			require.Equal(t, tt.wantStreams, gotStreams)
+		})
+	}
+}
+
+func TestBuildRejectsInvalidTerminalRecordingLimitsAtStartup(t *testing.T) {
+	for name, cfg := range map[string]config.Artifacts{
+		"bytes":       {Enabled: true, UploadMaxBytes: 1 << 20, TerminalRecordingMaxBytes: 1<<20 + 1},
+		"concurrency": {Enabled: true, UploadMaxBytes: 1 << 20, TerminalRecordingMaxConcurrent: MaxTerminalRecordingConcurrent + 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			components, err := Build(context.Background(), cfg, "breakglass", Dependencies{})
+			require.ErrorContains(t, err, "artifacts.terminalRecording")
+			require.Nil(t, components)
+		})
+	}
+}

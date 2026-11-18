@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"slices"
@@ -85,6 +86,7 @@ type DebugSessionAPIController struct {
 	recordingStreams        atomic.Int32
 	recordingArtifacts      *backend.Service
 	recordingMaxBytes       int64
+	recordingMaxStreams     int32
 	recordingConnections    TerminalRecordingConnectionProvider
 	recordingRotationGrace  time.Duration
 	terminalTargetResolver  terminalTargetResolver
@@ -95,6 +97,15 @@ type DebugSessionAPIController struct {
 // terminal recording reservations.
 func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64) *DebugSessionAPIController {
 	c.recordingMaxBytes = maxBytes
+	return c
+}
+
+// WithTerminalRecordingMaxStreams sets the concurrent recording streams per
+// process. Values below 1 leave the setting unchanged (default 2).
+func (c *DebugSessionAPIController) WithTerminalRecordingMaxStreams(n int) *DebugSessionAPIController {
+	if n > 0 {
+		c.recordingMaxStreams = int32(min(n, math.MaxInt32))
+	}
 	return c
 }
 

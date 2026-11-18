@@ -280,10 +280,17 @@ type Artifacts struct {
 	CollectorImagePullSecrets []corev1.LocalObjectReference `yaml:"collectorImagePullSecrets,omitempty"`
 	ControllerURL             string                        `yaml:"controllerURL,omitempty"`
 	UploadMaxBytes            int64                         `yaml:"uploadMaxBytes,omitempty"`
-	TokenSecretName           string                        `yaml:"tokenSecretName,omitempty"`
-	TokenSignerKeyID          string                        `yaml:"tokenSignerKeyID,omitempty"`
-	S3                        *ArtifactS3                   `yaml:"s3,omitempty"`
-	Local                     *ArtifactLocal                `yaml:"local,omitempty"`
+	// TerminalRecordingMaxBytes caps one terminal recording. Zero keeps the
+	// historic behaviour (the recording may use up to UploadMaxBytes); otherwise
+	// it must be within 1..UploadMaxBytes.
+	TerminalRecordingMaxBytes int64 `yaml:"terminalRecordingMaxBytes,omitempty"`
+	// TerminalRecordingMaxConcurrent caps live recording streams per replica.
+	// Zero keeps the default of 2; otherwise 1..32.
+	TerminalRecordingMaxConcurrent int            `yaml:"terminalRecordingMaxConcurrent,omitempty"`
+	TokenSecretName                string         `yaml:"tokenSecretName,omitempty"`
+	TokenSignerKeyID               string         `yaml:"tokenSignerKeyID,omitempty"`
+	S3                             *ArtifactS3    `yaml:"s3,omitempty"`
+	Local                          *ArtifactLocal `yaml:"local,omitempty"`
 	// CredentialRotationGrace is how long a retired target-credential
 	// generation keeps serving already-running terminal streams after a
 	// rotation (blue/green), for example "30s". New streams always bind to the

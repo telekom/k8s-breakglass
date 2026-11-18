@@ -81,6 +81,28 @@ type Components struct {
 	Close          func() error
 }
 
+// MaxTerminalRecordingConcurrent is the upper bound for
+// Artifacts.TerminalRecordingMaxConcurrent; each stream buffers up to one
+// recording in memory.
+const MaxTerminalRecordingConcurrent = 32
+
+// terminalRecordingLimits validates the optional recording limits and returns
+// the effective per-recording byte cap (uploadMaxBytes when unset) and the
+// concurrent stream limit (0 keeps the controller default of 2).
+func terminalRecordingLimits(c config.Artifacts) (int64, int, error) {
+	if c.TerminalRecordingMaxBytes < 0 || c.TerminalRecordingMaxBytes > c.UploadMaxBytes {
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxBytes %d must be unset (0) or within 1..uploadMaxBytes (%d)", c.TerminalRecordingMaxBytes, c.UploadMaxBytes)
+	}
+	if c.TerminalRecordingMaxConcurrent < 0 || c.TerminalRecordingMaxConcurrent > MaxTerminalRecordingConcurrent {
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxConcurrent %d must be unset (0) or within 1..%d", c.TerminalRecordingMaxConcurrent, MaxTerminalRecordingConcurrent)
+	}
+	maxBytes := c.UploadMaxBytes
+	if c.TerminalRecordingMaxBytes > 0 {
+		maxBytes = c.TerminalRecordingMaxBytes
+	}
+	return maxBytes, c.TerminalRecordingMaxConcurrent, nil
+}
+
 // Build constructs the complete enabled artifact host. Disabled artifacts
 // return nil without reading Secrets or contacting a provider.
 func Build(ctx context.Context, artifactConfig config.Artifacts, namespace string, deps Dependencies) (*Components, error) {
@@ -88,6 +110,10 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 		return nil, nil
 	}
 	if err := artifactjob.ValidateImagePullSecrets(artifactConfig.CollectorImagePullSecrets); err != nil {
+		return nil, err
+	}
+	recordingMax, recordingStreams, err := terminalRecordingLimits(artifactConfig)
+	if err != nil {
 		return nil, err
 	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
@@ -133,7 +159,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(artifactConfig.UploadMaxBytes)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()
