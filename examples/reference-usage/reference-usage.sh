@@ -233,7 +233,9 @@ cleanup() {
     if ! delete_created_debug_namespace; then cleanup_failed=true; fi
   fi
   [[ -d "${STATE_DIR}" ]] && rm -rf "${STATE_DIR}"
-  if [[ "${CLUSTER_OWNED}" == true ]] && command -v kind >/dev/null 2>&1; then
+  # Opt-in: keep the kind cluster after a failure so CI can collect diagnostics.
+  if [[ "${CLUSTER_OWNED}" == true && ! ( "${exit_code}" -ne 0 && "${REFERENCE_RETAIN_CLUSTER_ON_FAILURE:-false}" == true ) ]] &&
+    command -v kind >/dev/null 2>&1; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
   fi
   [[ "${cleanup_failed}" == true && "${exit_code}" -eq 0 ]] && exit_code=1

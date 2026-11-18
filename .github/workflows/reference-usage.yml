@@ -114,7 +114,7 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
-          KIND_RETAIN_ON_FAILURE: "true"
+          REFERENCE_RETAIN_CLUSTER_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
@@ -136,7 +136,7 @@ jobs:
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
           REFERENCE_SETUP_SCRIPT: e2e/kind-setup-single.sh
           SKIP_PROXY: "true"
-          KIND_RETAIN_ON_FAILURE: "true"
+          REFERENCE_RETAIN_CLUSTER_ON_FAILURE: "true"
           REFERENCE_ENV_FILE: e2e/kind-setup-single-tdir/e2e-env.sh
           REFERENCE_TOKEN_HELPER: e2e/get-token.sh
           REFERENCE_REQUESTER_USERNAME: complete-flow-requester
