@@ -410,6 +410,8 @@ func terminalRecordingAbortReason(err error) string {
 		return "session_authority_changed"
 	case strings.Contains(message, "connection lease") || strings.Contains(message, "terminal stream claim"):
 		return "lease_changed"
+	case errors.Is(err, errTerminalRecordingLimit):
+		return "recording_limit"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "expired"
 	case errors.Is(err, context.Canceled):

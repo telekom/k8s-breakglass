@@ -1802,6 +1802,7 @@
             "lease_changed",
             "expired",
             "client_disconnected",
+            "recording_limit",
             "stream_failed"
           ]
         },

@@ -207,8 +207,9 @@ func StreamTerminalWithResize(
 		Tty:               true,
 		TerminalSizeQueue: sizeQueue,
 	})
-	if cause := context.Cause(streamCtx); cause != nil && ctx.Err() == nil && streamErr == nil {
-		// The executor may return cleanly after cancellation; the stream still failed.
+	if cause := context.Cause(streamCtx); cause != nil && ctx.Err() == nil && (streamErr == nil || errors.Is(streamErr, context.Canceled)) {
+		// The executor returns cleanly or with ctx.Err() after our own
+		// cancellation; report why the stream was stopped.
 		streamErr = cause
 	}
 	result, finalizeErr := recorder.Finalize()

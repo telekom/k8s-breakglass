@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -33,6 +34,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 	require.NoError(t, err, "run e2e/fixtures/artifacts/setup.sh first")
 	maxStreams, err := strconv.Atoi(os.Getenv("E2E_RECORDING_MAX_STREAMS"))
 	require.NoError(t, err, "run e2e/fixtures/artifacts/setup.sh first")
+	require.GreaterOrEqual(t, maxStreams, 2, "the byte subtests use two of the sessions")
 
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	ctx := s.Ctx
@@ -71,7 +73,11 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 			if err != nil || result.StatusCode != http.StatusServiceUnavailable || attempt >= 10 {
 				return result, err
 			}
-			time.Sleep(2 * time.Second)
+			select {
+			case <-streamCtx.Done():
+				return result, streamCtx.Err()
+			case <-time.After(2 * time.Second):
+			}
 		}
 	}
 
@@ -128,6 +134,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		extra, err := requester.StreamRecordedTerminal(extraCtx, request(targets[0], `echo over-limit`, nil))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusTooManyRequests, extra.StatusCode, "stream %d exceeds the limit of %d: %s", maxStreams+1, maxStreams, extra.Body)
+		require.Contains(t, extra.Body, "too many concurrent terminal recordings", "refused by the recording limiter, not a rate limit")
 		require.NotContains(t, extra.Output, "over-limit")
 
 		releaseAll()
@@ -166,12 +173,23 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		started := time.Now()
-		result, err := stream(streamCtx, request(targets[1], output(maxBytes+64<<10, "over-limit")+"; sleep 600", nil))
+		req := request(targets[1], output(maxBytes+64<<10, "over-limit")+"; sleep 600", nil)
+		req.CorrelationID = uuid.NewString()
+		result, err := stream(streamCtx, req)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
 		require.NotContains(t, result.Output, "over-limit", "no unrecorded output passes the limit")
 		require.Less(t, int64(len(result.Output)), maxBytes, "delivered output stays within the recording limit")
 		require.Equal(t, "incomplete", result.Status, "the evidence up to the limit is published as incomplete")
 		require.Less(t, time.Since(started), 3*time.Minute, "the stream ends at the limit, not at the target's exit or session expiry")
+		events, err := helpers.AuditEventsByCorrelation(ctx, req.CorrelationID)
+		require.NoError(t, err)
+		var reasons []any
+		for _, event := range events {
+			if event.Type == "debug_session.terminal_recording_finalized" {
+				reasons = append(reasons, event.Details["abortReason"])
+			}
+		}
+		require.Equal(t, []any{"recording_limit"}, reasons, "the limit is audited as the abort reason")
 	})
 }

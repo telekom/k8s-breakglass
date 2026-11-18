@@ -529,6 +529,7 @@ func TestTerminalRecordingAbortReason(t *testing.T) {
 		"lease_changed":             fmt.Errorf("terminal stream claim expired or changed"),
 		"expired":                   fmt.Errorf("stream: %w", context.DeadlineExceeded),
 		"client_disconnected":       fmt.Errorf("stream: %w", context.Canceled),
+		"recording_limit":           fmt.Errorf("stream terminal session: record terminal output: %w", errTerminalRecordingLimit),
 		"stream_failed":             io.ErrUnexpectedEOF,
 	} {
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())

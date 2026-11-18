@@ -294,6 +294,7 @@ func (e outputThenWaitExecutor) StreamWithContext(ctx context.Context, options r
 	}
 	select {
 	case <-ctx.Done():
+		return ctx.Err() // like the SPDY executor
 	case <-time.After(5 * time.Second):
 	}
 	return nil
@@ -306,6 +307,7 @@ func TestStreamTerminalStopsWhenOutputExceedsTheRecordingLimit(t *testing.T) {
 	started := time.Now()
 	_, err = StreamTerminal(context.Background(), outputThenWaitExecutor{output: make([]byte, 10)}, nil, &delivered, io.Discard, NewTerminalRecorder(int64(frame-1)))
 	require.ErrorIs(t, err, errTerminalRecordingLimit, "an unrecordable output fails the stream")
+	require.Equal(t, "recording_limit", terminalRecordingAbortReason(err), "audited as the limit, not as a disconnect")
 	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly instead of running unrecorded")
 	require.Zero(t, delivered.Len(), "unrecorded output never reaches the client")
 }
