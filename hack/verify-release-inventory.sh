@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Machine check of hack/release-artifact-inventory.json. Fails when
-#   - a Dockerfile or Chart.yaml exists that is neither inventoried nor excluded,
+#   - a Dockerfile/Containerfile or Chart.yaml (node_modules/ and vendor/ are
+#     skipped) exists that is neither inventoried nor excluded,
 #   - an inventoried source does not exist,
 #   - a utility image in hack/utility-image-matrix.json and the release.yml build
 #     matrix disagree,
@@ -21,7 +22,7 @@ root="${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 inventory="${root}/hack/release-artifact-inventory.json"
 matrix="${root}/hack/utility-image-matrix.json"
 release="${root}/.github/workflows/release.yml"
-command -v jq >/dev/null 2>&1 || { echo 'jq is required' >&2; exit 2; }
+for tool in jq yq; do command -v "${tool}" >/dev/null 2>&1 || { echo "${tool} is required" >&2; exit 2; }; done
 for f in "${inventory}" "${matrix}" "${release}"; do [[ -f "${f}" ]] || { echo "missing ${f}" >&2; exit 2; }; done
 
 errors=0
@@ -61,12 +62,12 @@ done < <(jq -r '.excluded[] | [.source, (.reason // "")] | @tsv' "${inventory}")
 # 3. The hardcoded release.yml utility build matrix (name + context pairs)
 #    equals the utility inventory.
 want="$(jq -r '.images[] | "name: \(.name) context: \(.context)"' "${matrix}" | sort)"
-have="$(grep -B1 -E '^[[:space:]]+context: utils/' "${release}" | grep -v '^--$' | sed -E 's/^[[:space:]]+(- )?//' | paste -d' ' - - | sort)"
+have="$(yq -r '.jobs."build-utility-images".strategy.matrix.include[] | "name: " + .name + " context: " + .context' "${release}" | sort)"
 [[ "${want}" == "${have}" ]] || fail "release.yml utility build matrix differs from hack/utility-image-matrix.json"
 
 # 4. Each artifact binds a digest subject and has every gate present.
 # Comment lines do not count: a commented-out gate is a missing gate.
-contains() { awk -v n="$2" '!/^[[:space:]]*#/ && index($0, n) { f = 1; exit } END { exit !f }' "${root}/$1"; }
+contains() { NEEDLE="$2" awk '!/^[[:space:]]*#/ && index($0, ENVIRON["NEEDLE"]) { f = 1; exit } END { exit !f }' "${root}/$1"; }
 while IFS= read -r artifact; do
   [[ -n "${artifact}" ]] || continue
   name="$(jq -r .name <<<"${artifact}")"

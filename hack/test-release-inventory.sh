@@ -46,6 +46,9 @@ d="$(fresh matrix-drift)"; sed -i.bak 's#context: utils/node-maintenance#context
 expect_fail 'release.yml matrix context differs from utility inventory' "${d}"
 d="$(fresh matrix-name-drift)"; sed -i.bak 's#- name: node-maintenance#- name: node-maint#' "${d}/.github/workflows/release.yml"
 expect_fail 'release.yml matrix name differs from utility inventory' "${d}"
+d="$(fresh matrix-extra-entry)"; awk '{print} /^        include:$/ && !x {print "          - context: \"utils/x\""; print "            name: x"; x=1}' "${d}/.github/workflows/release.yml" >"${d}/r.yml"; mv "${d}/r.yml" "${d}/.github/workflows/release.yml"
+grep -qF 'context: "utils/x"' "${d}/.github/workflows/release.yml"
+expect_fail 'extra quoted release.yml matrix entry' "${d}"
 d="$(fresh listed-missing)"; rm "${d}/charts/escalation-config/Chart.yaml"
 expect_fail 'inventoried source missing' "${d}"
 d="$(fresh exclusion-without-reason)"; edit_inventory "${d}" '.excluded[0].reason = " "'

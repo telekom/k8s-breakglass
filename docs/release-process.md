@@ -231,8 +231,8 @@ separate subject.
 
 `hack/verify-release-inventory.sh` fails when
 
-- a `Dockerfile`, `Containerfile` or `Chart.yaml` (including symlinks) exists
-  that is neither inventoried nor excluded, or an exclusion breaks the rule above,
+- a `Dockerfile`, `Containerfile` or `Chart.yaml` (including symlinks, outside
+  `node_modules/` and `vendor/`) exists that is neither inventoried nor excluded, or an exclusion breaks the rule above,
 - an inventoried source is missing, or the utility build matrix in
   `release.yml` differs from `hack/utility-image-matrix.json` (name and context),
 - a publisher no longer binds a digest (`...@sha256`) subject,
