@@ -29,11 +29,12 @@ type personal struct{ class, subject, content string }
 // they send is end-customer data.
 var (
 	userID        = personal{tenantPII, tenantUser, "user name, e-mail address or ID of a requester, approver, recipient or other user"}
-	groupName     = personal{tenantPII, tenantUser, "group name, ID or list; `server.redactLogs` redacts it"}
+	groupName     = personal{tenantPII, tenantUser, "group name, ID or list; `server.redactLogs` redacts it only where the code applies it"}
 	sessionName   = personal{tenantPII, tenantUser, "session name: a debug session name contains the requester's user name, a breakglass session name the requested group"}
 	sessionText   = personal{tenantPII, tenantUser, "SubjectAccessReview reason or response; quotes session names and groups"}
 	tenantObject  = personal{tenantPII, tenantUser, "name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it"}
 	errorText     = personal{tenantPII, tenantUser, "error or status text; can quote user names, groups, session names and object names"}
+	impersonated  = personal{tenantPII, tenantUser, "user name, group, UID, ServiceAccount or extra value that an impersonation request targets"}
 	clientURL     = personal{customerData, endCustomer, "URL or URL path a client sent, including unauthenticated clients of the OIDC proxy"}
 	clientHeader  = personal{content, endCustomer, "request header value of any client"}
 	operatorID    = personal{staffID, operator, "user name of the operator who acknowledged cleanup residuals"}
@@ -66,7 +67,7 @@ var personalData = map[string]personal{
 	"deleteError":        errorText,
 	"details":            sessionText,
 	"email":              userID,
-	"error":              errorText,
+	"error":              {content, endCustomer, "error text; can quote user names, groups, session names, object names, a value a user wrote (a `scheduledStartTime` that failed to parse) and the URL a client sent to the OIDC proxy"},
 	"errors":             errorText,
 	"escalatedGroup":     groupName,
 	"evicted":            sessionName,
@@ -80,7 +81,8 @@ var personalData = map[string]personal{
 	"id":                 {tenantPII, tenantUser, "mail queue item ID, which is the session name; the leader-election lease name"},
 	"identifier":         userID,
 	"identities":         tenantObject,
-	"identityName":       tenantObject,
+	"identity":           {tenantPII, tenantUser, "user name, group, UID or ServiceAccount an impersonation request targets; the controller's host name in leader-election lines"},
+	"identityName":       impersonated,
 	"identityNamespace":  tenantObject,
 	"impersonatedUser":   userID,
 	"impersonationGroup": groupName,
@@ -95,6 +97,7 @@ var personalData = map[string]personal{
 	"name":               {tenantPII, tenantUser, "name of the object a line is about: configuration, a session, or an object in a tenant cluster"},
 	"namespace":          tenantObject,
 	"newSession":         sessionName,
+	"note":               {tenantPII, tenantUser, "note of a Kubernetes Event; can quote group names and error texts"},
 	"normalized":         clientURL,
 	"normalized_origin":  clientHeader,
 	"object":             {tenantPII, tenantUser, "name of the object a Kubernetes Event is about, usually a session"},
@@ -134,6 +137,7 @@ var personalData = map[string]personal{
 	"resources":          tenantObject,
 	"response":           sessionText,
 	"searchParamHint":    groupName,
+	"selector":           {tenantPII, tenantUser, "field selector of a session query; can hold a user name, group or session name"},
 	"session":            sessionName,
 	"sessionDetails":     sessionText,
 	"sessionGroup":       groupName,
@@ -156,6 +160,7 @@ var personalData = map[string]personal{
 	"userIdentifier":     userID,
 	"user_agent":         clientHeader,
 	"user_id":            userID,
+	"value":              {content, endCustomer, "a `scheduledStartTime` a user wrote that failed to parse, or an invalid configuration value"},
 	"username":           userID,
 	"waitingMessage":     errorText,
 	"warnings":           errorText,
@@ -168,7 +173,7 @@ var (
 	candidateKeyRe = regexp.MustCompile(`(?i)(user|requester|requestor|requestedby|approver|rejector|member|email|recipient|subject|identit|identifier|group|session|namespace|pod|^name$|resource|^ip$|ip$|path|url|origin|authority|agent|^to$|^sub$|^id$|reason|message|error|warning|detail|panic|body|response|hint|ticket|acknowledg|object|target|command|^cmd$|^args$)`)
 	// notCandidateRe excludes counts, flags, limits, descriptors and the
 	// controller's own certificate, bind and configuration settings.
-	notCandidateRe = regexp.MustCompile(`(?i:count|counts|len|length|size|nil|limit|total|type|kind|source|index|scheme|added|_written|_failed|withmismatch)$|^(is|has|can|enable|disable|allow|deny|require|max|min|total|num|merged|consecutive)[A-Z_]|(?i:cert|bind|config|template|policy)`)
+	notCandidateRe = regexp.MustCompile(`(?i:count|counts|len|length|size|nil|limit|total|type|kind|index|scheme|added|_written|_failed|withmismatch)$|(^s|S)ource$|^(is|has|can|enable|disable|allow|deny|require|max|min|total|num|merged|consecutive)[A-Z_]|(?i:cert|bind|config|template|policy)`)
 )
 
 // notPersonal lists the logged keys that candidateKeyRe matches but that hold
@@ -177,9 +182,9 @@ var (
 var notPersonal = []string{
 	"activeSessions", "apiGroup", "authority", "basePath", "baseURL", "batchURL",
 	"BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "breakglass_namespace", "clusterNamespace",
-	"defaultNamespace", "denialReason", "escalationNamespace", "frontendBaseURL", "identity",
-	"identityProvider", "identityProviderRef", "issuerURL", "lastTerminationReason",
+	"defaultNamespace", "denialReason", "escalationNamespace", "frontendBaseURL",
+	"identityProvider", "identityProviderRef", "identityResource", "issuerURL", "lastTerminationReason",
 	"leader_elect_namespace", "namespaces", "namespaceScope", "original", "origins", "pod_namespace",
-	"recipients", "secretNamespace", "sessionIDPs", "sessions", "skipReason", "subject", "subjectCN",
+	"recipients", "secretNamespace", "sessionIDPs", "sessions", "skipReason", "subject", "subjectCN", "subresource",
 	"target_host", "url", "userIdentifierClaim", "users", "waitingReason",
 }

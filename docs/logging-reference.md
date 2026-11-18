@@ -159,8 +159,9 @@ URL paths and header values (`ip`, `remote`, `path`, `origin`, `user_agent`)
 are `end-customer`, the highest subject, because any client that reaches the
 API or the OIDC proxy is logged, authenticated or not, and such a client need
 not be an operator or a tenant user. Error texts (`error`, `(dynamic)` messages)
-can quote user names, groups, session names and object names and are
-`tenant-user`.
+can quote user names, groups, session names and object names, but also a
+value a user wrote (a `scheduledStartTime` that failed to parse) and the URL a
+client sent to the OIDC proxy, so `error` is `content` of an `end-customer`.
 
 [Personal-data fields](#personal-data-fields) lists the class, data subject,
 levels and content of every catalogued field. `hack/logref/personal_data.go`
@@ -295,7 +296,7 @@ levels of the log calls that pass the field, least verbose first.
 |---|---|---|---|---|
 | `acknowledgedBy` | staff-id | operator | warn, info | user name of the operator who acknowledged cleanup residuals |
 | `acknowledgement` | tenant-pii | tenant-user | warn, info | name of a DebugSessionCleanupAcknowledgement; usually derived from the debug session name, which contains the requester's user name |
-| `allowedGroups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `allowedGroups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `approver` | tenant-pii | tenant-user | error, warn, info, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `approverEmail` | tenant-pii | tenant-user | info, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `approvers` | tenant-pii | tenant-user | info, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
@@ -314,30 +315,31 @@ levels of the log calls that pass the field, least verbose first.
 | `deleteError` | tenant-pii | tenant-user | error | error or status text; can quote user names, groups, session names and object names |
 | `details` | tenant-pii | tenant-user | info | SubjectAccessReview reason or response; quotes session names and groups |
 | `email` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
-| `error` | tenant-pii | tenant-user | error, warn, info, debug | error or status text; can quote user names, groups, session names and object names |
+| `error` | content | end-customer | error, warn, info, debug | error text; can quote user names, groups, session names, object names, a value a user wrote (a `scheduledStartTime` that failed to parse) and the URL a client sent to the OIDC proxy |
 | `errors` | tenant-pii | tenant-user | warn, info | error or status text; can quote user names, groups, session names and object names |
-| `escalatedGroup` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `escalatedGroup` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `evicted` | tenant-pii | tenant-user | warn | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `finalReason` | tenant-pii | tenant-user | info | SubjectAccessReview reason or response; quotes session names and groups |
 | `generatedName` | tenant-pii | tenant-user | debug | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `getError` | tenant-pii | tenant-user | error | error or status text; can quote user names, groups, session names and object names |
-| `group` | tenant-pii | tenant-user | error, warn, info, debug | group name, ID or list; `server.redactLogs` redacts it |
-| `groupID` | tenant-pii | tenant-user | error, debug | group name, ID or list; `server.redactLogs` redacts it |
-| `groupNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
-| `groups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `group` | tenant-pii | tenant-user | error, warn, info, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `groupID` | tenant-pii | tenant-user | error, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `groupNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `groups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `id` | tenant-pii | tenant-user | error, warn, info, debug | mail queue item ID, which is the session name; the leader-election lease name |
 | `identifier` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `identities` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
-| `identityName` | tenant-pii | tenant-user | warn, info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
+| `identity` | tenant-pii | tenant-user | info | user name, group, UID or ServiceAccount an impersonation request targets; the controller's host name in leader-election lines |
+| `identityName` | tenant-pii | tenant-user | warn, info | user name, group, UID, ServiceAccount or extra value that an impersonation request targets |
 | `identityNamespace` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `impersonatedUser` | tenant-pii | tenant-user | info, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
-| `impersonationGroup` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it |
+| `impersonationGroup` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `ip` | customer-data | end-customer | info | client IP address; any client that reaches the API |
-| `itemHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `itemHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `keepSession` | tenant-pii | tenant-user | warn | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
-| `matchedGroup` | tenant-pii | tenant-user | warn | group name, ID or list; `server.redactLogs` redacts it |
-| `matchedGroupHint` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it |
-| `matchedNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `matchedGroup` | tenant-pii | tenant-user | warn | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `matchedGroupHint` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `matchedNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `member` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `message` | tenant-pii | tenant-user | warn, debug | status message of a debug pod or a ClusterConfig check, or an approval-check message; can quote object names |
 | `name` | tenant-pii | tenant-user | error, warn, info, debug | name of the object a line is about: configuration, a session, or an object in a tenant cluster |
@@ -345,25 +347,26 @@ levels of the log calls that pass the field, least verbose first.
 | `newSession` | tenant-pii | tenant-user | warn | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `normalized` | customer-data | end-customer | warn | URL or URL path a client sent, including unauthenticated clients of the OIDC proxy |
 | `normalized_origin` | content | end-customer | warn | request header value of any client |
+| `note` | tenant-pii | tenant-user | warn, info | note of a Kubernetes Event; can quote group names and error texts |
 | `object` | tenant-pii | tenant-user | info | name of the object a Kubernetes Event is about, usually a session |
 | `origin` | content | end-customer | warn | request header value of any client |
 | `originalNamespace` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `originalPath` | customer-data | end-customer | warn | URL or URL path a client sent, including unauthenticated clients of the OIDC proxy |
 | `originalPod` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `panic` | tenant-pii | tenant-user | error | error or status text; can quote user names, groups, session names and object names |
-| `params` | tenant-pii | tenant-user | error | group name, ID or list; `server.redactLogs` redacts it |
-| `parentGroupID` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `params` | tenant-pii | tenant-user | error | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `parentGroupID` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `path` | customer-data | end-customer | error, warn, info, debug | URL path: the route template in the access log, a non-resource URL a user requested, or a path a client sent to the OIDC proxy, including unauthenticated clients |
-| `patternHint` | tenant-pii | tenant-user | warn, debug | group name, ID or list; `server.redactLogs` redacts it |
+| `patternHint` | tenant-pii | tenant-user | warn, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `pod` | tenant-pii | tenant-user | error, warn, info, debug | pod in a tenant cluster, often a debug pod named after the session; the controller's own pod name |
 | `podName` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `podNamespace` | tenant-pii | tenant-user | error, warn | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
-| `rawTokenGroups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `rawTokenGroups` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `reason` | content | end-customer | error, warn, info, debug | rejection reason a user wrote, or a reason text of the controller that can quote session names and groups |
 | `recipient` | tenant-pii | tenant-user | warn | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `rejector` | tenant-pii | tenant-user | info | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `requestedBy` | tenant-pii | tenant-user | error | user name, e-mail address or ID of a requester, approver, recipient or other user |
-| `requestedGroup` | tenant-pii | tenant-user | warn, info, debug | group name, ID or list; `server.redactLogs` redacts it |
+| `requestedGroup` | tenant-pii | tenant-user | warn, info, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `requestedNamespace` | tenant-pii | tenant-user | warn, debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `requestedUsername` | tenant-pii | tenant-user | warn, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `requestEmail` | tenant-pii | tenant-user | error, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
@@ -375,26 +378,27 @@ levels of the log calls that pass the field, least verbose first.
 | `requestorUsername` | tenant-pii | tenant-user | warn, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `requestUsername` | tenant-pii | tenant-user | error, warn, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `resolvedNamespace` | tenant-pii | tenant-user | debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
-| `resolvedUserGroups` | tenant-pii | tenant-user | warn | group name, ID or list; `server.redactLogs` redacts it |
+| `resolvedUserGroups` | tenant-pii | tenant-user | warn | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `resource` | tenant-pii | tenant-user | warn, info, debug | resource type of a request, or the name of an auxiliary resource deployed for a debug session |
 | `resourceAttributes` | tenant-pii | tenant-user | debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `resourceName` | tenant-pii | tenant-user | warn, info, debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `resources` | tenant-pii | tenant-user | info | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `response` | tenant-pii | tenant-user | info | SubjectAccessReview reason or response; quotes session names and groups |
-| `searchParamHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `searchParamHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `selector` | tenant-pii | tenant-user | error, info, debug | field selector of a session query; can hold a user name, group or session name |
 | `session` | tenant-pii | tenant-user | error, warn, info, debug | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `sessionDetails` | tenant-pii | tenant-user | info | SubjectAccessReview reason or response; quotes session names and groups |
-| `sessionGroup` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it |
+| `sessionGroup` | tenant-pii | tenant-user | info, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `sessionID` | tenant-pii | tenant-user | warn | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `sessionName` | tenant-pii | tenant-user | info | session name: a debug session name contains the requester's user name, a breakglass session name the requested group |
 | `skipped_idps` | tenant-pii | tenant-user | error | error or status text; can quote user names, groups, session names and object names |
 | `statusError` | tenant-pii | tenant-user | error, warn | error or status text; can quote user names, groups, session names and object names |
 | `sub` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
-| `subgroupID` | tenant-pii | tenant-user | warn, debug | group name, ID or list; `server.redactLogs` redacts it |
-| `subgroupNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `subgroupID` | tenant-pii | tenant-user | warn, debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
+| `subgroupNameHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `target` | customer-data | end-customer | error, debug | URL or URL path a client sent, including unauthenticated clients of the OIDC proxy |
 | `target_path` | customer-data | end-customer | debug | URL or URL path a client sent, including unauthenticated clients of the OIDC proxy |
-| `targetGroupHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it |
+| `targetGroupHint` | tenant-pii | tenant-user | debug | group name, ID or list; `server.redactLogs` redacts it only where the code applies it |
 | `targetNamespace` | tenant-pii | tenant-user | warn, debug | name or namespace of an object in a tenant cluster or of a session resource; tenants and session names choose it |
 | `ticketSystemID` | content | end-customer | info | ticket reference a user wrote (up to 256 characters); can hold anything |
 | `to` | tenant-pii | tenant-user | error, info | mail recipient address; circuit-breaker lines use it for the new state |
@@ -405,6 +409,7 @@ levels of the log calls that pass the field, least verbose first.
 | `userEmail` | tenant-pii | tenant-user | warn | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `userIdentifier` | tenant-pii | tenant-user | debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
 | `username` | tenant-pii | tenant-user | error, info, debug | user name, e-mail address or ID of a requester, approver, recipient or other user |
+| `value` | content | end-customer | warn | a `scheduledStartTime` a user wrote that failed to parse, or an invalid configuration value |
 | `waitingMessage` | tenant-pii | tenant-user | warn | error or status text; can quote user names, groups, session names and object names |
 | `warnings` | tenant-pii | tenant-user | info | error or status text; can quote user names, groups, session names and object names |
 
@@ -460,7 +465,7 @@ concatenated message.
 | info | `Creating leader election lease` | `id`†, `namespace`† | main.go |
 | info | `HTTP server disabled: both --enable-frontend and --enable-api are false` |  | main.go |
 | info | `Leader election disabled via --enable-leader-election=false, background loops will run on all replicas` |  | main.go |
-| info | `Leader election resource lock created` | `id`†, `identity`, `namespace`† | main.go |
+| info | `Leader election resource lock created` | `id`†, `identity`†, `namespace`† | main.go |
 | info | `Log redaction enabled via config` |  | main.go |
 | info | `Mail service shut down successfully` |  | main.go |
 | info | `OpenTelemetry tracing shut down successfully` |  | main.go |
@@ -665,8 +670,8 @@ concatenated message.
 | debug | `Fetching BreakglassSessions by states (using field index)` | `states` | session_manager.go |
 | debug | `Fetching BreakglassSessions for cluster and user (using field index)` | `cluster`, `user`† | session_manager.go |
 | debug | `Fetching BreakglassSessions for user (using field index)` | `user`† | session_manager.go |
-| debug | `Fetching BreakglassSessions with selector` | `selector` | session_manager.go |
-| debug | `Fetching BreakglassSessions with selector string` | `selector` | session_manager.go |
+| debug | `Fetching BreakglassSessions with selector` | `selector`† | session_manager.go |
+| debug | `Fetching BreakglassSessions with selector string` | `selector`† | session_manager.go |
 | debug | `Fetching all BreakglassSessions` |  | session_manager.go |
 | debug | `Field index lookup failed; falling back to selector` | `error`†, `name`† | session_manager.go |
 | debug | `Field index lookup returned no sessions; falling back to selector` | `name`† | session_manager.go |
@@ -746,7 +751,7 @@ concatenated message.
 | debug | `Using cluster-specific userIdentifierClaim` | `cluster`, `userIdentifierClaim` | session_request_helpers.go |
 | debug | `Using escalation-level per-user session limit override` | `escalation`, `maxPerUser` | session_controller_status.go |
 | debug | `Using escalation-level total session limit override` | `escalation`, `maxTotal` | session_controller_status.go |
-| debug | `Using field selector for sessions query` | `selector` | session_controller_status.go |
+| debug | `Using field selector for sessions query` | `selector`† | session_controller_status.go |
 | debug | `Using provided approver groups for email` | `approverGroupCount`, `session`† | session_controller_actions.go |
 | debug | `Using resolved approver group members from escalation status` | `escalation`, `group`†, `memberCount` | session_controller_approval_utils.go |
 | debug | `Using state index for sessions query` | `states` | session_controller_status.go |
@@ -795,8 +800,8 @@ concatenated message.
 | info | `Fetched BreakglassSessions for user (indexed)` | `count`, `user`† | session_manager.go |
 | info | `Fetched BreakglassSessions from live reader after cache lookup found no eligible session` | `cluster`, `count`, `user`† | session_manager.go |
 | info | `Fetched BreakglassSessions from live reader after cluster cache lookup` | `cluster`, `count` | session_manager.go |
-| info | `Fetched BreakglassSessions with selector` | `count`, `selector` | session_manager.go |
-| info | `Fetched BreakglassSessions with selector string` | `count`, `selector` | session_manager.go |
+| info | `Fetched BreakglassSessions with selector` | `count`, `selector`† | session_manager.go |
+| info | `Fetched BreakglassSessions with selector string` | `count`, `selector`† | session_manager.go |
 | info | `Filtering results` | `excludedApproverCount`, `hiddenApproverCount`, `originalApproverCount`, `totalDirectExcluded`, `totalDirectHidden`, `totalGroupMembersExcluded`, `totalGroupMembersHidden`, `visibleApproverCount` | session_controller_actions.go |
 | info | `Finished breakglass session cleanup task` |  | cleanup_task.go |
 | info | `GetUserGroups complete` | `cluster`, `groupCount`, `username`† | group_checker.go |
@@ -873,8 +878,8 @@ concatenated message.
 | warn | `Failed to list sessions for duplicate cleanup` | `error`†, `state` | cleanup_duplicate_sessions.go |
 | warn | `Failed to list terminal sessions for duplicate cleanup audit drain` | `error`†, `state` | cleanup_duplicate_sessions.go |
 | warn | `Failed to load rest.Config for cluster` | `cluster`, `error`† | group_checker.go |
-| warn | `Failed to parse MaxValidFor duration` | `error`†, `value` | session_request_helpers.go |
-| warn | `Failed to parse scheduledStartTime` | `error`†, `value` | session_request_helpers.go |
+| warn | `Failed to parse MaxValidFor duration` | `error`†, `value`† | session_request_helpers.go |
+| warn | `Failed to parse scheduledStartTime` | `error`†, `value`† | session_request_helpers.go |
 | warn | `Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session` | `cluster`, `error`†, `user`† | session_manager.go |
 | warn | `Failed to refresh BreakglassSessions from live reader after cluster cache lookup found no eligible session` | `cluster`, `error`† | session_manager.go |
 | warn | `Failed to resolve ClusterConfig while enforcing session readiness; blocking request` | `cluster`, `error`† | session_request_helpers.go |
@@ -944,7 +949,7 @@ concatenated message.
 | error | `Error getting breakglass sessions` | `error`† | session_controller_status.go, session_request_helpers.go |
 | error | `Error getting user identifier from token` | `error`†, `userIdentifierClaim` | session_request_helpers.go |
 | error | `Error listing cluster escalations for approval` | `error`† | session_controller_approval_utils.go |
-| error | `Failed to create field selector` | `error`†, `selector` | session_manager.go |
+| error | `Failed to create field selector` | `error`†, `selector`† | session_manager.go |
 | error | `Failed to create new BreakglassSession` |  | session_manager.go |
 | error | `Failed to create new client` | `error`† | session_manager.go |
 | error | `Failed to decode JSON request body` | `error`† | session_controller.go |
@@ -953,16 +958,16 @@ concatenated message.
 | error | `Failed to get config with context` | `context`, `error`† | session_manager.go |
 | error | `Failed to get user info from response` | `error`† | group_checker.go |
 | error | `Failed to get user's subject review` | `error`† | group_checker.go |
-| error | `Failed to list BreakglassSessionList for fallback lookup` | `error`†, `selector` | session_manager.go |
-| error | `Failed to list BreakglassSessionList with selector` | `error`†, `selector` | session_manager.go |
-| error | `Failed to list BreakglassSessionList with string selector` | `error`†, `selector` | session_manager.go |
+| error | `Failed to list BreakglassSessionList for fallback lookup` | `error`†, `selector`† | session_manager.go |
+| error | `Failed to list BreakglassSessionList with selector` | `error`†, `selector`† | session_manager.go |
+| error | `Failed to list BreakglassSessionList with string selector` | `error`†, `selector`† | session_manager.go |
 | error | `Failed to list BreakglassSessions by state` | `error`†, `state` | session_manager.go |
 | error | `Failed to list BreakglassSessions for cluster/user` | `cluster`, `error`†, `user`† | session_manager.go |
 | error | `Failed to list BreakglassSessions for user` | `error`†, `user`† | session_manager.go |
 | error | `Failed to list ClusterConfig resources` | `error`† | cluster_config_manager.go |
 | error | `Failed to list sessions for getActiveBreakglassSession` | `error`† | session_controller_status.go |
 | error | `Failed to load config for OIDC prefixes` | `error`† | group_checker.go |
-| error | `Failed to parse field selector for fallback lookup` | `error`†, `selector` | session_manager.go |
+| error | `Failed to parse field selector for fallback lookup` | `error`†, `selector`† | session_manager.go |
 | error | `Failed to resolve BreakglassSession before status update` |  | session_manager.go |
 | error | `Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups` | `approver`†, `cluster`, `error`†, `requestContextGroupCount` | session_controller_approval_utils.go |
 | error | `Failed to retrieve user groups for escalation determination` | `error`† | session_request_helpers.go |
@@ -1353,7 +1358,7 @@ concatenated message.
 | debug | `Fetched group escalation candidates with group index` | `candidateCount`, `matched` | escalation_manager.go |
 | debug | `Fetching BreakglassEscalation by name` | `name`†, `namespace`† | escalation_manager.go |
 | debug | `Fetching BreakglassEscalations with filter` |  | escalation_manager.go |
-| debug | `Fetching BreakglassEscalations with selector` | `selector` | escalation_manager.go |
+| debug | `Fetching BreakglassEscalations with selector` | `selector`† | escalation_manager.go |
 | debug | `Fetching all BreakglassEscalations` |  | escalation_manager.go |
 | debug | `Fetching cluster BreakglassEscalations` | `cluster` | escalation_manager.go |
 | debug | `Fetching cluster-group BreakglassEscalations` | `cluster`, `groupCount` | escalation_manager.go |
@@ -1411,7 +1416,7 @@ concatenated message.
 | info | `EscalationManager initialized successfully` |  | escalation_manager.go |
 | info | `EscalationManager resolver updated` |  | escalation_manager.go |
 | info | `Fetched BreakglassEscalations` | `count` | escalation_manager.go |
-| info | `Fetched BreakglassEscalations with selector` | `count`, `selector` | escalation_manager.go |
+| info | `Fetched BreakglassEscalations with selector` | `count`, `selector`† | escalation_manager.go |
 | info | `Filtered BreakglassEscalations` | `count`, `totalEvaluated` | escalation_manager.go |
 | info | `Initializing EscalationManager` | `context` | escalation_manager.go |
 | info | `Keycloak group member resolution completed successfully` | `finalResolvedCount`, `group`† | escalation_status_updater.go |
@@ -1449,7 +1454,7 @@ concatenated message.
 | error | `Failed to get Keycloak token` | `error`†, `group`† | escalation_status_updater.go |
 | error | `Failed to get config with context` | `context`, `error`† | escalation_manager.go |
 | error | `Failed to list BreakglassEscalation for filtered get` | `error`† | escalation_manager.go |
-| error | `Failed to list BreakglassEscalation with selector` | `error`†, `selector` | escalation_manager.go |
+| error | `Failed to list BreakglassEscalation with selector` | `error`†, `selector`† | escalation_manager.go |
 | error | `Failed to load ClusterConfig readiness for active escalations` | `error`† | escalation_controller.go |
 | error | `Failed to load IDP configuration` | `error`†, `escalation`, `idp` | escalation_status_updater.go |
 | error | `Failed to resolve group members` | `error`†, `escalation`, `group`† | escalation_status_updater.go |
@@ -1549,10 +1554,10 @@ concatenated message.
 | warn | `Refresh token failed, silently falling back to client_credentials (fallbackPolicy=Auto)` | `cluster`, `namespace`† | oidc.go |
 | warn | `Refresh token from secret failed` | `cluster`, `error`†, `namespace`† | oidc.go |
 | warn | `circuit breaker registry at capacity, returning always-closed sentinel` | `cluster`, `max`, `overflowCount` | circuitbreaker.go |
-| warn | `invalid circuitBreaker failureThreshold, using default` | `default`, `value` | circuitbreaker.go |
-| warn | `invalid circuitBreaker halfOpenMaxRequests, using default` | `default`, `value` | circuitbreaker.go |
-| warn | `invalid circuitBreaker openDuration, using default` | `default`, `value` | circuitbreaker.go |
-| warn | `invalid circuitBreaker successThreshold, using default` | `default`, `value` | circuitbreaker.go |
+| warn | `invalid circuitBreaker failureThreshold, using default` | `default`, `value`† | circuitbreaker.go |
+| warn | `invalid circuitBreaker halfOpenMaxRequests, using default` | `default`, `value`† | circuitbreaker.go |
+| warn | `invalid circuitBreaker openDuration, using default` | `default`, `value`† | circuitbreaker.go |
+| warn | `invalid circuitBreaker successThreshold, using default` | `default`, `value`† | circuitbreaker.go |
 | error | `Refresh token failed and fallbackPolicy=None, cluster is unreachable` | `cluster`, `error`†, `namespace`† | oidc.go |
 | error | `TOFU CA pin mismatch: refusing to re-pin a different CA for cluster` | `cluster`, `error`†, `secret` | oidc.go |
 
@@ -1675,7 +1680,7 @@ concatenated message.
 | warn | `Failed to update escalation status with validation errors` | `error`†, `escalation` | escalation_reconciler.go |
 | warn | `Health check timeout` |  | mail_provider_reconciler.go |
 | warn | `IdentityProvider failed structural validation, skipping reconciliation` | `errors`†, `name`† | identity_provider_reconciler.go |
-| warn | `IdentityProvider not found - controller will start with limited functionality` | `error`†, `note` | identity_provider_loader.go |
+| warn | `IdentityProvider not found - controller will start with limited functionality` | `error`†, `note`† | identity_provider_loader.go |
 | warn | `Initial AuditConfig sync failed; retrying` | `error`†, `retryIn` | audit_config_reconciler.go |
 | warn | `MailProvider failed structural validation, skipping reconciliation` | `errors`† | mail_provider_reconciler.go |
 | warn | `MailProvider has DisableTLS enabled (insecure for production)` | `provider` | mail_provider_reconciler.go |
@@ -1742,11 +1747,11 @@ concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| info | `I became the leader` | `identity` | leaderelection.go |
-| info | `Leader election stopped; retrying leadership acquisition` | `id`†, `identity`, `namespace`† | leaderelection.go |
+| info | `I became the leader` | `identity`† | leaderelection.go |
+| info | `Leader election stopped; retrying leadership acquisition` | `id`†, `identity`†, `namespace`† | leaderelection.go |
 | info | `Lost leadership` |  | leaderelection.go |
-| info | `New leader elected` | `identity` | leaderelection.go |
-| info | `Starting leader election` | `id`†, `identity`, `namespace`† | leaderelection.go |
+| info | `New leader elected` | `identity`† | leaderelection.go |
+| info | `Starting leader election` | `id`†, `identity`†, `namespace`† | leaderelection.go |
 | info | `This replica acquired leadership, signaling background loops` |  | leaderelection.go |
 | error | `Failed to create LeaderElector` | `error`† | leaderelection.go |
 
@@ -1794,7 +1799,7 @@ concatenated message.
 | debug | `Blocked factor exempted by escalation override` | `factor`, `pod`† | deny.go |
 | debug | `Pod exempt from security evaluation` | `namespace`†, `pod`† | deny.go |
 | debug | `Pod security overrides not applicable: namespace not in scope` | `namespace`†, `namespaceScope`, `pod`† | deny.go |
-| info | `Impersonation denied by DenyPolicy` | `cluster`, `identity`, `identityResource`, `mode`, `policy`, `ruleIndex`, `verb`, `verbKind` | impersonation.go |
+| info | `Impersonation denied by DenyPolicy` | `cluster`, `identity`†, `identityResource`, `mode`, `policy`, `ruleIndex`, `verb`, `verbKind` | impersonation.go |
 | info | `Pod access allowed via escalation override` | `factors`, `maxAllowed`, `namespace`†, `pod`†, `score` | deny.go |
 | warn | `Failed to parse reason template` | `error`†, `template` | deny.go |
 | warn | `Failed to render reason template` | `error`† | deny.go |
@@ -1855,7 +1860,7 @@ concatenated message.
 |---|---|---|---|
 | info | `OTel OTLP exporter initialized` | `endpoint`, `insecure` | telemetry.go |
 | info | `OTel stdout exporter initialized` |  | telemetry.go |
-| info | `OTel tracing enabled with no exporter` | `note` | telemetry.go |
+| info | `OTel tracing enabled with no exporter` | `note`† | telemetry.go |
 | info | `OpenTelemetry tracing initialized` | `exporter`, `samplingRate`, `serviceName` | telemetry.go |
 | info | `Shutting down OpenTelemetry TracerProvider` |  | telemetry.go |
 | warn | `OTel sampling rate < 0, clamping to 1.0 (sample everything)` | `provided` | telemetry.go |
@@ -1868,8 +1873,8 @@ concatenated message.
 |---|---|---|---|
 | debug | `Object unchanged, skipping SSA apply` | `kind`, `name`†, `namespace`† | patchhelper.go |
 | debug | `Unstructured object unchanged, skipping SSA apply` | `kind`, `name`†, `namespace`† | patchhelper.go |
-| warn | `Invalid … in spec; falling back to default` | `default`, `error`†, `value` | duration_helpers.go |
-| warn | `Non-positive … in spec; falling back to default` | `default`, `parsedDuration`, `value` | duration_helpers.go |
+| warn | `Invalid … in spec; falling back to default` | `default`, `error`†, `value`† | duration_helpers.go |
+| warn | `Non-positive … in spec; falling back to default` | `default`, `parsedDuration`, `value`† | duration_helpers.go |
 | warn | `SSA apply conflict` | `error`†, `kind`, `name`†, `namespace`† | patchhelper.go |
 
 #### `pkg/webhook`
