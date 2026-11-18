@@ -188,7 +188,7 @@ stored in an independent `DebugSessionArtifact` before target execution. Capture
 bytes and final metadata are published through that reservation even after
 stream expiry or revocation; incomplete streams are marked `complete: false`. A final live-authority check
 classifies completion without discarding evidence after revocation. It is
-retried up to three times within 5 seconds, so one slow API read does not mark
+checked up to three times within 5 seconds, so one slow API read does not mark
 a cleanly ended stream incomplete; a periodic in-stream check that the
 stream's own clean end interrupts is not treated as a revocation.
 The shared artifact controller recovers ambiguous publication and performs

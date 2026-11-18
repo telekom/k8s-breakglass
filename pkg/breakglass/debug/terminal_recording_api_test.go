@@ -596,4 +596,11 @@ func TestValidateAfterCleanStreamToleratesTransientFailure(t *testing.T) {
 	unchecked := &flakyValidateConnection{}
 	require.False(t, validateAfterCleanStream(expired, unchecked), "no budget left: incomplete, fail closed")
 	require.Zero(t, unchecked.calls)
+
+	// Attempts wait for the backoff: a budget that ends during it allows one.
+	short, cancelShort := context.WithTimeout(context.Background(), terminalFinalValidateBackoff/2)
+	defer cancelShort()
+	failing := &flakyValidateConnection{failures: 1000}
+	require.False(t, validateAfterCleanStream(short, failing))
+	require.Equal(t, 1, failing.calls, "no retry before the backoff elapsed")
 }
