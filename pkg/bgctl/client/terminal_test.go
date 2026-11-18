@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,30 +190,65 @@ func TestTerminalFailedInputIsNotCleanEOF(t *testing.T) {
 // nginx drops response trailers: the outcome comes from the recording listing.
 func TestTerminalFallsBackToListingWhenTrailersAreDropped(t *testing.T) {
 	for name, tc := range map[string]struct {
-		listing string
-		want    TerminalResult
+		listing    string
+		listStatus int
+		header     bool
+		trailers   bool
+		want       TerminalResult
+		wantErr    bool
+		wantLists  int32
 	}{
-		"complete":   {`[{"artifactID":"rec-1","sha256":"abc","recording":{"complete":true}}]`, TerminalResult{RecordingID: "rec-1", SHA256: "abc", Status: "completed"}},
-		"incomplete": {`[{"artifactID":"rec-1","sha256":"abc","recording":{"complete":false}}]`, TerminalResult{RecordingID: "rec-1", SHA256: "abc", Status: "incomplete"}},
-		"unlisted":   {`[]`, TerminalResult{RecordingID: "rec-1", Status: "finalization-pending"}},
+		"complete":   {listing: `[{"artifactID":"rec-9","sha256":"abc","recording":{"complete":true}}]`, header: true, want: TerminalResult{RecordingID: "rec-9", SHA256: "abc", Status: "completed"}, wantLists: 1},
+		"incomplete": {listing: `[{"artifactID":"rec-9","sha256":"abc","recording":{"complete":false}}]`, header: true, want: TerminalResult{RecordingID: "rec-9", SHA256: "abc", Status: "incomplete"}, wantLists: 1},
+		"unlisted":   {listing: `[]`, header: true, want: TerminalResult{RecordingID: "rec-9", Status: "finalization-pending"}, wantLists: 1},
+		// An older recording of the same session never stands in for this one.
+		"other recording listed": {listing: `[{"artifactID":"rec-0","sha256":"old","recording":{"complete":true}}]`, header: true, want: TerminalResult{RecordingID: "rec-9", Status: "finalization-pending"}, wantLists: 1},
+		"trailers win":           {header: true, trailers: true, want: TerminalResult{RecordingID: "rec-9", SHA256: "trailer", Status: "completed"}},
+		// An older server without the header: no lookup, empty status as before.
+		"no header":      {want: TerminalResult{}},
+		"listing denied": {listStatus: http.StatusForbidden, header: true, want: TerminalResult{RecordingID: "rec-9"}, wantErr: true, wantLists: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
+			var lists atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
-					require.Equal(t, "/api/debugSessions/s1/terminal", r.URL.Path)
+					lists.Add(1)
+					if r.URL.Path != "/api/debugSessions/s1/terminal" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					if tc.listStatus != 0 {
+						w.WriteHeader(tc.listStatus)
+						return
+					}
 					_, _ = w.Write([]byte(tc.listing))
 					return
 				}
-				w.Header().Set(terminalPendingIDHeader, "rec-1")
+				if tc.header {
+					w.Header().Set(terminalPendingIDHeader, "rec-9")
+				}
+				if tc.trailers {
+					w.Header().Set("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
+				}
 				_, _ = io.Copy(io.Discard, r.Body)
 				_, _ = w.Write([]byte("out"))
+				if tc.trailers {
+					w.Header().Set("X-Breakglass-Recording-ID", "rec-9")
+					w.Header().Set("X-Breakglass-Recording-SHA256", "trailer")
+					w.Header().Set("X-Breakglass-Recording-Status", "completed")
+				}
 			}))
 			defer server.Close()
 			c, err := New(WithServer(server.URL))
 			require.NoError(t, err)
 			result, err := c.Terminal(context.Background(), TerminalRequest{Session: "s1", PodNamespace: "n", PodName: "p", Command: []string{"sh"}, Stdin: strings.NewReader("x")})
-			require.NoError(t, err)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 			require.Equal(t, tc.want, result)
+			require.Equal(t, tc.wantLists, lists.Load())
 		})
 	}
 }

@@ -12,6 +12,9 @@
 #     - ../../components/streaming-ingress
 #
 # Not a protocol upgrade: no Upgrade/Connection or WebSocket headers are needed.
+# ingress-nginx also needs `client-body-timeout` in its controller ConfigMap
+# (default 60 s, no per-Ingress annotation) sized to the longest session, or an
+# idle shell is cut. HTTPRoute timeouts need Gateway API v1.2+ (standard).
 # Adjust the 3600 s timeouts to the longest session you allow, by a patch in
 # your overlay. Patches whose target is absent are ignored, so the component is
 # safe with either exposure style.

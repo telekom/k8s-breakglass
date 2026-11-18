@@ -63,6 +63,7 @@ type TerminalResult struct {
 	SHA256      string
 	// Status is completed, incomplete or finalization-pending; empty when the
 	// server ended the stream before publishing trailers (revocation, expiry).
+	// Behind a proxy that drops trailers it comes from the recording listing.
 	Status string
 }
 
@@ -222,19 +223,19 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 		if id := resp.Header.Get(terminalPendingIDHeader); id != "" {
 			// A proxy (nginx) dropped the trailers: the server finalized the
 			// recording before it ended the stream, so the listing has the outcome.
-			result = c.recordingOutcome(ctx, request, id)
+			return c.recordingOutcome(ctx, request, id)
 		}
 	}
 	return result, nil
 }
 
-// recordingOutcome derives the trailer values from the recording listing.
-// An unreachable listing leaves Status empty, like a stream without trailers.
-func (c *Client) recordingOutcome(ctx context.Context, request TerminalRequest, id string) TerminalResult {
+// recordingOutcome derives the trailer values from the recording listing,
+// which lists only published recordings: an unlisted one is still pending.
+func (c *Client) recordingOutcome(ctx context.Context, request TerminalRequest, id string) (TerminalResult, error) {
 	result := TerminalResult{RecordingID: id}
 	infos, err := c.DebugSessions().Recordings(ctx, request.Session, request.Namespace)
 	if err != nil {
-		return result
+		return result, fmt.Errorf("terminal stream ended without recording trailers; look up recording %s: %w", id, err)
 	}
 	result.Status = "finalization-pending"
 	for _, info := range infos {
@@ -247,7 +248,7 @@ func (c *Client) recordingOutcome(ctx context.Context, request TerminalRequest, 
 			result.Status = "completed"
 		}
 	}
-	return result
+	return result, nil
 }
 
 func writeTerminalFrame(w io.Writer, frameType byte, payload []byte) error {

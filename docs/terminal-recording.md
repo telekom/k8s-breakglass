@@ -138,8 +138,10 @@ HTTP/1.1. Every proxy between `bgctl` and the controller must:
 With kustomize, add the opt-in component instead of writing the annotations by
 hand. It sets the ingress-nginx annotations below on the `breakglass-ingress`
 Ingress and, when `../gateway-api` is listed before it, `timeouts.request` and
-`timeouts.backendRequest` of `0s` (disabled, GEP-1742) on the HTTPRoute. The
-default renders are unchanged. This repository ships no Helm chart for the
+`timeouts.backendRequest` of `0s` (disabled, GEP-1742) on the HTTPRoute. Order
+matters: listed after `streaming-ingress`, `gateway-api` renders the HTTPRoute
+without the timeouts, silently. HTTPRoute `timeouts` needs Gateway API v1.2 or
+later on the standard channel. The default renders are unchanged. This repository ships no Helm chart for the
 controller, so there is no chart value; the charts under `charts/` only render
 custom resources.
 
@@ -163,6 +165,12 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "512m"
 ```
 
+ingress-nginx also cuts a request whose body is idle for longer than
+`client-body-timeout` (default 60 seconds), for example a shell left without
+typing. There is no annotation for it: set `client-body-timeout` in the
+ingress-nginx controller ConfigMap, sized to the longest session (this applies
+to every Ingress of that controller).
+
 No `Upgrade`/`Connection` headers are needed. Gateway implementations may keep
 their own idle timeouts (Envoy Gateway `BackendTrafficPolicy`, Istio
 `DestinationRule`); raise those separately.
@@ -172,10 +180,13 @@ names the recording in a regular response header,
 `X-Breakglass-Recording-Pending-ID`, before the stream starts. When `bgctl`
 receives no trailers it looks that recording up in `GET
 /debugSessions/:name/terminal` (the server finalizes before it ends the stream)
-and reports `completed` or `incomplete` and the digest from the listing. The
-recording must be listed by an authorized reader, which the stream's owner is;
-if the listing is unreachable the status stays empty, as before. Clients that
-do not know the header are unaffected.
+and reports `completed` or `incomplete` and the digest from the listing, or
+`finalization-pending` when the recording is not listed (publication failed;
+the artifact controller retries it). The lookup is a regular, audited listing
+(`debug_session.terminal_recording_accessed`, `access: list`, naming the
+session's recording IDs) and needs the caller to be an authorized reader, which
+the stream's owner is; if it fails, `bgctl` exits non-zero with the reason.
+Clients that do not know the header are unaffected.
 
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a

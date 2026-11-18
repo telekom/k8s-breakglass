@@ -169,23 +169,46 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 		})
 	})
 
-	// Needs e2e/ingress-nginx.sh (E2E_INGRESS=true on kind-setup-single.sh).
+	// Needs e2e/ingress-nginx.sh (run by the artifacts-local CI lane).
 	// nginx drops response trailers: the client must still report the outcome.
 	t.Run("recorded terminal through the ingress", func(t *testing.T) {
 		ingressURL := os.Getenv("E2E_INGRESS_URL")
 		if ingressURL == "" {
 			t.Skip("E2E_INGRESS_URL not set: no ingress controller in this lane")
 		}
+		if token := requester.RefreshToken(ctx); token != "" {
+			requester.AuthToken = token
+		}
+
+		// The proxy really drops the trailers; the header names the recording.
+		query := url.Values{"namespace": {session.Namespace}, "podNamespace": {pod.Namespace}, "podName": {pod.Name}, "operation": {"exec"}, "command": {"sh", "-c", "echo raw"}}
+		rawCtx, rawCancel := context.WithTimeout(ctx, time.Minute)
+		defer rawCancel()
+		req, err := http.NewRequestWithContext(rawCtx, http.MethodPost, ingressURL+base+"?"+query.Encode(), strings.NewReader(""))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+requester.AuthToken)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		rawBody, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(rawBody))
+		require.Contains(t, string(rawBody), "raw")
+		require.NotEmpty(t, resp.Header.Get("X-Breakglass-Recording-Pending-ID"), "the recording is named in a response header")
+		require.Empty(t, resp.Trailer.Get("X-Breakglass-Recording-Status"), "nginx drops the trailers, so the fallback is what is under test")
+
 		bg, err := bgclient.New(bgclient.WithServer(ingressURL), bgclient.WithToken(requester.AuthToken))
 		require.NoError(t, err)
 		stdin, stdinWriter := io.Pipe()
 		go func() {
-			time.Sleep(2 * time.Second) // output must flow back before input ends
+			// Idle longer than nginx's 60s body/read timeouts: the component and
+			// the documented client-body-timeout keep the session open.
+			time.Sleep(70 * time.Second)
 			_, _ = io.WriteString(stdinWriter, "via-ingress\n")
 			_ = stdinWriter.Close()
 		}()
 		var out bytes.Buffer
-		streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		streamCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
 		result, err := bg.Terminal(streamCtx, bgclient.TerminalRequest{
 			Session: session.Name, Namespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
