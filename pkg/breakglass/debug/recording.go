@@ -309,8 +309,10 @@ func StreamTerminalWithResize(
 }
 
 // recordingReader and recordingWriter end the whole stream (fail) when bytes
-// cannot be recorded: the executor only logs a copy error, so without it the
-// target would keep running, blocked or unrecorded, until expiry.
+// cannot be recorded, delivered or admitted (a failed transport authority
+// check): the executor only logs a copy error and discards the rest of the
+// output, so without it the target would keep running with dropped output and
+// a clean exit would publish the recording as complete (#1760).
 type recordingReader struct {
 	reader    io.Reader
 	recorder  *TerminalRecorder
@@ -320,6 +322,12 @@ type recordingReader struct {
 
 func (r *recordingReader) Read(payload []byte) (int, error) {
 	n, err := r.reader.Read(payload)
+	if err != nil && !errors.Is(err, io.EOF) {
+		// Input that was read but not admitted is neither recorded nor forwarded.
+		err = fmt.Errorf("read terminal input: %w", err)
+		r.fail(err)
+		return 0, err
+	}
 	if n > 0 {
 		if recordErr := r.recorder.Write(r.direction, payload[:n]); recordErr != nil {
 			recordErr = fmt.Errorf("record terminal input: %w", recordErr)
@@ -343,7 +351,12 @@ func (w *recordingWriter) Write(payload []byte) (int, error) {
 		w.fail(err)
 		return 0, err
 	}
-	return w.writer.Write(payload)
+	n, err := w.writer.Write(payload)
+	if err != nil {
+		err = fmt.Errorf("deliver terminal output: %w", err)
+		w.fail(err)
+	}
+	return n, err
 }
 
 type recordedSizeQueue struct {

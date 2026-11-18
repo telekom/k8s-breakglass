@@ -87,6 +87,7 @@ type DebugSessionAPIController struct {
 	recordingArtifacts      *backend.Service
 	recordingMaxBytes       int64
 	recordingSegmentBytes   int64
+	recordingStrictAuthz    bool
 	recordingMaxStreams     int32
 	recordingConnections    TerminalRecordingConnectionProvider
 	recordingRotationGrace  time.Duration
@@ -106,6 +107,15 @@ func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64
 // Zero (the default) keeps the whole recording in memory until it ends.
 func (c *DebugSessionAPIController) WithTerminalRecordingSegmentBytes(segmentBytes int64) *DebugSessionAPIController {
 	c.recordingSegmentBytes = segmentBytes
+	return c
+}
+
+// WithTerminalRecordingStrictAuthorization restores the per-write live
+// authority check of recorded terminal I/O: revocation is enforced on the
+// next read or write, at the cost of a few live API reads for each of them.
+// The default reuses a live check for up to terminalAuthorityMaxAge (1s).
+func (c *DebugSessionAPIController) WithTerminalRecordingStrictAuthorization(strict bool) *DebugSessionAPIController {
+	c.recordingStrictAuthz = strict
 	return c
 }
 

@@ -1803,6 +1803,9 @@
             "expired",
             "client_disconnected",
             "recording_limit",
+            "authority_check_failed",
+            "transport_failed",
+            "output_truncated",
             "stream_failed"
           ]
         },

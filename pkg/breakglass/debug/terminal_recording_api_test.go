@@ -568,6 +568,9 @@ func TestTerminalRecordingAbortReason(t *testing.T) {
 		"expired":                   fmt.Errorf("stream: %w", context.DeadlineExceeded),
 		"client_disconnected":       fmt.Errorf("stream: %w", context.Canceled),
 		"recording_limit":           fmt.Errorf("stream terminal session: record terminal output: %w", errTerminalRecordingLimit),
+		"authority_check_failed":    fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("get target pod: %w", context.DeadlineExceeded)),
+		"output_truncated":          fmt.Errorf("stream terminal session: %w", errTerminalOutputTruncated),
+		"transport_failed":          fmt.Errorf("stream terminal session: deliver terminal output: write: broken pipe"),
 		"stream_failed":             io.ErrUnexpectedEOF,
 	} {
 		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
