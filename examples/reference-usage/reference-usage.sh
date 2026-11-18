@@ -267,6 +267,8 @@ dump_diagnostics() {
     kubectl get clusterrolebinding -o yaml | grep -B8 -A12 "${REFERENCE_CLUSTER_ROLE_NAME}"
     kubectl get clusterconfig -A -o yaml
     kubectl get breakglasssession -A -o yaml
+    kubectl get debugsession,debugsessiontemplate,debugpodtemplate -A -o yaml
+    kubectl get all,events -n "${DEBUG_NAMESPACE}" -o wide
     kubectl auth can-i get configmaps -n "${NAMESPACE}" --as "${REQUESTER_EMAIL}" --as-group "${REFERENCE_ESCALATED_GROUP}"
   } >"${REFERENCE_EVIDENCE_DIR}/reference-objects.yaml" 2>&1 || true
 }
