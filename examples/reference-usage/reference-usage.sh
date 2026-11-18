@@ -496,7 +496,7 @@ metadata:
 spec:
   targetRole: ClusterRole
   targetName: '${REFERENCE_CLUSTER_ROLE_NAME}'
-  scopeNamespaced: false
+  scopeNamespaced: true # include namespaced resources (configmaps); secrets stay restricted
   restrictedResources:
     - name: secrets
       singularName: secret
