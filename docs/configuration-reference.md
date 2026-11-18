@@ -68,6 +68,7 @@ artifacts:
   # terminalRecordingMaxConcurrent: 2       # optional, 1..32
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
+  credentialRotationGrace: 30s # optional, default 0s (abort running terminal streams on rotation)
   s3:
     region: eu-central-1
     bucket: breakglass-artifacts
@@ -93,6 +94,17 @@ pulls or the target nodes already have registry credentials. Missing or invalid
 registry credentials result in Kubernetes image pull errors.
 Invalid reference names are rejected at startup before artifact dependencies
 are initialized, and again before any collector resources are provisioned.
+`credentialRotationGrace` (maximum `15m`, default `0s`) enables blue/green rotation of the
+target credential for terminal recording: after a rotation new streams bind to the new
+generation immediately, while already-running streams keep working until the grace deadline
+(counted from when the controller observes the change, never beyond the session expiry), then are
+revoked and closed. Only one previous generation is kept. The grace covers only credential and
+trust inputs (the credential Secrets and IdentityProvider); a replaced ClusterConfig, a revoked
+session, a changed target or a deleted or unreadable Secret still ends streams at once, and a stream
+never starts on a credential that changed before its command ran. Use the same value on every replica: a
+replica without grace ends draining streams at once. With the default, running streams are
+aborted at rotation. The value is read at startup; changing it requires a controller restart.
+
 `stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,

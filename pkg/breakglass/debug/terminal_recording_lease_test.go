@@ -304,6 +304,119 @@ func TestGenerationPublishErrorRetriesOnlyConcurrentChanges(t *testing.T) {
 	}
 }
 
+func graceFixture(t *testing.T, grace time.Duration) (ctrlclient.Client, TerminalRecordingConnectionProvider, *rotatingCredential, TerminalRecordingConnectionBinding) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(hub).WithNamespace("execution").WithRotationGrace(grace), credential.source)
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)}
+	return hub, provider, credential, binding
+}
+
+func rotate(c *rotatingCredential, rv string) {
+	c.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: rv})
+}
+
+func TestTerminalLeaseBlueGreenRotationGrace(t *testing.T) {
+	ctx := context.Background()
+	hub, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.Equal(t, "1", blue.Binding().Generation)
+
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err, "new sessions bind to the new generation immediately, without waiting for the old stream")
+	require.Equal(t, "2", green.Binding().Generation)
+	require.NoError(t, blue.Validate(ctx), "the old generation keeps working inside the grace period")
+	require.NoError(t, green.Validate(ctx))
+
+	// Grace deadline passes: only the old generation is revoked.
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(ctx, leases))
+	lease := leases.Items[0].DeepCopy()
+	require.NotEmpty(t, lease.Annotations[connectionLeasePreviousDeadlineAnnotation])
+	lease.Annotations[connectionLeasePreviousDeadlineAnnotation] = time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)
+	require.NoError(t, hub.Update(ctx, lease))
+	require.Error(t, blue.Validate(ctx), "the old generation is revoked at the deadline")
+	require.NoError(t, green.Validate(ctx))
+	require.NoError(t, blue.Close(ctx))
+	require.NoError(t, green.Validate(ctx), "closing the old stream must not release the new claim")
+	require.NoError(t, green.Close(ctx))
+	require.NoError(t, hub.List(ctx, leases))
+	for _, key := range []string{terminalStreamClaimAnnotation, terminalStreamExpiryAnnotation, terminalStreamClaimGenerationAnnotation, terminalStreamPrevClaimAnnotation, terminalStreamPrevExpiryAnnotation} {
+		require.NotContains(t, leases.Items[0].Annotations, key, "closing both streams releases every claim slot")
+	}
+}
+
+// A replica without grace ignores previous-generation state another replica
+// (or an earlier grace config) left behind: the old stream is fenced at once.
+func TestTerminalLeaseWithoutGraceIgnoresPreviousGeneration(t *testing.T) {
+	ctx := context.Background()
+	hub, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	_, err = provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx))
+	blue.(*terminalRecordingLeaseConnection).service = NewConnectionLeaseService(hub).WithNamespace("execution")
+	require.Error(t, blue.Validate(ctx))
+}
+
+func TestTerminalLeaseGraceKeepsOnlyOnePreviousGeneration(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	g1, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	g2, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "3")
+	g3, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.Error(t, g1.Validate(ctx), "generation two rotations old is revoked immediately")
+	require.NoError(t, g2.Validate(ctx))
+	require.NoError(t, g3.Validate(ctx))
+}
+
+func TestConnectionLeaseRotationGraceIsBoundedAndCappedAtExpiry(t *testing.T) {
+	require.Equal(t, MaxConnectionRotationGrace, NewConnectionLeaseService(nil).WithRotationGrace(24*time.Hour).rotationGrace)
+	require.Zero(t, NewConnectionLeaseService(nil).WithRotationGrace(-time.Second).rotationGrace)
+	hub, provider, credential, binding := graceFixture(t, time.Hour)
+	binding.ExpiresAt = time.Now().Add(time.Minute)
+	_, err := provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	_, err = provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(context.Background(), leases))
+	deadline, err := time.Parse(time.RFC3339Nano, leases.Items[0].Annotations[connectionLeasePreviousDeadlineAnnotation])
+	require.NoError(t, err)
+	require.False(t, deadline.After(binding.ExpiresAt), "grace never outlives the session")
+}
+
+// A stream draining on the previous generation keeps its claim when a later
+// acquisition does not replace it (the new-generation stream already closed).
+func TestTerminalLeaseGraceKeepsDrainingClaimAcrossLaterAcquire(t *testing.T) {
+	ctx := context.Background()
+	_, provider, credential, binding := graceFixture(t, time.Minute)
+	blue, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	rotate(credential, "2")
+	green, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, green.Close(ctx))
+	again, err := provider.AcquireTerminalRecordingConnection(ctx, binding)
+	require.NoError(t, err)
+	require.NoError(t, blue.Validate(ctx), "the draining stream keeps working until its deadline")
+	require.NoError(t, again.Validate(ctx))
+}
+
 // A failed acquisition retires only the unchanged Lease it created: a
 // concurrent writer between its read and its delete must survive.
 func TestTerminalLeaseFailedAcquireCleanupPreservesConcurrentWriter(t *testing.T) {

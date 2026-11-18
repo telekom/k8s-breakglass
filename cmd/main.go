@@ -205,6 +205,10 @@ func run() error {
 		return err
 	}
 
+	if _, err := cfg.Artifacts.RotationGrace(); err != nil {
+		return err
+	}
+
 	system.SetLogRedaction(cfg.Server.RedactLogs)
 	debug.SetTrafficMirrorDisabled(cliConfig.DisableTrafficMirror)
 	escalation.SetApproverGroupCaseInsensitiveFallback(cfg.Kubernetes.ApproverGroupCaseInsensitiveFallback)
@@ -576,7 +580,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		if buildErr != nil {
 			return nil, fmt.Errorf("build diagnostic artifact host: %w", buildErr)
 		}
-		debugSessionAPICtrl.WithTerminalRecordingArtifacts(components.Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithLiveReader(reconcilerMgr.GetAPIReader()).WithNamespace(cliConfig.BreakglassNamespace), debug.ClusterConfigCredentialSource(ccProvider)))
+		rotationGrace, _ := cfg.Artifacts.RotationGrace() // validated at startup
+		debugSessionAPICtrl.WithTerminalRecordingArtifacts(components.Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithLiveReader(reconcilerMgr.GetAPIReader()).WithNamespace(cliConfig.BreakglassNamespace).WithRotationGrace(rotationGrace), debug.ClusterConfigCredentialSource(ccProvider)))
 		artifactReconciler = components.Controller
 		artifactClose = components.Close
 		artifactControllers = components.APIControllers
