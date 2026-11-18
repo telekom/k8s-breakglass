@@ -749,7 +749,9 @@ wait_for_debug_pod() {
 }
 
 assert_debug_audit() {
-  local name="$1" audit_url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}}/events" audit=''
+  local name="$1" audit=''
+  [[ -n "${AUDIT_URL}" ]] || audit_receiver_url
+  local audit_url="${AUDIT_URL}/events"
   for _ in $(seq 1 45); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
     if grep -Fq "${name}" <<<"${audit}" && grep -Fq 'debug_session.created' <<<"${audit}" && \
