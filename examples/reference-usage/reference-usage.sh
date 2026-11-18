@@ -68,6 +68,7 @@ PUBLISHED_IMAGE_DIGEST_REF=""
 # Optional evidence export: JUnit + JSON rows and the artifact digests used.
 REFERENCE_EVIDENCE_DIR="${REFERENCE_EVIDENCE_DIR:-}"
 AUDIT_FORWARD_PID=""
+AUDIT_URL=""
 AUDIT_FORWARD_PORT="${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}"
 PHASE=""
 ROWS=() # "name<TAB>status<TAB>detail"
@@ -629,7 +630,7 @@ webhook_check() {
 audit_receiver_url() {
   local url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-}" host svc ns _
   if [[ -n "${url}" ]] && curl -fsS "${url}/health" >/dev/null 2>&1; then
-    printf '%s' "${url}"
+    AUDIT_URL="${url}"
     return 0
   fi
   host="${REFERENCE_AUDIT_WEBHOOK_URL#*://}"
@@ -643,7 +644,7 @@ audit_receiver_url() {
     curl -fsS "http://localhost:${AUDIT_FORWARD_PORT}/health" >/dev/null 2>&1 && break
     sleep 1
   done
-  printf 'http://localhost:%s' "${AUDIT_FORWARD_PORT}"
+  AUDIT_URL="http://localhost:${AUDIT_FORWARD_PORT}"
 }
 
 reference_flow() {
@@ -688,8 +689,8 @@ reference_flow() {
   wait_for_state "${REQUESTER_TOKEN}" "${REJECTED_SESSION_NAME}" Rejected
 
   log "Checking audit recording contains the reference session"
-  local audit_url
-  audit_url="$(audit_receiver_url)/events"
+  audit_receiver_url
+  local audit_url="${AUDIT_URL}/events"
   local audit=''
   for _ in $(seq 1 30); do
     audit="$(curl -fsS "${audit_url}" 2>/dev/null || true)"
