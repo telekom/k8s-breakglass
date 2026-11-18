@@ -64,9 +64,12 @@ artifacts:
     - name: collector-registry
   controllerURL: https://breakglass.example.com
   uploadMaxBytes: 67108864
+  # terminalRecordingMaxBytes: 67108864    # optional, 1..uploadMaxBytes
+  # terminalRecordingMaxConcurrent: 2       # optional, 1..32
   # terminalRecordingSegmentBytes: 4194304 # optional: flush terminal recordings incrementally
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
+  credentialRotationGrace: 30s # optional, default 0s (abort running terminal streams on rotation)
   s3:
     region: eu-central-1
     bucket: breakglass-artifacts
@@ -92,11 +95,34 @@ pulls or the target nodes already have registry credentials. Missing or invalid
 registry credentials result in Kubernetes image pull errors.
 Invalid reference names are rejected at startup before artifact dependencies
 are initialized, and again before any collector resources are provisioned.
+`credentialRotationGrace` (maximum `15m`, default `0s`) enables blue/green rotation of the
+target credential for terminal recording: after a rotation new streams bind to the new
+generation immediately, while already-running streams keep working until the grace deadline
+(counted from when the controller observes the change, never beyond the session expiry), then are
+revoked and closed. Only one previous generation is kept. The grace covers only credential and
+trust inputs (the credential Secrets and IdentityProvider); a replaced ClusterConfig, a revoked
+session, a changed target or a deleted or unreadable Secret still ends streams at once, and a stream
+never starts on a credential that changed before its command ran. Use the same value on every replica: a
+replica without grace ends draining streams at once. With the default, running streams are
+aborted at rotation. The value is read at startup; changing it requires a controller restart.
+
 `stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,
 provider, signing key, target identity or these limits.
 The configured controller origin is normalized before creating upload URLs.
+`terminalRecordingMaxBytes` (optional) caps one terminal recording, framing
+included; unset keeps the historic behaviour of allowing up to `uploadMaxBytes`.
+Each frame carries a 50-byte header, so very small values abort every recorded
+stream at its first frame. `terminalRecordingMaxConcurrent` (optional, default
+2, maximum 32) caps live recording streams per controller replica. Each stream
+buffers up to one recording in memory, so budget memory as
+`terminalRecordingMaxConcurrent` times the effective byte limit
+(`terminalRecordingMaxBytes`, else `uploadMaxBytes`), with about 2x headroom for
+buffer growth (with `terminalRecordingSegmentBytes` set, a stream buffers only
+about one segment). Zero is the "unset" value; with artifacts enabled, negative
+values, a byte limit above `uploadMaxBytes` and a concurrency above 32 are
+rejected at startup.
 Requests exceeding the HTTP upload body limit return HTTP 413, not a retryable
 storage-provider error.
 
@@ -143,7 +169,7 @@ own directories or sentinels at startup. Provision an empty volume once with
 reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed
 generation readiness requirement. `terminalRecordingSegmentBytes` (default
-off, 65536 to 67108864 when set, and at least `uploadMaxBytes` / 4096) enables
+off, 65536 to 67108864 when set, and at least the recording byte limit / 4096) enables
 [incremental recording flush](terminal-recording.md#incremental-flush-opt-in).
 
 ### `server`

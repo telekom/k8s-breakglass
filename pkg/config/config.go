@@ -280,6 +280,13 @@ type Artifacts struct {
 	CollectorImagePullSecrets []corev1.LocalObjectReference `yaml:"collectorImagePullSecrets,omitempty"`
 	ControllerURL             string                        `yaml:"controllerURL,omitempty"`
 	UploadMaxBytes            int64                         `yaml:"uploadMaxBytes,omitempty"`
+	// TerminalRecordingMaxBytes caps one terminal recording. Zero keeps the
+	// historic behaviour (the recording may use up to UploadMaxBytes); otherwise
+	// it must be within 1..UploadMaxBytes.
+	TerminalRecordingMaxBytes int64 `yaml:"terminalRecordingMaxBytes,omitempty"`
+	// TerminalRecordingMaxConcurrent caps live recording streams per replica.
+	// Zero keeps the default of 2; otherwise 1..32.
+	TerminalRecordingMaxConcurrent int `yaml:"terminalRecordingMaxConcurrent,omitempty"`
 	// TerminalRecordingSegmentBytes opts in to incremental terminal recording
 	// flush: frames are persisted as segments of about this size plus a hash
 	// chain manifest while the stream runs. Zero (default) disables it.
@@ -288,6 +295,26 @@ type Artifacts struct {
 	TokenSignerKeyID              string         `yaml:"tokenSignerKeyID,omitempty"`
 	S3                            *ArtifactS3    `yaml:"s3,omitempty"`
 	Local                         *ArtifactLocal `yaml:"local,omitempty"`
+	// CredentialRotationGrace is how long a retired target-credential
+	// generation keeps serving already-running terminal streams after a
+	// rotation (blue/green), for example "30s". New streams always bind to the
+	// new generation immediately. Empty or "0s" (the default) revokes the old
+	// generation at once; the maximum is 15m.
+	CredentialRotationGrace string `yaml:"credentialRotationGrace,omitempty"`
+}
+
+// RotationGrace parses CredentialRotationGrace. Unset means no grace period;
+// negative or over-long values are rejected so the window stays bounded.
+func (a Artifacts) RotationGrace() (time.Duration, error) {
+	value := strings.TrimSpace(a.CredentialRotationGrace)
+	if value == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 || d > 15*time.Minute {
+		return 0, fmt.Errorf("artifacts.credentialRotationGrace must be a duration between 0s and 15m, got %q", a.CredentialRotationGrace)
+	}
+	return d, nil
 }
 
 // ArtifactS3 contains administrator-owned S3 settings. The credential Secret

@@ -285,7 +285,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 347 | 371 | 271 | 0 | 0 | 0 |
+| controller | 468 | 347 | 375 | 272 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Personal-data fields
@@ -561,6 +561,12 @@ concatenated message.
 | Level | Message | Fields | File |
 |---|---|---|---|
 | error | (dynamic) | `error`† | responses.go |
+
+#### `pkg/artifacts/controller`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| warn | `Terminal recording recovery from segments failed; retrying until retention expiry` | `error`†, `namespace`†, `recordingId` | reconciler.go |
 
 #### `pkg/audit`
 
@@ -1261,6 +1267,9 @@ concatenated message.
 | warn | `Target namespace does not exist, fail-open mode` | `namespace`† | debug_session_reconciler_workload.go |
 | warn | `Target namespace validation failed` | `allowUserNamespace`, `bindingUsed`, `defaultNamespace`, `error`†, `requestedNamespace`†, `templateRef` | debug_session_api.go |
 | warn | `Template not found` | `templateRef` | debug_session_api.go |
+| warn | `Terminal recording publication failed` | `error`†, `recordingId`, `session`† | terminal_recording_api.go |
+| warn | `Terminal recording recovery was not audited: audit is not available` | `recordingId`, `session`† | terminal_recording_api.go |
+| warn | `Terminal recording segment flush failed; stopping the stream` | `error`†, `recordingId`, `session`† | terminal_recording_api.go |
 | warn | `Unknown debug session state` | `state` | debug_session_reconciler.go |
 | warn | `User is not allowed to request debug session` | `bindingRef`, `groupCount`, `selectedBindingRef`, `templateRef`, `user`† | debug_session_api.go |
 | warn | `deprecated notify-only expiration still enforces hard expiry` |  | debug_session_reconciler.go |
@@ -1324,6 +1333,7 @@ concatenated message.
 | error | `Failed to update DebugSession status after validation failure` | `error`† | debug_session_reconciler.go |
 | error | `Failed to validate ephemeral container request` | `error`† | debug_session_api_email_ops.go |
 | error | `Failed to …` | `error`†, `session`† | debug_session_api_status_patch.go |
+| error | `Recovered terminal recording audit event was not delivered` | `error`†, `recordingId`, `session`† | terminal_recording_api.go |
 | error | `Refusing to delete orphaned debug pod without immutable identity` | `pod`†, `statusError`† | debug_session_kubectl.go |
 | error | `Refusing to evaluate debug session: explicit bindingRef is unresolvable, approval requirement is indeterminate; not falling back to auto-discovery` | `binding`, `bindingNamespace`, `cluster`, `debugSession`†, `error`†, `namespace`†, `reason`†, `state` | debug_session_reconciler.go |
 | error | `Required auxiliary resource deployment failed` |  | auxiliary_resource_manager.go |

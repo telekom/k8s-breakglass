@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
 	"slices"
@@ -86,7 +87,9 @@ type DebugSessionAPIController struct {
 	recordingArtifacts      *backend.Service
 	recordingMaxBytes       int64
 	recordingSegmentBytes   int64
+	recordingMaxStreams     int32
 	recordingConnections    TerminalRecordingConnectionProvider
+	recordingRotationGrace  time.Duration
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
 }
@@ -103,6 +106,15 @@ func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64
 // Zero (the default) keeps the whole recording in memory until it ends.
 func (c *DebugSessionAPIController) WithTerminalRecordingSegmentBytes(segmentBytes int64) *DebugSessionAPIController {
 	c.recordingSegmentBytes = segmentBytes
+	return c
+}
+
+// WithTerminalRecordingMaxStreams sets the concurrent recording streams per
+// process. Values below 1 leave the setting unchanged (default 2).
+func (c *DebugSessionAPIController) WithTerminalRecordingMaxStreams(n int) *DebugSessionAPIController {
+	if n > 0 {
+		c.recordingMaxStreams = int32(min(n, math.MaxInt32))
+	}
 	return c
 }
 

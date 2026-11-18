@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,9 +40,10 @@ const terminalRecordingDefaultRetention = 90 * 24 * time.Hour
 
 const terminalRecordingFinalizeTimeout = 10 * time.Second
 
-// Each recorder is bounded to 512 MiB, including framing. Limit live streams
-// per serving process so authenticated clients cannot allocate unbounded buffers.
-const maximumConcurrentTerminalRecordings = 2
+// Each recorder is bounded (see WithTerminalRecordingMaxBytes), including
+// framing. Live streams per serving process are limited so authenticated
+// clients cannot allocate unbounded buffers; this is the default limit.
+const defaultConcurrentTerminalRecordings = 2
 
 // TerminalRecordingConnectionBinding is the immutable authorization tuple
 // supplied by the connection-lease service for one target stream.
@@ -82,7 +85,39 @@ func (c *DebugSessionAPIController) WithTerminalRecordingArtifacts(service *back
 
 func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider TerminalRecordingConnectionProvider) *DebugSessionAPIController {
 	c.recordingConnections = provider
+	// The lease service's grace is the single source of truth for how long a
+	// running stream may outlive a credential rotation.
+	c.recordingRotationGrace = 0
+	if leases, ok := provider.(terminalRecordingLeaseProvider); ok && leases.service != nil {
+		c.recordingRotationGrace = leases.service.rotationGrace
+	}
 	return c
+}
+
+// credentialRotationFence ends a running stream on a privileged credential
+// input change, as before, unless a blue/green grace is configured: then the
+// change is tolerated for grace after it was first observed. Every other error
+// still ends the stream at once. Until armed (just before the command starts)
+// nothing is tolerated, so a stream never starts on a retired credential.
+type credentialRotationFence struct {
+	grace   time.Duration
+	armed   atomic.Bool
+	changed atomic.Int64 // unix nanos of the first observed change
+}
+
+func (c *DebugSessionAPIController) newCredentialRotationFence() *credentialRotationFence {
+	return &credentialRotationFence{grace: c.recordingRotationGrace}
+}
+
+func (f *credentialRotationFence) check(err error, now time.Time) error {
+	if err == nil || f.grace <= 0 || !f.armed.Load() || !errors.Is(err, cluster.ErrPrivilegedInputChanged) {
+		return err
+	}
+	f.changed.CompareAndSwap(0, now.UnixNano())
+	if now.Sub(time.Unix(0, f.changed.Load())) >= f.grace {
+		return err
+	}
+	return nil
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
@@ -100,7 +135,11 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording requires an enabled audit configuration")
 		return
 	}
-	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
+	maxStreams := c.recordingMaxStreams
+	if maxStreams < 1 {
+		maxStreams = defaultConcurrentTerminalRecordings
+	}
+	if c.recordingStreams.Add(1) > maxStreams {
 		c.recordingStreams.Add(-1)
 		apiresponses.RespondTooManyRequests(ctx, "too many concurrent terminal recordings")
 		return
@@ -157,6 +196,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	var pod *corev1.Pod
 	var targetClusterUID string
 	var validateTarget func(context.Context) error
+	rotation := c.newCredentialRotationFence()
 	if c.terminalTargetResolver != nil {
 		restConfig, pod, targetClusterUID, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
 		validateTarget = func(checkCtx context.Context) error {
@@ -181,7 +221,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 			} else {
 				pod, err = kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
 				validateTarget = func(checkCtx context.Context) error {
-					if checkErr := c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured); checkErr != nil {
+					if checkErr := rotation.check(c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured), time.Now()); checkErr != nil {
 						return checkErr
 					}
 					current, checkErr := kubeClient.CoreV1().Pods(namespace).Get(checkCtx, podName, metav1.GetOptions{})
@@ -360,6 +400,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		_ = responseControl.SetReadDeadline(time.Now())
 		_ = requestBody.Close()
 	}
+	rotation.armed.Store(true)
 	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, sizes, recorder, abortTransport)
 	metadata.FinishedAt = time.Now().UTC()
 	metadata.Complete = streamErr == nil && apiCtx.Err() == nil && metadata.FinishedAt.Before(binding.ExpiresAt)
@@ -479,6 +520,8 @@ func terminalRecordingAbortReason(err error) string {
 		return "session_authority_changed"
 	case strings.Contains(message, "connection lease") || strings.Contains(message, "terminal stream claim"):
 		return "lease_changed"
+	case errors.Is(err, errTerminalRecordingLimit):
+		return "recording_limit"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "expired"
 	case errors.Is(err, context.Canceled):

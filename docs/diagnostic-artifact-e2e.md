@@ -110,6 +110,20 @@ steps require it to pass). It runs against both backends:
 Sessions last 3 to 30 minutes; all waits are bounded polls. These lanes run
 with a 45 minute `go test` timeout.
 
+## Terminal recording limits
+
+`TestDebugSessionTerminalRecordingLimitsE2E` runs in all four artifact lanes.
+The single-cluster lanes keep the defaults (`uploadMaxBytes`, 2 streams); the
+multi-cluster lanes set `terminalRecordingMaxBytes: 1048576` and
+`terminalRecordingMaxConcurrent: 3`. The fixture exports the effective values
+(`E2E_RECORDING_MAX_BYTES`, `E2E_RECORDING_MAX_STREAMS`); the test holds that
+many streams open, requires `429` for one more, and requires a recording below
+the byte limit to complete and one above it to stop the stream as incomplete
+(audited as `recording_limit`). A recorded terminal moves only a few hundred
+KiB per minute in Kind (#1761), so the stream above the limit runs only in the
+opt-in lanes (1 MiB); that the default byte limit is `uploadMaxBytes` is covered
+by unit tests (`TestTerminalRecordingLimits`, `TestRegisteredTerminalRouteStreamsAndPublishesRecording`).
+
 ## Explicit backend and lifecycle matrix
 
 The same named test runs separately with `E2E_ARTIFACT_BACKEND=local` and `s3`.

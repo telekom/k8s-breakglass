@@ -88,8 +88,9 @@ const (
 )
 
 // validateTerminalRecordingSegmentBytes rejects a segment size out of bounds
-// or too small to reach the recording limit within MaxRecordingSegments.
-func validateTerminalRecordingSegmentBytes(c config.Artifacts) error {
+// or too small to reach the recording limit (recordingMax) within
+// MaxRecordingSegments.
+func validateTerminalRecordingSegmentBytes(c config.Artifacts, recordingMax int64) error {
 	seg := c.TerminalRecordingSegmentBytes
 	if seg == 0 {
 		return nil
@@ -97,10 +98,32 @@ func validateTerminalRecordingSegmentBytes(c config.Artifacts) error {
 	if seg < MinTerminalRecordingSegmentBytes || seg > MaxTerminalRecordingSegmentBytes {
 		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d must be 0 (off) or within %d..%d", seg, MinTerminalRecordingSegmentBytes, MaxTerminalRecordingSegmentBytes)
 	}
-	if seg*backend.MaxRecordingSegments < c.UploadMaxBytes {
-		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d is too small: %d segments must hold uploadMaxBytes (%d)", seg, backend.MaxRecordingSegments, c.UploadMaxBytes)
+	if seg*backend.MaxRecordingSegments < recordingMax {
+		return fmt.Errorf("artifacts.terminalRecordingSegmentBytes %d is too small: %d segments must hold the recording limit (%d)", seg, backend.MaxRecordingSegments, recordingMax)
 	}
 	return nil
+}
+
+// MaxTerminalRecordingConcurrent is the upper bound for
+// Artifacts.TerminalRecordingMaxConcurrent; each stream buffers up to one
+// recording in memory.
+const MaxTerminalRecordingConcurrent = 32
+
+// terminalRecordingLimits validates the optional recording limits and returns
+// the effective per-recording byte cap (uploadMaxBytes when unset) and the
+// concurrent stream limit (0 keeps the controller default of 2).
+func terminalRecordingLimits(c config.Artifacts) (int64, int, error) {
+	if c.TerminalRecordingMaxBytes < 0 || c.TerminalRecordingMaxBytes > c.UploadMaxBytes {
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxBytes %d must be unset (0) or within 1..uploadMaxBytes (%d)", c.TerminalRecordingMaxBytes, c.UploadMaxBytes)
+	}
+	if c.TerminalRecordingMaxConcurrent < 0 || c.TerminalRecordingMaxConcurrent > MaxTerminalRecordingConcurrent {
+		return 0, 0, fmt.Errorf("artifacts.terminalRecordingMaxConcurrent %d must be unset (0) or within 1..%d", c.TerminalRecordingMaxConcurrent, MaxTerminalRecordingConcurrent)
+	}
+	maxBytes := c.UploadMaxBytes
+	if c.TerminalRecordingMaxBytes > 0 {
+		maxBytes = c.TerminalRecordingMaxBytes
+	}
+	return maxBytes, c.TerminalRecordingMaxConcurrent, nil
 }
 
 // Build constructs the complete enabled artifact host. Disabled artifacts
@@ -112,7 +135,11 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err := artifactjob.ValidateImagePullSecrets(artifactConfig.CollectorImagePullSecrets); err != nil {
 		return nil, err
 	}
-	if err := validateTerminalRecordingSegmentBytes(artifactConfig); err != nil {
+	recordingMax, recordingStreams, err := terminalRecordingLimits(artifactConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTerminalRecordingSegmentBytes(artifactConfig, recordingMax); err != nil {
 		return nil, err
 	}
 	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
@@ -158,7 +185,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(artifactConfig.UploadMaxBytes).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()
