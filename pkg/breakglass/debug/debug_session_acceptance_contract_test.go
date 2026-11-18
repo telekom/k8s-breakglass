@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -88,13 +89,15 @@ func TestAcceptanceCreateRejectsRequesterSuppliedRuntimeFields(t *testing.T) {
 // that still shows a future expiresAt (or a pending approval that was never
 // granted) must not let anyone renew, join, or reach the target.
 func TestAcceptanceInactiveSessionDeniesEveryOperation(t *testing.T) {
-	operations := []struct{ name, path, body string }{
-		{"renew", "renew", `{"extendBy":"1h"}`},
-		{"join", "join", `{"role":"participant"}`},
-		{"terminate", "terminate", ``},
-		{"injectEphemeralContainer", "injectEphemeralContainer", `{"namespace":"default","podName":"p","containerName":"d","image":"busybox"}`},
-		{"createPodCopy", "createPodCopy", `{"namespace":"default","podName":"p"}`},
-		{"createNodeDebugPod", "createNodeDebugPod", `{"nodeName":"n"}`},
+	// denial is the state gate's own message, so the test fails when that gate
+	// is removed even if a later check would also refuse the request.
+	operations := []struct{ name, path, body, denial string }{
+		{"renew", "renew", `{"extendBy":"1h"}`, "cannot renew session in state"},
+		{"join", "join", ``, "cannot join session in state"},
+		{"terminate", "terminate", ``, "already in terminal state"},
+		{"injectEphemeralContainer", "injectEphemeralContainer", `{"namespace":"default","podName":"p","containerName":"d","image":"busybox"}`, "session is not active"},
+		{"createPodCopy", "createPodCopy", `{"namespace":"default","podName":"p"}`, "session is not active"},
+		{"createNodeDebugPod", "createNodeDebugPod", `{"nodeName":"n"}`, "session is not active"},
 	}
 	for _, state := range []breakglassv1alpha1.DebugSessionState{
 		breakglassv1alpha1.DebugSessionStateRejected,
@@ -114,8 +117,8 @@ func TestAcceptanceInactiveSessionDeniesEveryOperation(t *testing.T) {
 				router := setupAuthenticatedDebugSessionRouter(t, ctrl, "owner", "", nil)
 
 				w := acceptancePost(router, "/api/debugSessions/stale/"+op.path, op.body)
-				assert.GreaterOrEqual(t, w.Code, 400, "%s on %s session: %s", op.name, state, w.Body.String())
-				assert.Less(t, w.Code, 500, w.Body.String())
+				assert.Equal(t, http.StatusBadRequest, w.Code, "%s on %s session: %s", op.name, state, w.Body.String())
+				assert.Contains(t, w.Body.String(), op.denial)
 
 				var stored breakglassv1alpha1.DebugSession
 				require.NoError(t, ctrl.client.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
@@ -281,4 +284,39 @@ func TestAcceptanceConcurrentRenewTerminateExpire(t *testing.T) {
 			assert.True(t, final.Status.State != breakglassv1alpha1.DebugSessionStateActive)
 		}
 	}
+}
+
+// Each status-patch fence holds on its own: a writer holding a stale snapshot
+// cannot expire a session renewed meanwhile, and a terminal state never
+// changes, even from a current snapshot.
+func TestAcceptanceStatusPatchFencesIndividually(t *testing.T) {
+	ctx := context.Background()
+	session := newActiveKubectlDebugSession("fence", "owner", time.Now().Add(time.Hour).Truncate(time.Second))
+	_, ctrl := setupTestRouter(t, session)
+	stale := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, ctrl.client.Get(ctx, client.ObjectKeyFromObject(session), stale))
+	renewed := stale.DeepCopy()
+	later := metav1.NewTime(time.Now().Add(2 * time.Hour).Truncate(time.Second))
+	require.NoError(t, breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, ctrl.client, renewed, func(s *breakglassv1alpha1.DebugSessionStatus) {
+		s.ExpiresAt = &later
+		s.RenewalCount++
+	}))
+
+	err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, ctrl.client, stale, func(s *breakglassv1alpha1.DebugSessionStatus) {
+		s.State = breakglassv1alpha1.DebugSessionStateExpired
+	})
+	require.True(t, apierrors.IsConflict(err), "a stale snapshot must conflict: %v", err)
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, ctrl.client.Get(ctx, client.ObjectKeyFromObject(session), live))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, live.Status.State, "the renewed session stays active")
+
+	require.NoError(t, breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, ctrl.client, live, func(s *breakglassv1alpha1.DebugSessionStatus) {
+		s.State = breakglassv1alpha1.DebugSessionStateTerminated
+	}))
+	err = breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, ctrl.client, live, func(s *breakglassv1alpha1.DebugSessionStatus) {
+		s.State = breakglassv1alpha1.DebugSessionStateExpired
+	})
+	require.ErrorContains(t, err, "terminal state", "a current snapshot cannot change a terminal state either")
+	require.NoError(t, ctrl.client.Get(ctx, client.ObjectKeyFromObject(session), live))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, live.Status.State)
 }
