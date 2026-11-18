@@ -8,11 +8,12 @@
         {"file": ".github/workflows/release.yml", "contains": "cosign verify \"${REGISTRY_IMAGE}@${DIGEST}\""}
       ],
       "sbom": [
-        {"file": ".github/workflows/release.yml", "contains": "--predicate sbom.spdx.json"},
+        {"file": ".github/workflows/release.yml", "contains": "cosign attest --yes --type spdxjson --predicate sbom.spdx.json"},
         {"file": ".github/workflows/release.yml", "contains": "cosign verify-attestation \"${REGISTRY_IMAGE}@${DIGEST}\" --type spdxjson"}
       ],
       "provenance": [
         {"file": ".github/workflows/release.yml", "contains": "actions/attest-build-provenance"},
+        {"file": ".github/workflows/release.yml", "contains": "subject-digest: ${{ steps.inspect.outputs.digest }}"},
         {"file": ".github/workflows/release.yml", "contains": "gh attestation verify \"oci://${REGISTRY_IMAGE}@${DIGEST}\""}
       ]
     },
@@ -32,7 +33,7 @@
       "provenance": [
         {"file": ".github/workflows/release.yml", "contains": "--predicate \"utility-${{ matrix.name }}.provenance.json\""},
         {"file": "hack/resolve-release-refs.sh", "contains": "verify-attestation \"${subject}\" --type slsaprovenance1"},
-        {"file": ".github/workflows/utility-release.yml", "contains": "actions/attest-build-provenance"},
+        {"file": ".github/workflows/utility-release.yml", "contains": "subject-digest: ${{ steps.resolve.outputs.digest }}"},
         {"file": "hack/verify-utility-publication.sh", "contains": "gh attestation verify \"oci://${provenance_subject}\""}
       ]
     },
@@ -51,6 +52,12 @@
       ]
     }
   },
+  "invocations": [
+    {"file": ".github/workflows/release.yml", "contains": "run: hack/verify-release-inventory.sh"},
+    {"file": ".github/workflows/release.yml", "contains": "hack/resolve-release-refs.sh"},
+    {"file": ".github/workflows/release.yml", "contains": "hack/verify-catalogue-supply-chain.sh --images-file"},
+    {"file": ".github/workflows/utility-release.yml", "contains": "hack/verify-utility-publication.sh \"${IMAGE}\" \"${DIGEST}\""}
+  ],
   "utilityImages": {
     "publisher": ".github/workflows/release.yml",
     "subject": "\"${IMAGE}@${DIGEST}\"",
@@ -83,6 +90,7 @@
     }
   ],
   "excluded": [
+    {"source": "Dockerfile.validator", "reason": "Compatibility symlink to utils/cluster-validator/Dockerfile, which is inventoried as the cluster-validator utility image"},
     {"source": "e2e/images/tmux-debug/Dockerfile", "reason": "E2E test fixture image, built locally in CI and never pushed to a registry"},
     {"source": "e2e/fixtures/convergence-bindings/Chart.yaml", "reason": "E2E test fixture chart, installed from the checkout and never published"},
     {"source": "e2e/fixtures/convergence-installation/Chart.yaml", "reason": "E2E test fixture chart, installed from the checkout and never published"}

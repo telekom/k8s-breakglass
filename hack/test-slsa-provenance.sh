@@ -61,7 +61,7 @@ reject() {
 reject --subject "${subject}" --digest latest --sha "${sha}"
 reject --subject "${subject}" --digest "${digest#sha256:}" --sha "${sha}"
 reject --subject "${subject}" --digest "sha256:${digest: -8}" --sha "${sha}"
-reject --subject "${subject}" --digest "${digest^^}" --sha "${sha}"
+reject --subject "${subject}" --digest "$(tr a-f A-F <<<"${digest}")" --sha "${sha}"
 reject --subject "${subject}@${digest}" --digest "${digest}" --sha "${sha}"
 reject --subject "${subject}" --digest "${digest}" --sha main
 
