@@ -318,6 +318,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
+	// Response headers survive proxies that drop trailers (nginx): a client
+	// that sees no trailers looks this recording up by ID after the stream.
+	ctx.Header(TerminalRecordingPendingIDHeader, reservation.ArtifactID)
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
 	var input io.Reader = ctx.Request.Body
 	var sizes remotecommand.TerminalSizeQueue
