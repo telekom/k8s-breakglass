@@ -52,7 +52,8 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 	}
 	backend := os.Getenv("E2E_ARTIFACT_BACKEND")
 	require.Contains(t, []string{"local", "s3"}, backend, "run e2e/fixtures/artifacts/setup.sh (and select-s3.sh) first")
-	s := helpers.SetupTest(t, helpers.WithLongTimeout())
+	// Session expiry, recovery grace and retention alone take about 8 minutes.
+	s := helpers.SetupTest(t, helpers.WithTimeout(20*time.Minute))
 	ctx, ns := s.Ctx, s.Namespace
 	ensureAuditPipeline(t, ctx, s)
 	requesterUser := helpers.TestUsers.SecurityRequester
@@ -134,9 +135,9 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 	// stream runs command until it printed marker, calls between, then types
 	// "go" and keeps stdin open until the stream ends. Only a lease conflict on
 	// a session's first stream is retried; nothing runs on a refused attempt.
+	// Callers refresh the token first (fresh is not safe off the test goroutine).
 	stream := func(streamCtx context.Context, session *breakglassv1alpha1.DebugSession, pod breakglassv1alpha1.AllowedPodRef, cid, command, marker string, between func() error) (helpers.TerminalStreamResult, error) {
 		for attempt := 0; ; attempt++ {
-			fresh()
 			result, err := requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
 				Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 				Command: []string{"sh", "-c", command}, CorrelationID: cid,
@@ -190,10 +191,17 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 		var injectedAt time.Time
 		streamCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 		defer cancel()
+		fresh()
 		// 200 KB before the gate: segments are committed while the backend works.
 		result, err := stream(streamCtx, session, pod, cid,
 			`head -c 200000 /dev/zero | tr '\0' b; echo; echo flushed; read line; head -c 400000 /dev/zero | tr '\0' a; echo after-backend-failure; sleep 300`,
-			"flushed", func() error {
+			"flushed", func() (err error) {
+				// A failed gate ends the stream instead of waiting for the target's sleep.
+				defer func() {
+					if err != nil {
+						cancel()
+					}
+				}()
 				deadline := time.Now().Add(time.Minute)
 				for {
 					n, err := newFiles(baseline)
@@ -254,6 +262,7 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 		done := make(chan outcome, 1)
 		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		t.Cleanup(cancel)
+		fresh()
 		go func() {
 			result, err := stream(streamCtx, session, pod, cid, `echo ready; read line; head -c 400000 /dev/zero | tr '\0' a; echo unreached; sleep 300`, "ready", nil)
 			done <- outcome{result, err}
@@ -307,27 +316,30 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 		require.Less(t, strings.Count(output.String(), "a"), 400000, "the uncommitted tail is not in the prefix")
 		require.NotContains(t, output.String(), "unreached")
 
-		// The artifact controller audited the recovery; the dead handler did not.
-		events, err := helpers.AuditEvents(ctx)
-		require.NoError(t, err)
-		var recovered int
-		for _, event := range events {
-			if event.Type != "debug_session.terminal_recording_finalized" {
-				continue
+		// The artifact controller audits the recovery after it removed the
+		// segments and manifests; the dead handler published nothing.
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			events, err := helpers.AuditEvents(ctx)
+			require.NoError(c, err)
+			var recovered int
+			for _, event := range events {
+				if event.Type != "debug_session.terminal_recording_finalized" {
+					continue
+				}
+				require.False(c, event.RequestContext != nil && event.RequestContext.CorrelationID == cid, "the killed handler published nothing")
+				if event.Details["recordingId"] == entry.ArtifactID {
+					require.Equal(c, true, event.Details["recovered"])
+					require.Equal(c, false, event.Details["complete"])
+					require.Equal(c, entry.SHA256, event.Details["sha256"])
+					require.Equal(c, "system", event.Actor.User)
+					recovered++
+				}
 			}
-			require.False(t, event.RequestContext != nil && event.RequestContext.CorrelationID == cid, "the killed handler published nothing")
-			if event.Details["recordingId"] == entry.ArtifactID {
-				require.Equal(t, true, event.Details["recovered"])
-				require.Equal(t, false, event.Details["complete"])
-				require.Equal(t, entry.SHA256, event.Details["sha256"])
-				require.Equal(t, "system", event.Actor.User)
-				recovered++
-			}
-		}
-		require.Equal(t, 1, recovered, "the recovery is audited once")
-		n, err := newFiles(baseline)
-		require.NoError(t, err)
-		require.Equal(t, 1, n, "after publication only the recording object remains; segments and manifests are removed")
+			require.Equal(c, 1, recovered, "the recovery is audited once")
+			n, err := newFiles(baseline)
+			require.NoError(c, err)
+			require.Equal(c, 1, n, "after publication only the recording object remains; segments and manifests are removed")
+		}, helpers.WaitForStateTimeout, 2*time.Second)
 
 		// Retention: the recording object disappears.
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
