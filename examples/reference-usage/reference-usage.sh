@@ -501,7 +501,7 @@ spec:
   subjects:
     - apiGroup: rbac.authorization.k8s.io
       kind: Group
-      name: '${REFERENCE_REQUESTER_GROUP}'
+      name: '${REFERENCE_ESCALATED_GROUP}' # the group the approved session grants
   clusterRoleBindings:
     clusterRoleRefs: ['${REFERENCE_CLUSTER_ROLE_NAME}']
 YAML
