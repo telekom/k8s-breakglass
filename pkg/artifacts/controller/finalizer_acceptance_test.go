@@ -24,65 +24,53 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
-type scriptedProvider struct {
-	client      client.Client
-	config      *breakglassv1alpha1.ClusterConfig
-	getErr      error
-	validateErr error
-}
-
-func (p *scriptedProvider) GetClientForPrivilegedOperation(context.Context, string) (client.Client, *breakglassv1alpha1.ClusterConfig, error) {
-	if p.getErr != nil {
-		return nil, nil, p.getErr
-	}
-	return p.client, p.config, nil
-}
-func (p *scriptedProvider) ValidatePrivilegedOperationClusterConfig(context.Context, *breakglassv1alpha1.ClusterConfig) error {
-	return p.validateErr
-}
-func (*scriptedProvider) ReleasePrivilegedOperationClusterConfig(*breakglassv1alpha1.ClusterConfig) {
-}
-
-// TCAAS-1627: while tracked collector resources may still exist, the finalizer and
-// inventory are retained unless cleanup is positively proven. Absent (missing
-// ClusterConfig, deleted session) and unreachable (API error) are both ambiguous.
+// TCAAS-1627: while tracked collector resources may still exist, cleanup fails and
+// Reconcile keeps the finalizer and inventory. Absent (missing ClusterConfig,
+// deleted session) and unreachable (API error) are both ambiguous.
 func TestReconcileRetainsFinalizerWhenTargetStateIsAmbiguous(t *testing.T) {
 	notFound := apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "clusterconfigs"}, "spoke")
 	for _, tc := range []struct {
 		name       string
-		provider   func(spoke client.Client) *scriptedProvider
+		provider   func(spoke client.Client) *testTargetProvider
 		noTarget   bool // exercise the path that resolves the cluster through the live session
 		spokeError bool
+		wantErr    string
 	}{
-		{name: "ClusterConfig absent", provider: func(client.Client) *scriptedProvider { return &scriptedProvider{getErr: notFound} }},
-		{name: "target unreachable", provider: func(client.Client) *scriptedProvider {
-			return &scriptedProvider{getErr: errors.New("dial tcp: i/o timeout")}
+		{name: "ClusterConfig absent", provider: func(client.Client) *testTargetProvider { return &testTargetProvider{getErr: notFound} }},
+		{name: "target unreachable", provider: func(client.Client) *testTargetProvider {
+			return &testTargetProvider{getErr: errors.New("dial tcp: i/o timeout")}
 		}},
-		{name: "ClusterConfig UID mismatch", provider: func(spoke client.Client) *scriptedProvider {
-			return &scriptedProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "replacement"}}}
+		{name: "ClusterConfig UID mismatch", provider: func(spoke client.Client) *testTargetProvider {
+			return &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "replacement"}}}
 		}},
-		{name: "ClusterConfig no longer valid", provider: func(spoke client.Client) *scriptedProvider {
-			return &scriptedProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}, validateErr: errors.New("spoke credentials unreadable")}
+		{name: "ClusterConfig no longer valid", provider: func(spoke client.Client) *testTargetProvider {
+			return &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}, validateErr: errors.New("spoke credentials unreadable")}
 		}},
-		{name: "spoke read fails", spokeError: true, provider: func(spoke client.Client) *scriptedProvider {
-			return &scriptedProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
+		{name: "spoke read fails", spokeError: true, provider: func(spoke client.Client) *testTargetProvider {
+			return &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
 		}},
-		{name: "no persisted target and session absent", noTarget: true, provider: func(spoke client.Client) *scriptedProvider {
-			return &scriptedProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
+		{name: "no persisted target and session absent", noTarget: true, wantErr: "get live debug session", provider: func(spoke client.Client) *testTargetProvider {
+			return &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hub, spoke, artifact := ambiguityFixture(t, tc.noTarget, tc.spokeError)
 			reconciler := &Reconciler{Client: hub, LiveReader: hub, ClusterProvider: tc.provider(spoke)}
-			// Two independent guards: cleanup itself must fail, and Reconcile must also
-			// refuse to finalize while the inventory is non-empty.
-			require.Error(t, reconciler.cleanupSpokeResources(context.Background(), artifact.DeepCopy()))
+			// Cleanup itself must fail; Reconcile then returns that error and keeps
+			// the finalizer. (Its non-empty-inventory guard is a second, race-only
+			// layer that this test does not isolate.)
+			cleanupErr := reconciler.cleanupSpokeResources(context.Background(), artifact.DeepCopy())
+			require.Error(t, cleanupErr)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, cleanupErr, tc.wantErr)
+			}
 			_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(artifact)})
 			require.Error(t, err)
 			var current breakglassv1alpha1.DebugSessionArtifact
 			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(artifact), &current), "artifact must not be finalized")
 			require.Contains(t, current.Finalizers, artifactFinalizer)
 			require.Len(t, current.Status.Resources, 2, "tracked inventory must be retained")
+			require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "collect"}, &batchv1.Job{}), "nothing may be deleted when the target is ambiguous")
 			if !tc.spokeError { // the injected read error also hides the Secret from this assertion
 				require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "upload"}, &corev1.Secret{}), "nothing may be deleted when the target is ambiguous")
 			}
@@ -94,7 +82,7 @@ func TestReconcileRetainsFinalizerWhenTargetStateIsAmbiguous(t *testing.T) {
 // proving the retention above comes from the ambiguity checks and not the fixture.
 func TestReconcileReleasesFinalizerWhenTargetIsProvenClean(t *testing.T) {
 	hub, spoke, artifact := ambiguityFixture(t, false, false)
-	provider := &scriptedProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
+	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
 	reconciler := &Reconciler{Client: hub, LiveReader: hub, ClusterProvider: provider}
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(artifact)})
 	require.NoError(t, err)

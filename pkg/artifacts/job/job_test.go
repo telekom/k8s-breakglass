@@ -182,17 +182,23 @@ func TestBuildMountsExactHostCoredumpPathReadOnlyIntoCollectorOnly(t *testing.T)
 		}
 	}
 	require.Equal(t, []string{"host-coredumps"}, hostVolumes)
-	require.Contains(t, spec.InitContainers[0].VolumeMounts, corev1.VolumeMount{Name: "host-coredumps", MountPath: "/host-coredumps", ReadOnly: true})
+	var mountedBy []string
 	for _, container := range append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...) {
 		for _, mount := range container.VolumeMounts {
 			if mount.Name == "host-coredumps" {
-				require.True(t, mount.ReadOnly, "%s mounts host coredumps writable", container.Name)
-				require.Equal(t, "/host-coredumps", mount.MountPath)
+				mountedBy = append(mountedBy, container.Name)
+				require.Equal(t, corev1.VolumeMount{Name: "host-coredumps", MountPath: "/host-coredumps", ReadOnly: true}, mount)
 			}
 		}
 	}
-	for _, mount := range spec.Containers[0].VolumeMounts {
-		require.NotEqual(t, "host-coredumps", mount.Name, "uploader must not mount host coredumps")
-	}
+	require.Equal(t, []string{collectorContainer}, mountedBy, "only the collector mounts host coredumps")
 	require.False(t, spec.HostNetwork || spec.HostPID || spec.HostIPC)
+
+	summaryConfig := testConfig(archive.SystemSummaryRecipe)
+	summaryConfig.MaxBytes = archive.MaxSystemSummaryArchiveBytes
+	summary, err := Build(summaryConfig)
+	require.NoError(t, err)
+	for _, volume := range summary.Spec.Template.Spec.Volumes {
+		require.Nil(t, volume.HostPath, "system-summary must not get host access")
+	}
 }

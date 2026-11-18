@@ -24,9 +24,15 @@ func uploadFixture(session string) (Record, token.Claims) {
 	record := Record{Namespace: "ns", SessionName: session, SessionUID: "uid-" + session, ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-" + session, TargetIdentityDigest: strings.Repeat("a", 64), RuntimeBindingDigest: strings.Repeat("b", 64), PlanDigest: strings.Repeat("c", 64), Recipe: "system-summary.v1", RecipeVersion: 1, ExpiresAt: time.Unix(200, 0), MaxBytes: 1 << 20, OperationEpoch: 1, UploadJTI: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)), State: StatePending, Generation: 1}
 	claims := token.Claims{JTI: record.UploadJTI, IssuedAt: time.Unix(100, 0), NotBefore: time.Unix(100, 0), ExpiresAt: time.Unix(150, 0), Method: http.MethodPut, SessionNamespace: record.Namespace, SessionName: record.SessionName, SessionUID: record.SessionUID, ArtifactID: record.ArtifactID, ArtifactPlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, OperationEpoch: 1, TargetIdentityDigest: record.TargetIdentityDigest, Recipe: record.Recipe, RecipeVersion: 1}
 	claims.Route = token.CanonicalUploadRoute(claims)
+	// Production reservations persist only the JTI hash (reservation.go).
+	record.UploadJTIHash, record.UploadJTI = jtiHash(record.UploadJTI), ""
 	return record, claims
 }
 
+// The record is looked up by the signed claims, never by the request path, so a
+// token for session A cannot address session B's record at all. Route and UID
+// binding are pinned separately by TestUploadTokenCannotBeReplayedOnAnotherArtifactRoute
+// and TestUploadTokenWithForeignSessionUIDIsForbidden.
 func TestUploadTokenOfSessionACannotWriteSessionB(t *testing.T) {
 	recordA, claimsA := uploadFixture("session-a")
 	recordB, claimsB := uploadFixture("session-b")
@@ -65,16 +71,19 @@ func TestSessionACannotListOrDownloadSessionBArtifacts(t *testing.T) {
 	repository := &memoryRepository{record: record}
 	store := &fakeStore{backendID: "backend"}
 	service := newServiceForTest(t, repository, store, allowAuthorizer{})
-	binding := SessionBinding{Namespace: "ns", Name: "session-a", UID: "uid-session-a", TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: 1}
-	public, err := service.List(context.Background(), "ns", "session-b", binding)
+	// The HTTP list handler calls ListAuthorized: a caller not authorized for
+	// session B is refused, and a different incarnation (UID) sees nothing.
+	public, err := service.ListAuthorized(context.Background(), "ns", "session-b", "uid-session-b", func() error { return ErrForbidden })
 	require.ErrorIs(t, err, ErrForbidden)
 	require.Empty(t, public, "session A must not see session B metadata")
-	// Same names but a different session incarnation (UID) sees nothing either.
-	binding.Name, binding.UID = "session-b", "uid-other"
-	public, err = service.List(context.Background(), "ns", "session-b", binding)
+	public, err = service.ListAuthorized(context.Background(), "ns", "session-b", "uid-other", func() error { return nil })
 	require.NoError(t, err)
 	require.Empty(t, public)
-	binding.Name, binding.UID = "session-a", "uid-session-a"
+	// Download: session A's binding, and session B's name with another UID.
+	binding := SessionBinding{Namespace: "ns", Name: "session-a", UID: "uid-session-a", TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: 1}
+	_, _, err = service.Download(context.Background(), "ns", "session-b", record.ArtifactID, binding)
+	require.ErrorIs(t, err, ErrForbidden)
+	binding.Name, binding.UID = "session-b", "uid-other"
 	_, _, err = service.Download(context.Background(), "ns", "session-b", record.ArtifactID, binding)
 	require.ErrorIs(t, err, ErrForbidden)
 	require.False(t, store.opened, "provider must not be read for a foreign session")
@@ -135,9 +144,12 @@ func TestUploadTokenCannotBeReplayedOnAnotherArtifactRoute(t *testing.T) {
 	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
 	signed, err := service.tokens.Sign(claims)
 	require.NoError(t, err)
-	other := claims
-	other.SessionName = "session-b"
-	_, err = service.Upload(context.Background(), signed, token.CanonicalUploadRoute(other), bytes.NewReader([]byte("x")))
-	require.ErrorIs(t, err, ErrForbidden)
+	otherSession, otherArtifact := claims, claims
+	otherSession.SessionName = "session-b"
+	otherArtifact.ArtifactID = "dsa-ffffffffffffffffffffffff"
+	for _, other := range []token.Claims{otherSession, otherArtifact} {
+		_, err = service.Upload(context.Background(), signed, token.CanonicalUploadRoute(other), bytes.NewReader([]byte("x")))
+		require.ErrorIs(t, err, ErrForbidden)
+	}
 	require.Zero(t, repository.updates, "the token's route claim must bind the request path")
 }
