@@ -312,7 +312,8 @@ func TestDebugSessionTerminalRecordingIncrementalE2E(t *testing.T) {
 			}
 		}
 		require.Contains(t, output.String(), "ready")
-		require.Contains(t, output.String(), strings.Repeat("a", 64<<10), "committed segments are readable")
+		// Segment 0 holds about 64 KiB, part of it before the bulk output.
+		require.Contains(t, output.String(), strings.Repeat("a", 32<<10), "committed segments are readable")
 		require.Less(t, strings.Count(output.String(), "a"), 400000, "the uncommitted tail is not in the prefix")
 		require.NotContains(t, output.String(), "unreached")
 
