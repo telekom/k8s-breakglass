@@ -723,7 +723,7 @@ wait_for_debug_state() {
 wait_for_debug_pod() {
   local name="$1" pod='' phase=''
   for _ in $(seq 1 120); do
-    pod="$(kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
+    pod="$(kubectl get pods -n "${DEBUG_NAMESPACE}" -l "job-name=${name}" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
     if [[ -n "${pod}" ]]; then
       phase="$(kubectl get pod "${pod}" -n "${DEBUG_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
@@ -802,13 +802,13 @@ run_debug_session() {
   expect_status 200
   wait_for_debug_state "${REQUESTER_TOKEN}" "${name}" Terminated
   for _ in $(seq 1 60); do
-    if ! kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
+    if ! kubectl get pods -n "${DEBUG_NAMESPACE}" -l "job-name=${name}" \
       -o name 2>/dev/null | grep -q .; then
       break
     fi
     sleep 1
   done
-  kubectl get pods -n "${DEBUG_NAMESPACE}" -l "breakglass.t-caas.telekom.com/session=${name}" \
+  kubectl get pods -n "${DEBUG_NAMESPACE}" -l "job-name=${name}" \
     -o name 2>/dev/null | grep -q . && die "debug workload remains after ${name} termination"
   assert_debug_audit "${name}"
 }
