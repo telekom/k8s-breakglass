@@ -75,7 +75,7 @@
     "fast-glob": "file:./shims/fast-glob",
     "jsdom": "^31.0.1",
     "playwright": "^1.63.0",
-    "postcss-html": "^2.0.0",
+    "postcss-html": "^2.0.1",
     "prettier": "^3.10.1",
     "semver": "^7.8.6",
     "stylelint": "^18.0.0",
