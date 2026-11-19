@@ -286,8 +286,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/telekom/t-caas-go-library v0.1.6 h1:CfFahUUOxgyGJ0A7QYhdE7PNJZwCqHxEUP9VTNoU89I=
-github.com/telekom/t-caas-go-library v0.1.6/go.mod h1:JO02at8JWGHIhvctss8/R/GjDdTBNKai5k9rojFRw+k=
+github.com/telekom/t-caas-go-library v0.1.7 h1:VTWJN3Esai4Jermpg6jbw8g8N8Kib8bTFvGTCu4w4ic=
+github.com/telekom/t-caas-go-library v0.1.7/go.mod h1:JO02at8JWGHIhvctss8/R/GjDdTBNKai5k9rojFRw+k=
 github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.2 h1:zkEASHHyEClGeURfgNT9PJZVfAbs9oEX9QXggwWNJbc=
