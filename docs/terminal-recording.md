@@ -78,7 +78,7 @@ share its correlation ID and never contain terminal bytes:
 | Event | When | Details |
 |---|---|---|
 | `debug_session.terminal_recording_started` | Evidence reserved, before target execution | `recordingId`, pod namespace/name/UID, container, operation, `formatVersion`, lease UID, generation, `retentionExpiresAt` |
-| `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete`; for an aborted stream `abortReason` (`credential_changed`, `cluster_config_changed`, `target_changed`, `session_authority_changed`, `lease_changed`, `expired`, `client_disconnected`, `stream_failed`) |
+| `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete`; for an aborted stream `abortReason` (`credential_changed`, `cluster_config_changed`, `target_changed`, `session_authority_changed`, `lease_changed`, `expired`, `client_disconnected`, `recording_limit`, `authority_check_failed`, `transport_failed`, `output_truncated`, `stream_failed`) |
 | `debug_session.terminal_recording_failed` | Reservation or publication failed | `stage` (`reserve` or `finalize`) and the identifiers known at that point |
 | `debug_session.terminal_recording_accessed` | An authorized reader listed or replayed recordings | `access` (`list` or `replay`), `recordingIds` or `recordingId`, `sha256`, `bytes`; the actor is the reader |
 
@@ -215,10 +215,14 @@ Invalid values are rejected at startup; see the
 requires full duplex: output is flushed before further input is supplied.
 Detection of expiry or revocation also aborts blocked HTTP input/output;
 see the in-flight output limits below.
-Each input/output call rechecks the live session identity, participant
-issuer, allowed target Pod UID, profile, expiry, and connection lease. Target
+Input and output are admitted on a live check of the session identity,
+participant issuer, allowed target Pod UID, profile, expiry, and connection
+lease that started at most one second earlier (see
+[revocation and in-flight output](#revocation-and-in-flight-output)). Target
 lookup is bracketed by live session checks. Rejected input is never forwarded
-to the target. Replay similarly rechecks live reader authorization and artifact
+to the target. A failed check, or a failed read or write of the client
+transport, ends the whole stream: the recording is published incomplete with
+the reason audited, never as complete with output missing. Replay similarly rechecks live reader authorization and artifact
 retention before and after backend reads.
 The controller finalizes publication with a bounded detached context after a
 client disconnect or a remote stream failure, preserving any bytes already
@@ -236,6 +240,10 @@ classifies completion without discarding evidence after revocation. It is
 checked up to three times within 5 seconds, so one slow API read does not mark
 a cleanly ended stream incomplete; a periodic in-stream check that the
 stream's own clean end interrupts is not treated as a revocation.
+The target's streaming server ends every exec and attach with a final status
+after the command and all of its output. A stream whose connection ends
+without that status (for example torn down while output was still in flight
+when the command exited) is published incomplete with `output_truncated`.
 The shared artifact controller recovers ambiguous publication and performs
 exact-version cleanup without depending on the session status or its lifetime.
 Replay permits retained terminal sessions, but requires the original live session
@@ -307,13 +315,26 @@ the default behavior) to persist the recording while it runs:
 
 ### Revocation and in-flight output
 
-Authorization is checked before each transport write. Kubernetes revocation and
-an irreversible socket write cannot form one atomic operation: bytes already
-admitted to a write may complete while revocation is being detected. The next
-write is denied after a failed check. The stream also checks authorization every
-500 milliseconds (each check has a two-second timeout) and aborts blocked I/O;
-these are detection intervals, not a guaranteed end-to-end delivery bound under
-scheduler or network delays. Hard expiry sets transport deadlines. Buffering or
+Every transport read and write is admitted only on a successful live
+authority check that started less than one second earlier. The stream checks
+its authority live every 500 milliseconds, and a read or write runs its own
+live check when the last one is older, so recorded output is not throttled by
+API reads (#1761). Live checks run one at a time, each bounded at two seconds.
+A failed check ends the stream and stops admission at once. Revocation bound:
+once a revocation is visible to the controller's live reads, no further input
+or output is admitted after at most one second; the periodic check also
+cancels the stream within 500 milliseconds plus at most two checks (one it
+waits for and its own). Kubernetes
+revocation and an irreversible socket write cannot form one atomic operation:
+one write admitted before the bound may still complete. These are detection
+intervals, not a guaranteed end-to-end delivery bound under scheduler or
+network delays.
+
+`artifacts.terminalRecordingStrictAuthorization: true` restores the previous
+strict mode: a live check (a few API reads) before every transport read and
+write. Revocation then takes effect on the next read or write, but output is
+limited by the API reads: about 20 KiB/s in Kind, against several MiB/s with
+the default. Hard expiry sets transport deadlines. Buffering or
 a post-write check cannot retract bytes already delivered to the client.
 
 Each ready target Lease admits one recording stream through a resource-version

@@ -185,7 +185,8 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
-	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes)
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(recordingMax).WithTerminalRecordingMaxStreams(recordingStreams).WithTerminalRecordingSegmentBytes(artifactConfig.TerminalRecordingSegmentBytes).
+		WithTerminalRecordingStrictAuthorization(artifactConfig.TerminalRecordingStrictAuthorization)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()

@@ -67,6 +67,7 @@ artifacts:
   # terminalRecordingMaxBytes: 67108864    # optional, 1..uploadMaxBytes
   # terminalRecordingMaxConcurrent: 2       # optional, 1..32
   # terminalRecordingSegmentBytes: 4194304 # optional: flush terminal recordings incrementally
+  # terminalRecordingStrictAuthorization: true # optional: live authority check before every terminal read/write
   tokenSecretName: artifact-signing
   tokenSignerKeyID: active
   credentialRotationGrace: 30s # optional, default 0s (abort running terminal streams on rotation)
@@ -171,6 +172,11 @@ reservation, publication, replay and cleanup behavior, and
 generation readiness requirement. `terminalRecordingSegmentBytes` (default
 off, 65536 to 67108864 when set, and at least the recording byte limit / 4096) enables
 [incremental recording flush](terminal-recording.md#incremental-flush-opt-in).
+`terminalRecordingStrictAuthorization` (default `false`) re-checks a recorded
+stream's authority with live API reads before every terminal read and write.
+By default a live check is reused for at most one second, so revocation stops
+recorded terminal I/O within one second; see
+[revocation and in-flight output](terminal-recording.md#revocation-and-in-flight-output).
 
 ### `server`
 

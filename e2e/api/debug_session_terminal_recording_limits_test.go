@@ -158,9 +158,7 @@ func TestDebugSessionTerminalRecordingLimitsE2E(t *testing.T) {
 		}
 		return nil
 	}
-	// The recording counts framing. Every recorded write re-checks authority
-	// with live API reads, so a recorded terminal moves a few hundred KiB per
-	// minute in Kind: the volumes stay well below 2 MiB.
+	// The recording counts framing.
 	output := func(n int64, marker string) string {
 		return fmt.Sprintf(`echo start; head -c %d /dev/zero | tr '\0' a; echo; echo %s`, n, marker)
 	}

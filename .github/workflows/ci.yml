@@ -658,7 +658,7 @@ jobs:
           docker cp "$container:/breakglass" /tmp/breakglass-image-binary
           docker rm "$container"
           test -s /tmp/breakglass-image-binary
-          if grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-image-binary; then
+          if grep -q -e BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM -e BREAKGLASS_E2E_FAIL_TERMINAL_OUTPUT_ADMISSION /tmp/breakglass-image-binary; then
             echo "image binary contains the e2e fault injection" >&2
             exit 1
           fi
@@ -1237,7 +1237,7 @@ jobs:
         if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
-          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-artifact-results.txt
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingCompletenessE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-artifact-results.txt
           # This lane keeps the default recording path: the incremental test must skip.
           grep -F -- '--- SKIP: TestDebugSessionTerminalRecordingIncrementalE2E ' e2e-artifact-results.txt
           # The ingress subtest skips without E2E_INGRESS_URL; in this lane it must run.
@@ -1246,7 +1246,7 @@ jobs:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
 
-      # Last in this shard: it reconfigures and restarts the controller.
+      # Reconfigures and restarts the controller; only restarting steps follow.
       - name: Run terminal recording rotation grace and controller rollover E2E
         if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
@@ -1257,6 +1257,19 @@ jobs:
           E2E_NAMESPACE: "breakglass-system"
           E2E_TERMINAL_ROTATION_GRACE: "true"
 
+      # Restarts the controller with the e2e_fault build (#1760).
+      - name: Run terminal recording output admission fault E2E
+        if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
+        run: |
+          set -o pipefail
+          TAGS=e2e_fault HA_IMAGE=breakglass:e2e-fault bash e2e/build-ha-image.sh
+          go test -tags=e2e -v ./e2e/api -run '^TestDebugSessionTerminalRecordingAdmissionFaultE2E$' -count=1 -timeout 20m 2>&1 | tee e2e-admission-fault-results.txt
+          grep -F -- '--- PASS: TestDebugSessionTerminalRecordingAdmissionFaultE2E' e2e-admission-fault-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+          E2E_TERMINAL_ADMISSION_FAULT: "true"
+
       - name: Explicitly select disposable S3 backend
         id: artifact_s3_fixture
         if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-s3' }}
@@ -1266,7 +1279,7 @@ jobs:
         if: ${{ !cancelled() && steps.artifact_s3_fixture.outcome == 'success' }}
         run: |
           set -o pipefail
-          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-artifact-s3-results.txt
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingCompletenessE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-artifact-s3-results.txt
           # This lane keeps the default recording path: the incremental test must skip.
           grep -F -- '--- SKIP: TestDebugSessionTerminalRecordingIncrementalE2E ' e2e-artifact-s3-results.txt
         env:
@@ -1429,7 +1442,7 @@ jobs:
           cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-ha-results.txt "$DIAG_DIR/" 2>/dev/null || true
-          cp e2e-artifact-results.txt e2e-artifact-s3-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp e2e-artifact-results.txt e2e-artifact-s3-results.txt e2e-admission-fault-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
 
           # ===========================================
@@ -2954,7 +2967,7 @@ jobs:
         if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
-          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-multi-artifact-local-results.txt
+          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingCompletenessE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-multi-artifact-local-results.txt
           # Incremental flush is enabled in this lane: its test must run, not skip.
           grep -F -- '--- PASS: TestDebugSessionTerminalRecordingIncrementalE2E ' e2e-multi-artifact-local-results.txt
         env:
@@ -2979,7 +2992,7 @@ jobs:
         if: ${{ !cancelled() && steps.multi_artifact_s3_fixture.outcome == 'success' }}
         run: |
           set -o pipefail
-          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-multi-artifact-s3-results.txt
+          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E|DebugSessionTerminalRecordingIncrementalE2E|DebugSessionTerminalRecordingLimitsE2E|DebugSessionTerminalRecordingCompletenessE2E|DebugSessionTerminalRecordingIdPInputsE2E)$' -count=1 -timeout 45m 2>&1 | tee e2e-multi-artifact-s3-results.txt
           # Incremental flush is enabled in this lane: its test must run, not skip.
           grep -F -- '--- PASS: TestDebugSessionTerminalRecordingIncrementalE2E ' e2e-multi-artifact-s3-results.txt
         env:

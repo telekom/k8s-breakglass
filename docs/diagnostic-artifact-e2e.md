@@ -119,10 +119,30 @@ multi-cluster lanes set `terminalRecordingMaxBytes: 1048576` and
 (`E2E_RECORDING_MAX_BYTES`, `E2E_RECORDING_MAX_STREAMS`); the test holds that
 many streams open, requires `429` for one more, and requires a recording below
 the byte limit to complete and one above it to stop the stream as incomplete
-(audited as `recording_limit`). A recorded terminal moves only a few hundred
-KiB per minute in Kind (#1761), so the stream above the limit runs only in the
+(audited as `recording_limit`). The stream above the limit runs only in the
 opt-in lanes (1 MiB); that the default byte limit is `uploadMaxBytes` is covered
 by unit tests (`TestTerminalRecordingLimits`, `TestRegisteredTerminalRouteStreamsAndPublishesRecording`).
+
+## Terminal recording completeness
+
+`TestDebugSessionTerminalRecordingCompletenessE2E` runs in all four artifact
+lanes (#1760, #1761). A stream of half the recording limit (8 MiB at most)
+whose command exits right after its output must reach the client byte for
+byte, be published `completed` and replay exactly the delivered output; the
+test logs the rate from the first to the last output chunk and requires at
+least 256 KiB/s for streams of 4 MiB or more. A second stream of throttled
+continuous output is revoked (the session is terminated) mid-stream; its last
+output must arrive within 3 seconds of the terminate call, and the finalized
+audit event must say `complete: false` with `session_authority_changed`; the
+test logs that delay.
+
+`TestDebugSessionTerminalRecordingAdmissionFaultE2E` runs last in the
+`artifacts-local` lane. It restarts the controller with the `e2e_fault` build
+(`TAGS=e2e_fault HA_IMAGE=breakglass:e2e-fault e2e/build-ha-image.sh`), which
+refuses the 20th output admission of every stream once while the session stays
+valid, like one failed live read. The stream must stop, be published
+`incomplete` with `authority_check_failed`, and its recording must hold
+everything the client received.
 
 ## Explicit backend and lifecycle matrix
 

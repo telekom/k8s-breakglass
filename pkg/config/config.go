@@ -301,6 +301,12 @@ type Artifacts struct {
 	// new generation immediately. Empty or "0s" (the default) revokes the old
 	// generation at once; the maximum is 15m.
 	CredentialRotationGrace string `yaml:"credentialRotationGrace,omitempty"`
+	// TerminalRecordingStrictAuthorization re-checks a recorded stream's
+	// authority with live API reads before every terminal transport read and
+	// write, as before #1761. Off (the default), a successful live check is
+	// reused for at most 1s: a revocation stops recorded terminal I/O within 1s
+	// instead of on the next write, and output is not throttled by API reads.
+	TerminalRecordingStrictAuthorization bool `yaml:"terminalRecordingStrictAuthorization,omitempty"`
 }
 
 // RotationGrace parses CredentialRotationGrace. Unset means no grace period;

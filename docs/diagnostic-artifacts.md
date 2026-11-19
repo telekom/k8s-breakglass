@@ -339,7 +339,7 @@ DebugSession connection leases (monotonic epoch plus credential generation) fenc
 | Session activation and renewal | `AcquireForSession` records the session-scoped Lease; `RenewSession` re-reads the live session before extending it; `ValidateSession` checks the Lease |
 | kubectl-debug ephemeral-container inject, pod copy, node debug pod | `ValidateSession` on every request |
 | Artifact collection, upload and download | `NewConnectionLeaseFence` checks Lease UID, holder, epoch, target, profile and the live session before and after I/O and on every chunk; the artifact reconciler revokes a collection whose session Lease is no longer valid |
-| Terminal recording streams | per-target Lease with a generation-bound stream claim, re-validated every 500 ms together with the live session; blue/green via `artifacts.credentialRotationGrace` |
+| Terminal recording streams | per-target Lease with a generation-bound stream claim, re-validated every 500 ms together with the live session, and terminal I/O admitted on a live check at most 1 s old; blue/green via `artifacts.credentialRotationGrace` |
 | Session end | `RevokeSession` (it also sweeps the session's own leases when the recorded reference is stale); deletion additionally runs `RevokeUnrecordedSessionLeases`. Deletes are UID/resourceVersion-guarded, so a successor lease is never deleted |
 
 Not lease-fenced:

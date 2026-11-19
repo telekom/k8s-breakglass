@@ -29,10 +29,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/httpstream" //nolint:staticcheck // client-go spdy.Upgrader still returns this package's Connection
+	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/transport/spdy"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -267,7 +270,12 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		defer closeCancel()
 		_ = connection.Close(closeCtx)
 	}()
-	connection = authorizedTerminalConnection{TerminalRecordingConnection: connection, authorize: c.terminalRecordingAuthority(session, identity, namespace, podName, targetUID, operation, validateTarget)}
+	maxAge := terminalAuthorityMaxAge
+	if c.recordingStrictAuthz {
+		maxAge = 0
+	}
+	authority := newTerminalAuthority(authorizedTerminalConnection{TerminalRecordingConnection: connection, authorize: c.terminalRecordingAuthority(session, identity, namespace, podName, targetUID, operation, validateTarget)}, maxAge)
+	connection = authority
 	binding = connection.Binding()
 	if !terminalRecordingBindingMatches(binding, session, targetUID) || binding.TargetClusterUID != targetClusterUID || binding.RuntimeBindingDigest != strings.TrimPrefix(profileDigest, "sha256:") {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection binding is invalid")
@@ -387,8 +395,10 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		defer func() { _ = decoded.Close() }()
 		input, sizes = decoded, queue
 	}
-	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: input, authorize: connection.Validate}
-	guardedOutput := authorizedRecordingWriter{ctx: apiCtx, writer: streamWriter, authorize: connection.Validate}
+	// Transport I/O is admitted on a live check at most maxAge old (#1761);
+	// a failed check ends the stream (#1760).
+	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: input, authorize: authority.Admit}
+	guardedOutput := authorizedRecordingWriter{ctx: apiCtx, writer: streamWriter, authorize: e2eTerminalOutputFault(authority.Admit)}
 	responseControl := http.NewResponseController(ctx.Writer)
 	_ = responseControl.SetReadDeadline(binding.ExpiresAt)
 	_ = responseControl.SetWriteDeadline(binding.ExpiresAt)
@@ -514,14 +524,24 @@ func terminalRecordingAbortReason(err error) string {
 		return "credential_changed"
 	case strings.Contains(message, "ClusterConfig") && (strings.Contains(message, "replaced") || strings.Contains(message, "spec changed")):
 		return "cluster_config_changed"
+	case terminalAuthorityReadFailed(err, message):
+		return "authority_check_failed"
 	case strings.Contains(message, "terminal target"):
 		return "target_changed"
 	case strings.Contains(message, "terminal session authority") || strings.Contains(message, "terminal profile authority"):
 		return "session_authority_changed"
 	case strings.Contains(message, "connection lease") || strings.Contains(message, "terminal stream claim"):
 		return "lease_changed"
+	case strings.Contains(message, "terminal recording connection validation failed") || strings.Contains(message, "terminal authority check failed"):
+		// A live check that failed without naming a fence, for example a
+		// target lookup that timed out: not an expiry.
+		return "authority_check_failed"
 	case errors.Is(err, errTerminalRecordingLimit):
 		return "recording_limit"
+	case errors.Is(err, errTerminalOutputTruncated):
+		return "output_truncated"
+	case strings.Contains(message, "deliver terminal output") || strings.Contains(message, "read terminal input"):
+		return "transport_failed"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "expired"
 	case errors.Is(err, context.Canceled):
@@ -529,6 +549,14 @@ func terminalRecordingAbortReason(err error) string {
 	default:
 		return "stream_failed"
 	}
+}
+
+// terminalAuthorityReadFailed reports a live check that could not read the
+// session or the stream claim (for example a timeout), which says nothing
+// about whether the authority changed. A deleted object is a revocation.
+func terminalAuthorityReadFailed(err error, message string) bool {
+	return !apierrors.IsNotFound(err) && (strings.Contains(message, "read terminal session authority") ||
+		strings.Contains(message, "recheck terminal session authority") || strings.Contains(message, "read terminal stream claim"))
 }
 
 // terminalRecordingAuditTimeout bounds the synchronous delivery of one
@@ -656,6 +684,10 @@ func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) {
 	w.writer.WriteHeader(statusCode)
 }
 
+// terminalWatchInterval is how often a running stream re-checks its authority
+// live; a failed check ends the stream.
+const terminalWatchInterval = 500 * time.Millisecond
+
 func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, sizes remotecommand.TerminalSizeQueue, recorder *TerminalRecorder, abortTransport func()) (TerminalRecording, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -701,14 +733,16 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		ticker := time.NewTicker(500 * time.Millisecond)
+		ticker := time.NewTicker(terminalWatchInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-streamCtx.Done():
 				return
 			case <-ticker.C:
-				validateCtx, validateCancel := context.WithTimeout(streamCtx, 2*time.Second)
+				// Room for one concurrent check (which the watcher may wait for)
+				// and its own, each bounded by terminalAuthorityCheckTimeout.
+				validateCtx, validateCancel := context.WithTimeout(streamCtx, 2*terminalAuthorityCheckTimeout)
 				err := connection.Validate(validateCtx)
 				validateCancel()
 				if err != nil {
@@ -903,11 +937,85 @@ func newTerminalRecordingExecutor(restConfig *rest.Config, namespace, podName, o
 	} else {
 		request.VersionedParams(&corev1.PodAttachOptions{Container: container, Stdin: true, Stdout: true, Stderr: true, TTY: true}, scheme.ParameterCodec)
 	}
-	executor, err := remotecommand.NewSPDYExecutor(restConfig, http.MethodPost, request.URL())
+	transport, upgrader, err := spdy.RoundTripperFor(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create target terminal transport: %w", err)
+	}
+	status := &statusTrackingUpgrader{Upgrader: upgrader}
+	// v4 and later always end a stream with a status on the error stream; see
+	// statusCheckedExecutor.
+	executor, err := remotecommand.NewSPDYExecutorForProtocols(transport, status, http.MethodPost, request.URL(), remotecommandconsts.StreamProtocolV5Name, remotecommandconsts.StreamProtocolV4Name)
 	if err != nil {
 		return nil, fmt.Errorf("create target terminal executor: %w", err)
 	}
-	return executor, nil
+	return statusCheckedExecutor{Executor: executor, status: &status.seen}, nil
+}
+
+// errTerminalOutputTruncated reports a stream that ended without the final
+// status the target's streaming server writes after the command and all of
+// its output: the transport was torn down, and output still in flight when
+// the command exited may be lost.
+var errTerminalOutputTruncated = errors.New("terminal stream ended without its final status; output may be truncated")
+
+// statusCheckedExecutor fails a stream that ends cleanly without a status: the
+// SPDY executor reports a connection torn down after the command exited as a
+// clean end, because every stream then reads EOF (#1761).
+type statusCheckedExecutor struct {
+	remotecommand.Executor
+	status *atomic.Bool
+}
+
+func (e statusCheckedExecutor) Stream(options remotecommand.StreamOptions) error {
+	return e.StreamWithContext(context.Background(), options)
+}
+
+func (e statusCheckedExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	err := e.Executor.StreamWithContext(ctx, options)
+	if err == nil && !e.status.Load() {
+		return errTerminalOutputTruncated
+	}
+	return err
+}
+
+// statusTrackingUpgrader records whether the error stream, which carries the
+// final status, delivered any bytes.
+type statusTrackingUpgrader struct {
+	spdy.Upgrader
+	seen atomic.Bool
+}
+
+func (u *statusTrackingUpgrader) NewConnection(resp *http.Response) (httpstream.Connection, error) {
+	connection, err := u.Upgrader.NewConnection(resp)
+	if err != nil {
+		return nil, err
+	}
+	return statusTrackingConnection{Connection: connection, seen: &u.seen}, nil
+}
+
+type statusTrackingConnection struct {
+	httpstream.Connection
+	seen *atomic.Bool
+}
+
+func (c statusTrackingConnection) CreateStream(headers http.Header) (httpstream.Stream, error) {
+	stream, err := c.Connection.CreateStream(headers)
+	if err != nil || headers.Get(corev1.StreamType) != corev1.StreamTypeError {
+		return stream, err
+	}
+	return statusTrackingStream{Stream: stream, seen: c.seen}, nil
+}
+
+type statusTrackingStream struct {
+	httpstream.Stream
+	seen *atomic.Bool
+}
+
+func (s statusTrackingStream) Read(p []byte) (int, error) {
+	n, err := s.Stream.Read(p)
+	if n > 0 {
+		s.seen.Store(true)
+	}
+	return n, err
 }
 
 func sha256Hex(value string) string {
