@@ -13,6 +13,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	sigs.k8s.io/controller-runtime/tools/setup-envtest v0.25.2 // indirect
+	sigs.k8s.io/controller-runtime/tools/setup-envtest v0.25.3 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
