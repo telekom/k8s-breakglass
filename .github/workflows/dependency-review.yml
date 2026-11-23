@@ -29,7 +29,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Review dependency licenses
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           # Allow permissive licenses (MIT, Apache, BSD, ISC, MPL-2.0)
           # NOTE: GitHub's dependency graph detects Go modules from go.mod automatically
@@ -45,7 +45,7 @@ jobs:
         id: scan
         if: always()
         continue-on-error: true
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           license-check: false
           vulnerability-check: true
