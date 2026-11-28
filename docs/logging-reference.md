@@ -285,7 +285,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 347 | 375 | 272 | 0 | 0 | 0 |
+| controller | 468 | 348 | 375 | 272 | 0 | 0 | 0 |
 | utility images | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 
 ## Personal-data fields
@@ -521,6 +521,7 @@ concatenated message.
 | info | `http_request` | `cid`, `ip`†, `latency`, `method`, `path`†, `status`, `user_agent`† | api.go |
 | info | `identity provider loaded` | `authority`, `name`†, `type` | api.go |
 | info | `identity provider reloaded successfully` | `name`†, `type` | api.go |
+| info | `step-up authentication required` | `action`, `reason`† | step_up.go |
 | warn | `CORS: no allowed origins configured and defaults not enabled — browser requests with Origin header will be blocked; set server.allowedOrigins in config` |  | api.go |
 | warn | `CORS: using default localhost origins because BREAKGLASS_ALLOW_DEFAULT_ORIGINS is enabled — not suitable for production; set server.allowedOrigins in config` | `BREAKGLASS_ALLOW_DEFAULT_ORIGINS`, `origins` | api.go |
 | warn | `Cannot reload client CA bundle; the current one stays in use` | `error`†, `file` | api.go |

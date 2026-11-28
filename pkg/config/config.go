@@ -658,6 +658,7 @@ type Config struct {
 	Kubernetes Kubernetes
 	Telemetry  Telemetry
 	Artifacts  Artifacts
+	StepUp     StepUp `yaml:"stepUp"`
 }
 
 // Telemetry configures OpenTelemetry tracing.
